@@ -1,0 +1,441 @@
+#!/usr/bin/env -S npx tsx
+/**
+ * Command line interface of the software factory.
+ *
+ *   npm run factory -- run --repo <name|path> --task "<requirement>"
+ *   npm run factory -- resume --run-id <runId> --clarifications "<answers>"
+ *   npm run factory -- resume --run-id <runId> --decision ACKNOWLEDGE --guidance "<answer>"
+ *   npm run factory -- list [--limit 10]
+ *   npm run factory -- show --run-id <runId>
+ *   npm run factory -- doctor
+ *
+ * Flags are parsed before the Mastra instance is imported so that `--dry-run` and
+ * `--non-interactive` can configure the runtime through the environment.
+ */
+import 'dotenv/config';
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+type FlagValue = string | boolean;
+
+interface ParsedArgs {
+  command: string;
+  flags: Record<string, FlagValue>;
+  positionals: string[];
+}
+
+function parseArgs(argv: string[]): ParsedArgs {
+  const [command = 'help', ...rest] = argv;
+  const flags: Record<string, FlagValue> = {};
+  const positionals: string[] = [];
+
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index]!;
+    if (!token.startsWith('--')) {
+      positionals.push(token);
+      continue;
+    }
+    const withoutDashes = token.slice(2);
+    if (withoutDashes.includes('=')) {
+      const separator = withoutDashes.indexOf('=');
+      flags[withoutDashes.slice(0, separator)] = withoutDashes.slice(separator + 1);
+      continue;
+    }
+    const next = rest[index + 1];
+    if (next === undefined || next.startsWith('--')) {
+      if (withoutDashes.startsWith('no-')) flags[withoutDashes.slice(3)] = false;
+      else flags[withoutDashes] = true;
+      continue;
+    }
+    flags[withoutDashes] = next;
+    index += 1;
+  }
+
+  return { command, flags, positionals };
+}
+
+function asString(value: FlagValue | undefined): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+}
+
+function asBoolean(value: FlagValue | undefined): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'boolean') return value;
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+}
+
+function asInteger(value: FlagValue | undefined): number | undefined {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+const HELP = `
+agent-software-factory - multi-agent software factory powered by Mastra
+
+Usage:
+  npm run factory -- <command> [flags]
+
+Commands:
+  run         Execute the factory against a target repository
+  resume      Resume a suspended run (clarification or human escalation)
+  list        List recent runs and their status
+  show        Print the summary.json of a run
+  doctor      Check configuration, credentials and external tooling
+  help        Show this help
+
+run flags:
+  --repo <name|path>        Target repository (folder inside the workspace root, or absolute)
+  --task "<requirement>"    The requirement to implement (English)
+  --base-branch <branch>    Branch to start from (default: current HEAD)
+  --branch <branch>         Work branch name (default: factory/<slug>-<id>)
+  --max-attempts <n>        Develop/QA/review iterations before escalation (default: 3)
+  --test-command "<cmd>"    Override the auto-detected test command
+  --criteria "<c1;c2>"      Extra acceptance criteria, separated by ';'
+  --clarifications "<text>" Pre-answer the architect's questions / human guidance
+  --no-commit               Do not commit the result
+  --no-pr                   Do not open a draft pull request
+  --non-interactive         Never suspend: escalations end the run (CI mode)
+  --dry-run                 Execute the full graph with stubbed LLM calls (no cost, no writes)
+  --scenario <name>         Dry-run scenario: happy | retry | infra | review-changes |
+                            security-block | escalate | clarify
+
+resume flags:
+  --run-id <runId>          Run to resume (required)
+  --clarifications "<text>" Answers for a plan clarification request
+  --decision <ABORT|ACKNOWLEDGE>  Decision for a human escalation
+  --guidance "<text>"       Guidance recorded with the decision
+  --step <stepId>           Explicit step to resume (optional)
+
+Examples:
+  npm run factory -- run --repo invest-track --task "Add pagination to GET /api/positions"
+  npm run factory -- run --repo ~/workspace/home-auth --task "Fix token refresh race" --max-attempts 4
+  npm run factory -- run --repo invest-track --task "Smoke test the graph" --dry-run
+  npm run factory -- resume --run-id 20251008-234512-invest-track-a1b2 --decision ACKNOWLEDGE
+`;
+
+/** Applies CLI flags that must be visible to the runtime configuration. */
+function applyEnvironmentFlags(flags: Record<string, FlagValue>): void {
+  if (asBoolean(flags['dry-run'])) process.env.FACTORY_DRY_RUN = 'true';
+  if (asBoolean(flags['non-interactive'])) process.env.FACTORY_NON_INTERACTIVE = 'true';
+  const scenario = asString(flags.scenario);
+  if (scenario) process.env.FACTORY_DRY_RUN_SCENARIO = scenario;
+  const logLevel = asString(flags['log-level']);
+  if (logLevel) process.env.FACTORY_LOG_LEVEL = logLevel;
+}
+
+function printJson(label: string, value: unknown): void {
+  process.stdout.write(`\n${label}\n${JSON.stringify(value, null, 2)}\n`);
+}
+
+function heading(text: string): void {
+  process.stdout.write(`\n${'='.repeat(Math.min(78, text.length + 4))}\n  ${text}\n${'='.repeat(Math.min(78, text.length + 4))}\n`);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Commands                                                                    */
+/* -------------------------------------------------------------------------- */
+
+async function commandRun(flags: Record<string, FlagValue>): Promise<number> {
+  const repo = asString(flags.repo);
+  const task = asString(flags.task);
+
+  if (!repo || !task) {
+    process.stderr.write('Both --repo and --task are required.\n');
+    process.stdout.write(HELP);
+    return 2;
+  }
+
+  const { mastra } = await import('../mastra/index.ts');
+  const { generateRunId } = await import('../tools/logger-tools.ts');
+  const { getFactoryConfig, resolveRepoPath } = await import('../utils/factory-config.ts');
+  const { checkProviderCredentials } = await import('../utils/model-router.ts');
+
+  const config = getFactoryConfig();
+  if (!config.dryRun) {
+    const credentials = checkProviderCredentials();
+    if (credentials.ready.length === 0) {
+      process.stderr.write(
+        `No LLM provider credentials found. Set one of: ${credentials.missing
+          .map((entry) => entry.envKey)
+          .join(', ')}\nOr run with --dry-run to exercise the graph without any LLM call.\n`,
+      );
+      return 2;
+    }
+    if (credentials.missing.length > 0) {
+      process.stdout.write(
+        `[warn] Missing credentials for: ${credentials.missing
+          .map((entry) => `${entry.provider} (${entry.envKey})`)
+          .join(', ')} - those fallbacks are unavailable.\n`,
+      );
+    }
+  }
+
+  const repoPath = resolveRepoPath(repo, { requireGit: !config.dryRun });
+  const runId = generateRunId(path.basename(repoPath));
+  const criteria = asString(flags.criteria);
+
+  const inputData = {
+    task,
+    repo: repoPath,
+    ...(asString(flags['base-branch']) ? { baseBranch: asString(flags['base-branch'])! } : {}),
+    ...(asString(flags.branch) ? { branchName: asString(flags.branch)! } : {}),
+    ...(asInteger(flags['max-attempts']) ? { maxAttempts: asInteger(flags['max-attempts'])! } : {}),
+    ...(asString(flags['test-command']) ? { testCommand: asString(flags['test-command'])! } : {}),
+    ...(criteria ? { acceptanceCriteria: criteria.split(';').map((entry) => entry.trim()).filter(Boolean) } : {}),
+    ...(asString(flags.clarifications) ? { clarifications: asString(flags.clarifications)! } : {}),
+    ...(asBoolean(flags.commit) === false ? { autoCommit: false } : {}),
+    ...(asBoolean(flags.pr) === false ? { createPullRequest: false } : {}),
+    ...(config.nonInteractive ? { interactive: false } : {}),
+  };
+
+  heading(`Factory run ${runId}`);
+  printJson('Input', { ...inputData, dryRun: config.dryRun });
+
+  const workflow = mastra.getWorkflow('softwareFactoryWorkflow');
+  const run = await workflow.createRun({ runId });
+  const result = await run.start({ inputData });
+
+  if (result.status === 'success') {
+    heading(`Run ${runId}: ${result.result.status}`);
+    printJson('Result', result.result);
+    process.stdout.write(
+      `\nTrace directory: ${result.result.traceDir}\nSummary: ${result.result.summaryPath}\n`,
+    );
+    return result.result.status === 'DELIVERED' || result.result.status === 'DELIVERED_WITHOUT_PR'
+      ? 0
+      : 1;
+  }
+
+  if (result.status === 'suspended') {
+    heading(`Run ${runId} SUSPENDED - human input required`);
+    printJson('Suspended steps', result.suspended);
+    printJson('Suspend payload', result.suspendPayload);
+    process.stdout.write(
+      '\nResume with:\n' +
+        `  npm run factory -- resume --run-id ${runId} --clarifications "<answers>"\n` +
+        `  npm run factory -- resume --run-id ${runId} --decision ACKNOWLEDGE --guidance "<answer>"\n`,
+    );
+    return 3;
+  }
+
+  heading(`Run ${runId} FAILED`);
+  if (result.status === 'failed') {
+    process.stderr.write(`${result.error?.message ?? String(result.error)}\n`);
+    if (result.error?.stack) process.stderr.write(`${result.error.stack}\n`);
+  } else {
+    printJson('Result', result);
+  }
+  return 1;
+}
+
+async function commandResume(flags: Record<string, FlagValue>): Promise<number> {
+  const runId = asString(flags['run-id']);
+  if (!runId) {
+    process.stderr.write('--run-id is required.\n');
+    return 2;
+  }
+
+  const { mastra } = await import('../mastra/index.ts');
+  const workflow = mastra.getWorkflow('softwareFactoryWorkflow');
+
+  const state = await workflow.getWorkflowRunById(runId);
+  if (!state) {
+    process.stderr.write(
+      `Run "${runId}" was not found in storage. Use \`npm run factory -- list\` to see known runs.\n`,
+    );
+    return 2;
+  }
+  if (state.status !== 'suspended') {
+    process.stderr.write(`Run "${runId}" is not suspended (status: ${state.status}).\n`);
+    return 2;
+  }
+
+  const clarifications = asString(flags.clarifications);
+  const decision = asString(flags.decision)?.toUpperCase();
+  const guidance = asString(flags.guidance);
+
+  const resumeData = clarifications
+    ? { clarifications }
+    : {
+        decision: decision === 'ABORT' ? 'ABORT' : 'ACKNOWLEDGE',
+        ...(guidance ? { guidance } : {}),
+      };
+
+  const explicitStep = asString(flags.step);
+
+  heading(`Resuming run ${runId}`);
+  printJson('Resume data', resumeData);
+
+  const run = await workflow.createRun({ runId });
+  const result = await run.resume({
+    resumeData: resumeData as never,
+    ...(explicitStep ? { step: explicitStep } : {}),
+  });
+
+  if (result.status === 'success') {
+    heading(`Run ${runId}: ${result.result.status}`);
+    printJson('Result', result.result);
+    return 0;
+  }
+  if (result.status === 'suspended') {
+    heading(`Run ${runId} SUSPENDED again`);
+    printJson('Suspend payload', result.suspendPayload);
+    return 3;
+  }
+  heading(`Run ${runId} FAILED`);
+  printJson('Result', result);
+  return 1;
+}
+
+async function commandList(flags: Record<string, FlagValue>): Promise<number> {
+  const { listRuns, traceDirFor } = await import('../tools/logger-tools.ts');
+  const limit = asInteger(flags.limit) ?? 15;
+  const runs = listRuns().slice(0, limit);
+
+  if (runs.length === 0) {
+    process.stdout.write('No runs found yet.\n');
+    return 0;
+  }
+
+  heading(`Last ${runs.length} runs`);
+  for (const runId of runs) {
+    const summaryPath = path.join(traceDirFor(runId), 'summary.json');
+    const runPath = path.join(traceDirFor(runId), 'run.json');
+    let status = 'IN_PROGRESS / INCOMPLETE';
+    let extra = '';
+    try {
+      if (fs.existsSync(summaryPath)) {
+        const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+        status = summary.status;
+        extra = `attempts=${summary.attempts} tokens=${summary.tokens?.total ?? 0} ${
+          summary.pullRequestUrl ?? ''
+        }`;
+      } else if (fs.existsSync(runPath)) {
+        const meta = JSON.parse(fs.readFileSync(runPath, 'utf8'));
+        extra = `repo=${meta.repoName ?? '?'}`;
+      }
+    } catch {
+      status = 'UNREADABLE';
+    }
+    process.stdout.write(`${runId}  ${status.padEnd(22)} ${extra}\n`);
+  }
+  return 0;
+}
+
+async function commandShow(flags: Record<string, FlagValue>): Promise<number> {
+  const runId = asString(flags['run-id']);
+  if (!runId) {
+    process.stderr.write('--run-id is required.\n');
+    return 2;
+  }
+  const { traceDirFor } = await import('../tools/logger-tools.ts');
+  const traceDir = traceDirFor(runId);
+  const summaryPath = path.join(traceDir, 'summary.json');
+
+  if (!fs.existsSync(summaryPath)) {
+    process.stderr.write(`No summary.json for run "${runId}". Trace directory: ${traceDir}\n`);
+    if (fs.existsSync(traceDir)) {
+      process.stdout.write(`Artifacts present:\n${fs.readdirSync(traceDir).join('\n')}\n`);
+    }
+    return 2;
+  }
+  heading(`Run ${runId}`);
+  process.stdout.write(`${fs.readFileSync(summaryPath, 'utf8')}\n`);
+  return 0;
+}
+
+async function commandDoctor(): Promise<number> {
+  const { getFactoryConfig } = await import('../utils/factory-config.ts');
+  const { AGENT_ROLES, checkProviderCredentials, describeModelChain } = await import(
+    '../utils/model-router.ts'
+  );
+  const { hasExecutable } = await import('../utils/shell.ts');
+
+  const config = getFactoryConfig();
+  heading('Configuration');
+  printJson('Factory config', {
+    workspaceRoot: config.workspaceRoot,
+    logDir: config.logDir,
+    maxAttempts: config.maxAttempts,
+    commandTimeoutMs: config.commandTimeoutMs,
+    allowPush: config.allowPush,
+    allowPullRequest: config.allowPullRequest,
+    dryRun: config.dryRun,
+    nonInteractive: config.nonInteractive,
+    storageUrl: config.storageUrl,
+    otlpEndpoint: config.otlpEndpoint ?? null,
+  });
+
+  heading('Model routing (primary -> fallbacks)');
+  for (const role of AGENT_ROLES) {
+    process.stdout.write(`  ${role.padEnd(16)} ${describeModelChain(role)}\n`);
+  }
+
+  heading('Provider credentials');
+  const credentials = checkProviderCredentials();
+  for (const provider of credentials.ready) process.stdout.write(`  [ok]      ${provider}\n`);
+  for (const entry of credentials.missing) {
+    process.stdout.write(`  [missing] ${entry.provider} (set ${entry.envKey})\n`);
+  }
+
+  heading('External tooling');
+  for (const executable of ['git', 'gh', 'node', 'npm', 'mvn', 'gradle', 'python3', 'go']) {
+    const available = await hasExecutable(executable, process.cwd());
+    process.stdout.write(`  ${available ? '[ok]     ' : '[absent] '} ${executable}\n`);
+  }
+
+  heading('Workspace');
+  const workspaceExists = fs.existsSync(config.workspaceRoot);
+  process.stdout.write(
+    `  ${workspaceExists ? '[ok]     ' : '[missing]'} ${config.workspaceRoot}\n`,
+  );
+  if (workspaceExists) {
+    const repositories = fs
+      .readdirSync(config.workspaceRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(config.workspaceRoot, entry.name, '.git')))
+      .map((entry) => entry.name);
+    process.stdout.write(`  git repositories: ${repositories.join(', ') || '(none)'}\n`);
+  }
+
+  return credentials.ready.length > 0 || config.dryRun ? 0 : 1;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Entry point                                                                 */
+/* -------------------------------------------------------------------------- */
+
+async function main(): Promise<number> {
+  const { command, flags } = parseArgs(process.argv.slice(2));
+  applyEnvironmentFlags(flags);
+
+  switch (command) {
+    case 'run':
+      return await commandRun(flags);
+    case 'resume':
+      return await commandResume(flags);
+    case 'list':
+      return await commandList(flags);
+    case 'show':
+      return await commandShow(flags);
+    case 'doctor':
+      return await commandDoctor();
+    case 'help':
+    case '--help':
+    case '-h':
+      process.stdout.write(HELP);
+      return 0;
+    default:
+      process.stderr.write(`Unknown command: ${command}\n`);
+      process.stdout.write(HELP);
+      return 2;
+  }
+}
+
+const exitCode = await main().catch((error: unknown) => {
+  process.stderr.write(`\n[factory] fatal: ${error instanceof Error ? error.message : String(error)}\n`);
+  if (error instanceof Error && error.stack) process.stderr.write(`${error.stack}\n`);
+  return 1;
+});
+
+process.exit(exitCode);
