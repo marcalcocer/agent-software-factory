@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Mastra build output / local dev state
+.mastra/
+dist/
+
+# Runtime traces and local state (keep the folder, ignore the contents)
+logs/*
+!logs/.gitkeep
+
+# Editor / OS
+.DS_Store
+*.log
