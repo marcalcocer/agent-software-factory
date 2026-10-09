@@ -63,40 +63,65 @@ export async function createBranch(
   return { created: true, branch: branchName, baseBranch: base };
 }
 
+export interface DiffOptions {
+  /** Compare against a ref (`<baseRef>...HEAD`) instead of the working tree. */
+  baseRef?: string;
+  /** Diff the staged changes only. */
+  staged?: boolean;
+  /** Return only the list of changed files. */
+  nameOnly?: boolean;
+  maxChars?: number;
+  /**
+   * Register untracked files with `git add --intent-to-add` before diffing (default `true`).
+   *
+   * Without this, newly created files are invisible to `git diff`, which would hand the
+   * reviewer and the security agent an incomplete diff - the most dangerous possible
+   * blind spot, since new files are where new code lives.
+   */
+  includeUntracked?: boolean;
+}
+
 export async function getDiff(
   repoPath: string,
-  options: { baseRef?: string; staged?: boolean; nameOnly?: boolean; maxChars?: number } = {},
+  options: DiffOptions = {},
 ): Promise<{ diff: string; truncated: boolean; files: string[] }> {
-  const args = ['--no-pager', 'diff'];
-  if (options.staged) args.push('--cached');
-  if (options.baseRef) args.push(`${options.baseRef}...HEAD`);
-  if (options.nameOnly) args.push('--name-only');
+  const includeUntracked = options.includeUntracked ?? true;
+  const comparingRefs = Boolean(options.baseRef) || options.staged === true;
 
-  const [diffResult, untrackedResult] = await Promise.all([
-    runGit([...args], { cwd: repoPath }),
-    runGit(['ls-files', '--others', '--exclude-standard'], { cwd: repoPath }),
+  if (includeUntracked && !comparingRefs) {
+    // `--intent-to-add` only records the path in the index (no content staged), so the diff
+    // shows new files while the working tree stays untouched.
+    await runGit(['add', '--all', '--intent-to-add'], { cwd: repoPath });
+  }
+
+  const baseArgs = ['--no-pager', 'diff'];
+  if (options.staged) baseArgs.push('--cached');
+  if (options.baseRef) baseArgs.push(`${options.baseRef}...HEAD`);
+
+  const [diffResult, nameResult] = await Promise.all([
+    runGit(options.nameOnly ? [...baseArgs, '--name-only'] : baseArgs, { cwd: repoPath }),
+    runGit([...baseArgs, '--name-only'], { cwd: repoPath }),
   ]);
   if (!diffResult.ok) throw new Error(fail(diffResult));
 
   const maxChars = options.maxChars ?? getFactoryConfig().maxOutputChars * 2;
   const raw = diffResult.stdout;
   const truncated = raw.length > maxChars;
-  const untracked = untrackedResult.stdout
-    .split('\n')
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-
-  const nameStatus = await runGit(['--no-pager', 'diff', '--name-only'], { cwd: repoPath });
+  const files = [
+    ...new Set(
+      nameResult.stdout
+        .split('\n')
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    ),
+  ];
 
   return {
     diff: truncated
       ? `${raw.slice(0, maxChars)}\n\n[... diff truncated at ${maxChars} characters ...]`
       : raw,
     truncated,
-    files: [
-      ...nameStatus.stdout.split('\n').map((entry) => entry.trim()).filter(Boolean),
-      ...untracked,
-    ],
+    files,
   };
 }
 
@@ -240,7 +265,7 @@ export const gitDiffTool = createTool({
     truncated: z.boolean(),
   }),
   execute: async ({ repoPath, baseRef, staged, nameOnly, maxChars }) => {
-    const options: Parameters<typeof getDiff>[1] = {};
+    const options: DiffOptions = {};
     if (baseRef !== undefined) options.baseRef = baseRef;
     if (staged !== undefined) options.staged = staged;
     if (nameOnly !== undefined) options.nameOnly = nameOnly;

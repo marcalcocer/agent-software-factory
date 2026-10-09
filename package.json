@@ -12,7 +12,7 @@
     "factory": "tsx src/cli/factory.ts",
     "factory:run": "tsx src/cli/factory.ts run",
     "factory:resume": "tsx src/cli/factory.ts resume",
-    "smoke": "FACTORY_DRY_RUN=true tsx src/cli/smoke.ts",
+    "smoke": "tsx src/cli/smoke.ts",
     "dev": "mastra dev",
     "build": "mastra build",
     "typecheck": "tsc --noEmit",

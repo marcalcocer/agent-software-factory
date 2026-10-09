@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Typecheck and graph smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Executes the full multi-agent graph with stubbed LLM calls: no credentials,
+      # no network, no repository mutation.
+      - name: Graph smoke test (dry run)
+        run: npm run smoke
+
+      - name: Build deployable bundle
+        run: npm run build
+
+      - name: Upload run traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: factory-run-traces
+          path: logs/
+          retention-days: 7
