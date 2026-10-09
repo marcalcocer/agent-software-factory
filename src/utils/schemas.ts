@@ -430,6 +430,11 @@ export const cycleStateSchema = z.object({
   reviewReport: reviewReportSchema.nullable(),
   securityReport: securityReportSchema.nullable(),
   triageReport: triageReportSchema.nullable(),
+  triageAttempt: z
+    .number()
+    .int()
+    .nullable()
+    .describe('Attempt that produced `triageReport`, so history never misattributes it.'),
 });
 export type CycleState = z.infer<typeof cycleStateSchema>;
 

@@ -162,6 +162,9 @@ function hasBlockingQuality(state: CycleState): boolean {
 }
 
 function appendHistory(state: CycleState, notes: string): AttemptHistory[] {
+  // Only attribute a triage decision to the attempt that actually produced it: otherwise a
+  // later, successful attempt would inherit the previous iteration's decision.
+  const triageOfThisAttempt = state.triageAttempt === state.attempt ? state.triageReport : null;
   const entry: AttemptHistory = {
     attempt: state.attempt,
     developerStatus: state.developerReport?.status ?? null,
@@ -169,8 +172,8 @@ function appendHistory(state: CycleState, notes: string): AttemptHistory[] {
     qaFailureSignature: state.qaReport ? qaFailureSignature(state.qaReport) : null,
     reviewStatus: state.reviewReport?.status ?? null,
     securityStatus: state.securityReport?.status ?? null,
-    triageDecision: state.triageReport?.decision ?? null,
-    triageRootCause: state.triageReport?.rootCause.category ?? null,
+    triageDecision: triageOfThisAttempt?.decision ?? null,
+    triageRootCause: triageOfThisAttempt?.rootCause.category ?? null,
     notes,
   };
   const history = state.history.filter((item) => item.attempt !== state.attempt);
@@ -387,6 +390,7 @@ const planStep = createStep({
       reviewReport: null,
       securityReport: null,
       triageReport: null,
+      triageAttempt: null,
     } satisfies CycleState;
   },
 });
@@ -775,7 +779,11 @@ function createTriageStep(id: string, source: TriageSource) {
       });
 
       /* --- apply the decision to the loop state --------------------------- */
-      const withReport: CycleState = { ...state, triageReport: effectiveReport };
+      const withReport: CycleState = {
+        ...state,
+        triageReport: effectiveReport,
+        triageAttempt: attempt,
+      };
       const history = appendHistory(withReport, `${source} failure triaged as ${decision}`);
 
       if (decision === 'APPROVE_AND_CONTINUE') {
