@@ -14,10 +14,13 @@ import { RequestContext } from '@mastra/core/request-context';
 import type { TracingContext } from '@mastra/core/observability';
 import type { z } from 'zod';
 
+import { z as zod } from 'zod';
+
 import { appendEvent, type ArtifactStep } from '../tools/logger-tools.ts';
 import { getFactoryConfig } from './factory-config.ts';
 import { REQUEST_CONTEXT_KEYS } from './context-loader.ts';
-import { getPrimaryModelId, type AgentRole } from './model-router.ts';
+import { getClaudeCliChain, getPrimaryModelId, type AgentRole } from './model-router.ts';
+import { runClaudeCli, type ClaudeCliToolPolicy } from './claude-cli.ts';
 
 export interface InvokeAgentOptions<TSchema extends z.ZodType> {
   agent: Agent<any, any, any>;
@@ -104,6 +107,258 @@ export function buildRequestContext(options: {
   return context;
 }
 
+/** Flattens Mastra's `AgentInstructions` (string | parts | messages) into a system prompt. */
+function instructionsToText(instructions: unknown): string {
+  if (typeof instructions === 'string') return instructions;
+  if (Array.isArray(instructions)) {
+    return instructions
+      .map((entry) => {
+        if (typeof entry === 'string') return entry;
+        const record = entry as { content?: unknown; text?: unknown };
+        if (typeof record.text === 'string') return record.text;
+        if (typeof record.content === 'string') return record.content;
+        if (Array.isArray(record.content)) {
+          return record.content
+            .map((part) => (typeof part === 'string' ? part : ((part as { text?: string }).text ?? '')))
+            .join('\n');
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n\n');
+  }
+  if (instructions && typeof instructions === 'object') {
+    const record = instructions as { content?: unknown; text?: unknown };
+    if (typeof record.text === 'string') return record.text;
+    if (typeof record.content === 'string') return record.content;
+  }
+  return String(instructions ?? '');
+}
+
+/** Converts a Zod schema to the JSON Schema consumed by `claude --json-schema`. */
+function toJsonSchema(schema: z.ZodType): Record<string, unknown> | undefined {
+  try {
+    const jsonSchema = zod.toJSONSchema(schema, {
+      target: 'draft-7',
+      io: 'output',
+      // Never throw on a construct JSON Schema cannot express; widen it instead.
+      unrepresentable: 'any',
+      cycles: 'ref',
+      // Inline reused subschemas: a flat schema is more reliably honoured than $defs/$ref.
+      reused: 'inline',
+    }) as Record<string, unknown>;
+    delete jsonSchema.$schema;
+    return jsonSchema;
+  } catch {
+    // Fall back to prompt-level JSON (the agent prompts already state their output contract).
+    return undefined;
+  }
+}
+
+/**
+ * Filesystem access granted to each role under the CLI backend.
+ *
+ * Inspection roles get read access because a verifier that cannot open a file has no evidence
+ * and can only return BLOCKED. Only the two roles that are supposed to change the working tree
+ * get write access.
+ */
+const ROLE_TOOL_POLICY: Record<AgentRole, ClaudeCliToolPolicy> = {
+  'pm-architect': 'read-only',
+  developer: 'read-write',
+  'qa-tester': 'read-only',
+  triage: 'read-only',
+  security: 'read-only',
+  reviewer: 'read-only',
+  // Claude Code's own tools cannot be narrowed to docs-only the way the factory's
+  // documentation tool is; the gated delivery step and the reviewed diff remain the control.
+  documentation: 'read-write',
+};
+
+/**
+ * Tells the agent exactly what it can and cannot do under this backend.
+ *
+ * Without this, agents draw the wrong conclusion from a missing capability: the developer
+ * reported PARTIAL purely because it could not run the suite itself, and the QA agent returned
+ * BLOCKED rather than judging the evidence it already had. Neither is a real failure - command
+ * execution is deliberately withheld, and the factory runs the suite itself.
+ */
+function executionEnvironmentNote(
+  policy: ClaudeCliToolPolicy,
+  role: AgentRole,
+  repoPath: string,
+): string {
+  const lines = ['', '## Execution environment', ''];
+
+  if (policy === 'read-write') {
+    lines.push(`- You can read and modify files under \`${repoPath}\` (Read, Write, Edit, Glob, Grep).`);
+  } else if (policy === 'read-only') {
+    lines.push(`- You can read files under \`${repoPath}\` (Read, Glob, Grep). You cannot modify them.`);
+  } else {
+    lines.push('- You have no tools. Judge solely from the context provided in this prompt.');
+  }
+
+  lines.push(
+    '- You have NO command execution: you cannot run builds, tests, linters or git.',
+    '- The factory executes the test suite itself and supplies the real exit code and output.',
+  );
+
+  if (role === 'developer') {
+    lines.push(
+      '- Therefore: report COMPLETED once the code and its tests are written. Being unable to ' +
+        'run the suite yourself is expected and is NOT a reason to report PARTIAL.',
+    );
+  } else if (role === 'qa-tester') {
+    lines.push(
+      '- Therefore: treat the supplied suite output and diff as primary evidence and reach a ' +
+        'verdict from them. Reserve BLOCKED for genuinely missing evidence, not for the absence ' +
+        'of a command-execution tool.',
+    );
+  }
+
+  return `${lines.join('\n')}\n`;
+}
+
+/**
+ * Executes a call through the Claude Code CLI backend.
+ *
+ * Structured output is enforced natively by the CLI, then re-validated with Zod so the rest of
+ * the factory keeps its exact compile-time types. A single repair retry is attempted when the
+ * payload is schema-valid JSON but violates a Zod refinement.
+ */
+async function invokeViaClaudeCli<TSchema extends z.ZodType>(
+  options: InvokeAgentOptions<TSchema>,
+  requestContext: RequestContext,
+  requestedModel: string,
+  startedAt: number,
+): Promise<InvokeAgentResult<z.infer<TSchema>>> {
+  const config = getFactoryConfig();
+  const attempt = options.attempt ?? 1;
+  const { model, fallbackModels } = getClaudeCliChain(options.role);
+  const systemPrompt = instructionsToText(
+    await options.agent.getInstructions({ requestContext }),
+  );
+  const jsonSchema = toJsonSchema(options.schema);
+
+  // Tool access is per-role and always confined to the target repository.
+  const toolPolicy: ClaudeCliToolPolicy = config.claudeCliFileTools
+    ? ROLE_TOOL_POLICY[options.role]
+    : 'none';
+
+  const basePrompt =
+    options.prompt + executionEnvironmentNote(toolPolicy, options.role, options.repoPath);
+  let prompt = basePrompt;
+  let lastError = '';
+
+  for (let pass = 1; pass <= 2; pass += 1) {
+    const response = await runClaudeCli({
+      systemPrompt,
+      prompt,
+      ...(jsonSchema === undefined ? {} : { jsonSchema }),
+      model,
+      fallbackModels,
+      cwd: options.repoPath,
+      toolPolicy,
+    });
+
+    const durationMs = Date.now() - startedAt;
+
+    if (!response.ok) {
+      appendEvent(options.runId, {
+        type: 'agent_error',
+        role: options.role,
+        step: options.step,
+        attempt,
+        requestedModel,
+        durationMs,
+        error: `${response.errorKind}: ${response.error}`,
+      });
+      throw new Error(
+        `Agent "${options.role}" failed during step "${options.step}" ` +
+          `[claude-cli/${response.errorKind}]: ${response.error}`,
+      );
+    }
+
+    // The CLI validated against JSON Schema; Zod adds the refinements and exact types.
+    const candidate =
+      response.structuredOutput ?? (response.text === '' ? undefined : safeJson(response.text));
+    const parsed = options.schema.safeParse(candidate);
+
+    if (parsed.success) {
+      appendEvent(options.runId, {
+        type: 'agent_call',
+        role: options.role,
+        step: options.step,
+        attempt,
+        requestedModel,
+        servedByModel: response.servedByModel,
+        inputTokens: response.usage.inputTokens,
+        outputTokens: response.usage.outputTokens,
+        reasoningTokens: response.usage.reasoningTokens,
+        cachedTokens: response.usage.cachedTokens,
+        totalTokens: response.usage.totalTokens,
+        toolCalls: response.toolCalls,
+        durationMs,
+        failedOver: !response.servedByModel.includes(model),
+        dryRun: false,
+      });
+      return {
+        object: parsed.data as z.infer<TSchema>,
+        text: response.text,
+        requestedModel,
+        servedByModel: response.servedByModel,
+        failedOver: !response.servedByModel.includes(model),
+        usage: {
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          reasoningTokens: response.usage.reasoningTokens,
+          cachedTokens: response.usage.cachedTokens,
+          totalTokens: response.usage.totalTokens,
+        },
+        toolCalls: response.toolCalls,
+        durationMs,
+        dryRun: false,
+      };
+    }
+
+    lastError = parsed.error.issues
+      .slice(0, 8)
+      .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
+      .join('; ');
+
+    if (pass === 1) {
+      prompt =
+        `${basePrompt}\n\n## Output correction required\n\n` +
+        `Your previous response violated the output contract:\n${lastError}\n\n` +
+        'Return the corrected JSON only.';
+    }
+  }
+
+  const durationMs = Date.now() - startedAt;
+  appendEvent(options.runId, {
+    type: 'agent_error',
+    role: options.role,
+    step: options.step,
+    attempt,
+    requestedModel,
+    durationMs,
+    error: `schema validation failed after repair retry: ${lastError}`,
+  });
+  throw new Error(
+    `Agent "${options.role}" returned output violating its schema after one repair retry ` +
+      `during step "${options.step}": ${lastError}`,
+  );
+}
+
+function safeJson(text: string): unknown {
+  const start = text.indexOf('{');
+  if (start === -1) return undefined;
+  try {
+    return JSON.parse(text.slice(start));
+  } catch {
+    return undefined;
+  }
+}
+
 /** Invokes an agent and returns its validated structured output plus call telemetry. */
 export async function invokeAgent<TSchema extends z.ZodType>(
   options: InvokeAgentOptions<TSchema>,
@@ -158,6 +413,11 @@ export async function invokeAgent<TSchema extends z.ZodType>(
     attempt,
     role: options.role,
   });
+
+  // Subscription-backed backend: delegate to the official Claude Code binary.
+  if (getFactoryConfig().provider === 'claude-cli') {
+    return await invokeViaClaudeCli(options, requestContext, requestedModel, startedAt);
+  }
 
   try {
     const response = await options.agent.generate(options.prompt, {

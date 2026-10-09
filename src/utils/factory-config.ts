@@ -49,7 +49,26 @@ const DEFAULT_ALLOWED_COMMANDS = [
   'sh',
 ] as const;
 
+/**
+ * Execution backend for LLM calls.
+ *
+ * - `api`        : metered provider SDKs via Mastra model routing (needs ANTHROPIC/OPENAI keys).
+ * - `claude-cli` : the official `claude` binary in headless mode, backed by a Claude
+ *                  Pro/Max subscription instead of per-token billing.
+ */
+export type FactoryProvider = 'api' | 'claude-cli';
+
 export interface FactoryConfig {
+  /** Which backend executes LLM calls. */
+  provider: FactoryProvider;
+  /** Optional proxy in front of the Anthropic API for the CLI backend (e.g. Headroom). */
+  claudeCliBaseUrl?: string;
+  /** Timeout for a single headless Claude Code call. */
+  claudeCliTimeoutMs: number;
+  /** Hard per-call spend ceiling passed to `--max-budget-usd` (0/unset = no ceiling). */
+  claudeCliMaxBudgetUsd?: number;
+  /** Let the implementing agent use Claude Code's own file tools, scoped to the repo. */
+  claudeCliFileTools: boolean;
   /** Root folder containing the target repositories. Hard boundary for every file operation. */
   workspaceRoot: string;
   /** Allow target repositories outside `workspaceRoot` (disabled by default). */
@@ -121,7 +140,19 @@ export function getFactoryConfig(): FactoryConfig {
 
   const logLevel = envString('FACTORY_LOG_LEVEL', 'info') as FactoryConfig['logLevel'];
 
+  const provider: FactoryProvider =
+    envString('FACTORY_PROVIDER', 'api').toLowerCase() === 'claude-cli' ? 'claude-cli' : 'api';
+  // ANTHROPIC_BASE_URL is honoured so an existing proxy setup needs no factory-specific config.
+  const claudeCliBaseUrl =
+    envString('FACTORY_CLAUDE_CLI_BASE_URL', '') || envString('ANTHROPIC_BASE_URL', '');
+  const maxBudget = Number.parseFloat(envString('FACTORY_CLAUDE_CLI_MAX_BUDGET_USD', ''));
+
   return {
+    provider,
+    ...(claudeCliBaseUrl === '' ? {} : { claudeCliBaseUrl }),
+    claudeCliTimeoutMs: envInteger('FACTORY_CLAUDE_CLI_TIMEOUT_MS', 10 * 60 * 1000),
+    ...(Number.isFinite(maxBudget) && maxBudget > 0 ? { claudeCliMaxBudgetUsd: maxBudget } : {}),
+    claudeCliFileTools: envBoolean('FACTORY_CLAUDE_CLI_FILE_TOOLS', true),
     workspaceRoot: expandPath(envString('FACTORY_WORKSPACE_ROOT', path.join(os.homedir(), 'workspace'))),
     allowAnyPath: envBoolean('FACTORY_ALLOW_ANY_PATH', false),
     logDir: expandPath(envString('FACTORY_LOG_DIR', './logs')),

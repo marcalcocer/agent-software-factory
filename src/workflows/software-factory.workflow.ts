@@ -29,6 +29,7 @@
  *   finalize (summary.json)
  */
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { createStep, createWorkflow } from '@mastra/core/workflows';
@@ -63,7 +64,7 @@ import {
 import { detectProjectStack, runSuite } from '../tools/test-runner-tools.ts';
 import { composePrompt, invokeAgent, promptSection } from '../utils/agent-runner.ts';
 import { getConventionSources } from '../utils/context-loader.ts';
-import { getFactoryConfig, resolveRepoPath } from '../utils/factory-config.ts';
+import { getFactoryConfig, resolveInsideRepo, resolveRepoPath } from '../utils/factory-config.ts';
 import { AGENT_ROLES, describeModelChain } from '../utils/model-router.ts';
 import {
   blockedQaReport,
@@ -91,6 +92,7 @@ import {
   triageReportSchema,
   type AttemptHistory,
   type CycleState,
+  type DeveloperReport,
   type Feedback,
   type Outcome,
   type QaReport,
@@ -501,11 +503,29 @@ const developerStep = createStep({
       data: report,
     });
 
+    // No backend grants agents a file-deletion tool (Claude Code has none, and the factory's
+    // own filesystem tools deliberately expose only read/write/edit). Deletions are therefore
+    // declared in the report and applied here, deterministically and inside the workspace jail.
+    const deletions = applyDeclaredDeletions(run.repoPath, report, run.dryRun);
+    if (deletions.length > 0) {
+      logger?.info?.('[factory] applied declared file deletions', {
+        runId: run.runId,
+        attempt,
+        deleted: deletions,
+      });
+      appendEvent(run.runId, {
+        type: 'file_deletions_applied',
+        attempt,
+        files: deletions,
+      });
+    }
+
     logger?.info?.('[factory] developer step finished', {
       runId: run.runId,
       attempt,
       status: report.status,
       changedFiles: report.changedFiles.length,
+      deleted: deletions.length,
     });
 
     return { ...state, developerReport: report, phase: 'QA' } satisfies CycleState;
@@ -515,6 +535,40 @@ const developerStep = createStep({
 /* ========================================================================== */
 /* Step 03 - QA & tester                                                       */
 /* ========================================================================== */
+
+/**
+ * Removes files the developer report marks as `DELETED` but which still exist on disk.
+ *
+ * Gives agents a real delete capability without a shell: they declare the intent in their
+ * structured output and the workflow performs it. Every path goes through `resolveInsideRepo`,
+ * so a declared deletion cannot escape the repository or touch `.git`.
+ */
+function applyDeclaredDeletions(
+  repoPath: string,
+  report: DeveloperReport,
+  dryRun: boolean,
+): string[] {
+  if (dryRun) return [];
+  const deleted: string[] = [];
+
+  for (const entry of report.changedFiles) {
+    if (entry.changeType !== 'DELETED') continue;
+    try {
+      const absolute = resolveInsideRepo(repoPath, entry.path);
+      if (!fs.existsSync(absolute)) continue;
+      const stats = fs.statSync(absolute);
+      // Only ever remove regular files: a declared directory deletion is too blunt to apply
+      // automatically and is left for the human reviewer.
+      if (!stats.isFile()) continue;
+      fs.rmSync(absolute);
+      deleted.push(entry.path);
+    } catch {
+      // Rejected paths (outside the repo, or .git) are ignored rather than fatal: the diff
+      // and the review gate will surface anything that actually matters.
+    }
+  }
+  return deleted;
+}
 
 const qaTesterStep = createStep({
   id: 'qa-tester',
@@ -575,9 +629,10 @@ const qaTesterStep = createStep({
       );
     }
 
-    const diff = run.dryRun
-      ? { files: [], diff: '' }
-      : await getDiff(run.repoPath, { nameOnly: true });
+    // The full patch is embedded in the prompt rather than left to a tool round-trip: the QA
+    // agent must be able to spot deleted or weakened tests from primary evidence, and that
+    // must not depend on which tools the active backend happens to expose.
+    const diff = run.dryRun ? { files: [], diff: '' } : await getDiff(run.repoPath);
 
     const prompt = composePrompt(
       '# Quality gate',
@@ -589,6 +644,7 @@ const qaTesterStep = createStep({
       promptSection('Test strategy from the plan', plan.testStrategy),
       promptSection('Developer report', state.developerReport),
       promptSection('Changed files', diff.files),
+      promptSection('Diff under test', diff.diff),
       promptSection('PRE-EXECUTED SUITE', preExecuted),
       promptSection('Previous attempt failures', state.history),
       [

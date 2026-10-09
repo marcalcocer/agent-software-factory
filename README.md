@@ -160,6 +160,75 @@ npm run factory -- doctor
 
 ---
 
+## Execution backends
+
+The factory can source its LLM calls two ways, selected with `FACTORY_PROVIDER`.
+
+### `api` (default) — metered API keys
+
+Provider SDKs through Mastra's model router, with the native fallback chains described above.
+Needs `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY`. Roughly $0.10–0.15 per run with prompt
+caching enabled.
+
+### `claude-cli` — your Claude Pro/Max subscription
+
+Delegates every call to the **official `claude` binary** in headless (`--print`) mode, so the
+work is billed against a Claude Code subscription instead of per-token API credit.
+
+```bash
+# one-time
+claude login
+
+FACTORY_PROVIDER=claude-cli npm run factory -- doctor --probe
+FACTORY_PROVIDER=claude-cli npm run factory -- run --repo my-service --task "..."
+```
+
+This uses Anthropic's own first-party client through a documented scripting interface — the
+factory never handles the subscription token and never impersonates another client. Usage counts
+against the subscription's rolling window; when it is exhausted, the step fails with a
+`rate-limit` error and the run can be resumed later with `factory resume --run-id <id>`.
+
+**What it maps onto, all native CLI flags:**
+
+| Factory concern | CLI flag |
+|---|---|
+| Structured output | `--json-schema` (then re-validated with Zod) |
+| Agent instructions | `--system-prompt` (replaces the CLI's own persona) |
+| Per-role routing | `--model` — `sonnet` for reasoning roles, `haiku` for QA/docs |
+| Fallback chain | `--fallback-model opus,haiku` |
+| Tool scoping | `--allowed-tools` / `--disallowed-tools` / `--add-dir` |
+| Spend ceiling | `--max-budget-usd` |
+
+**Token discipline.** Replacing the system prompt and passing
+`--exclude-dynamic-system-prompt-sections` cuts per-call context from ~162k tokens to ~14k
+(measured) — about 11x more factory runs per window. A full clean run costs ~590k tokens, mostly
+cache reads.
+
+**Optional proxy.** Setting `ANTHROPIC_BASE_URL` (or `FACTORY_CLAUDE_CLI_BASE_URL`) routes the
+CLI through a caching/compression proxy such as Headroom, which reduces window burn further.
+
+**Tool access is per role**, always confined to the target repository:
+
+| Policy | Roles | Tools |
+|---|---|---|
+| `read-write` | developer, documentation | Read, Write, Edit, MultiEdit, Glob, Grep |
+| `read-only` | pm-architect, qa-tester, triage, reviewer, security | Read, Glob, Grep |
+
+`Bash` is denied to every role, preserving the shell-free invariant: build and test commands run
+only through the factory's own allow-listed test runner.
+
+**Known differences from the `api` backend:**
+
+- The factory's own sandboxed tools (`git-*`, `read-file`, `run-test-suite`) are not exposed to
+  the model; Claude Code's built-ins are used instead. The workspace jail therefore comes from
+  `--add-dir` + cwd scoping rather than `resolveInsideRepo`.
+- The documentation role cannot be narrowed to docs-only the way the factory's own documentation
+  tool is. Gated delivery and the reviewed diff remain the control.
+- `total_cost_usd` is reported by the CLI but not billed; `summary.json` still records full
+  per-role token counts.
+
+---
+
 ## Cascading conventions
 
 Rules are resolved per run, lowest precedence first:

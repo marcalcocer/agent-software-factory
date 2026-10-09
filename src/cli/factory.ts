@@ -345,7 +345,7 @@ async function commandShow(flags: Record<string, FlagValue>): Promise<number> {
   return 0;
 }
 
-async function commandDoctor(): Promise<number> {
+async function commandDoctor(flags: Record<string, FlagValue>): Promise<number> {
   const { getFactoryConfig } = await import('../utils/factory-config.ts');
   const { AGENT_ROLES, checkProviderCredentials, describeModelChain } = await import(
     '../utils/model-router.ts'
@@ -355,6 +355,7 @@ async function commandDoctor(): Promise<number> {
   const config = getFactoryConfig();
   heading('Configuration');
   printJson('Factory config', {
+    provider: config.provider,
     workspaceRoot: config.workspaceRoot,
     logDir: config.logDir,
     maxAttempts: config.maxAttempts,
@@ -379,6 +380,32 @@ async function commandDoctor(): Promise<number> {
     process.stdout.write(`  [missing] ${entry.provider} (set ${entry.envKey})\n`);
   }
 
+  let cliHealthy = true;
+  if (config.provider === 'claude-cli') {
+    const { checkClaudeCli, probeClaudeCliAuth } = await import('../utils/claude-cli.ts');
+    heading('Claude Code CLI backend');
+    const health = await checkClaudeCli(process.cwd());
+    process.stdout.write(
+      `  ${health.installed ? '[ok]     ' : '[missing]'} claude ${health.version ?? ''}\n`,
+    );
+    process.stdout.write(`  proxy (ANTHROPIC_BASE_URL): ${health.baseUrl ?? '(direct)'}\n`);
+    if (health.error) process.stdout.write(`  error: ${health.error}\n`);
+    cliHealthy = health.installed;
+
+    if (health.installed && asBoolean(flags.probe) === true) {
+      // Opt-in: costs a few tokens of the subscription window.
+      const probe = await probeClaudeCliAuth(process.cwd());
+      process.stdout.write(
+        probe.ok
+          ? `  [ok]      authenticated (served by ${probe.model})\n`
+          : `  [fail]    ${probe.errorKind}: ${probe.error}\n`,
+      );
+      if (!probe.ok) cliHealthy = false;
+    } else if (health.installed) {
+      process.stdout.write('  (re-run with --probe to verify the OAuth session)\n');
+    }
+  }
+
   heading('External tooling');
   for (const executable of ['git', 'gh', 'node', 'npm', 'mvn', 'gradle', 'python3', 'go']) {
     const available = await hasExecutable(executable, process.cwd());
@@ -398,7 +425,7 @@ async function commandDoctor(): Promise<number> {
     process.stdout.write(`  git repositories: ${repositories.join(', ') || '(none)'}\n`);
   }
 
-  return credentials.ready.length > 0 || config.dryRun ? 0 : 1;
+  return (credentials.ready.length > 0 && cliHealthy) || config.dryRun ? 0 : 1;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -419,7 +446,7 @@ async function main(): Promise<number> {
     case 'show':
       return await commandShow(flags);
     case 'doctor':
-      return await commandDoctor();
+      return await commandDoctor(flags);
     case 'help':
     case '--help':
     case '-h':
