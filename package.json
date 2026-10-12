@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "dev:factory": "npm run dev --workspace=factory",
-    "dev:studio": "npm run electron:dev --workspace=studio",
+    "dev:studio": "npm run dev --workspace=studio",
     "build:factory": "npm run build --workspace=factory",
     "build:studio": "npm run electron:build --workspace=studio",
     "install:all": "npm install && npm install --workspace=factory && npm install --workspace=studio",
