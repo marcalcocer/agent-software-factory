@@ -595,9 +595,11 @@ const qaTesterStep = createStep({
       return { ...state, qaReport: report, phase: 'TRIAGE' } satisfies CycleState;
     }
 
-    // Deterministic pre-execution of the suite: cheaper and more reliable than asking the
-    // model to be the one that remembers to run it. The agent still runs targeted commands.
-    let preExecuted: string | null = null;
+    // Deterministic pre-execution of test and build: cheaper and more reliable than asking
+    // the model to be the one that remembers to run them. The agent still runs targeted commands.
+    let preExecutedTest: string | null = null;
+    let preExecutedBuild: string | null = null;
+
     if (!run.dryRun && run.testCommand) {
       const execution = await runSuite(run.repoPath, run.testCommand, { cwd: run.stack.cwd });
       const outputPath = writeContextBlock(
@@ -614,7 +616,7 @@ const qaTesterStep = createStep({
         durationMs: execution.durationMs,
         log: path.basename(outputPath),
       });
-      preExecuted = JSON.stringify(
+      preExecutedTest = JSON.stringify(
         {
           command: execution.command,
           exitCode: execution.exitCode,
@@ -623,6 +625,36 @@ const qaTesterStep = createStep({
           totals: execution.parsed,
           stdoutTail: execution.stdoutTail.slice(-8_000),
           stderrTail: execution.stderrTail.slice(-8_000),
+        },
+        null,
+        2,
+      );
+    }
+
+    if (!run.dryRun && run.stack.buildCommand) {
+      const buildExecution = await runSuite(run.repoPath, run.stack.buildCommand, { cwd: run.stack.cwd });
+      const buildOutputPath = writeContextBlock(
+        run.runId,
+        `qa-build-attempt-${attempt}.log`,
+        `$ ${buildExecution.command}\nexit=${buildExecution.exitCode} duration=${buildExecution.durationMs}ms\n\n` +
+          `--- stdout ---\n${buildExecution.stdoutTail}\n--- stderr ---\n${buildExecution.stderrTail}\n`,
+      );
+      appendEvent(run.runId, {
+        type: 'build_executed',
+        attempt,
+        command: buildExecution.command,
+        exitCode: buildExecution.exitCode,
+        durationMs: buildExecution.durationMs,
+        log: path.basename(buildOutputPath),
+      });
+      preExecutedBuild = JSON.stringify(
+        {
+          command: buildExecution.command,
+          exitCode: buildExecution.exitCode,
+          durationMs: buildExecution.durationMs,
+          timedOut: buildExecution.timedOut,
+          stdoutTail: buildExecution.stdoutTail.slice(-8_000),
+          stderrTail: buildExecution.stderrTail.slice(-8_000),
         },
         null,
         2,
@@ -645,7 +677,8 @@ const qaTesterStep = createStep({
       promptSection('Developer report', state.developerReport),
       promptSection('Changed files', diff.files),
       promptSection('Diff under test', diff.diff),
-      promptSection('PRE-EXECUTED SUITE', preExecuted),
+      promptSection('PRE-EXECUTED TEST SUITE', preExecutedTest),
+      promptSection('PRE-EXECUTED BUILD', preExecutedBuild),
       promptSection('Previous attempt failures', state.history),
       [
         '',

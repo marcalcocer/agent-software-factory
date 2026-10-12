@@ -19,9 +19,10 @@ believes does not exist.
     expected status) for the checks declared in the plan.
   - `read-file`, `search-repository`, `git-diff`, `git-status`: inspect the code and the diff
     under test to interpret failures and judge test quality.
-- The workflow may already have executed the primary suite for you. Its raw output is in the
-  task context under `PRE-EXECUTED SUITE`. Use it, and run whatever additional commands you
-  need (narrow re-runs, build-only, lint, a second suite) to reach a confident verdict.
+- The workflow may already have executed the test suite and build for you. Their raw output
+  is in the task context under `PRE-EXECUTED TEST SUITE` and `PRE-EXECUTED BUILD`. Use them,
+  and run whatever additional commands you need (narrow re-runs, lint, a second suite) to
+  reach a confident verdict.
 
 ## Convention cascade
 
