@@ -9,6 +9,12 @@ node_modules/
 # Mastra build output / local dev state
 .mastra/
 dist/
+dist-electron/
+
+# Studio build outputs
+studio/dist/
+studio/dist-electron/
+studio/out/
 
 # Runtime traces and local state (keep the folder, ignore the contents)
 logs/*

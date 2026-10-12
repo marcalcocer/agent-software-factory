@@ -1,0 +1,90 @@
+/**
+ * Shared types between Electron main process and React renderer.
+ */
+
+export type RunStatus = 
+  | 'PENDING' 
+  | 'RUNNING' 
+  | 'DELIVERED_WITHOUT_PR' 
+  | 'DELIVERED_WITH_PR' 
+  | 'ESCALATED_TO_HUMAN' 
+  | 'FAILED' 
+  | 'SUSPENDED';
+
+export type AgentRole = 
+  | 'pm-architect' 
+  | 'developer' 
+  | 'qa-tester' 
+  | 'triage' 
+  | 'reviewer' 
+  | 'security' 
+  | 'documentation';
+
+export interface Repository {
+  id: string;
+  name: string;
+  path: string;
+  lastAccessed?: string;
+}
+
+export interface FactoryRun {
+  runId: string;
+  repoId: string;
+  task: string;
+  status: RunStatus;
+  attempts: number;
+  branch?: string;
+  startedAt: string;
+  finishedAt?: string;
+  tokens?: {
+    total: number;
+    input: number;
+    output: number;
+  };
+  gates?: {
+    qa?: string;
+    codeReview?: string;
+    security?: string;
+    documentation?: string;
+  };
+  error?: string;
+}
+
+export interface AgentEvent {
+  type: 'agent_call' | 'tool_use' | 'step_completed' | 'suite_executed' | 'build_executed' | 'gate_result';
+  runId: string;
+  timestamp: string;
+  role?: AgentRole;
+  model?: string;
+  data: any;
+}
+
+export interface AuthProvider {
+  id: 'claude-cli' | 'anthropic-api' | 'google-ai' | 'openai';
+  name: string;
+  status: 'authenticated' | 'expired' | 'not-configured';
+  details?: string;
+}
+
+export interface GlobalSettings {
+  theme: 'dark' | 'light' | 'system';
+  workspaceRoot: string;
+  defaultMaxAttempts: number;
+  allowPush: boolean;
+  allowPR: boolean;
+  logLevel: 'debug' | 'info' | 'warn' | 'error';
+  activeProvider: 'claude-cli' | 'api';
+}
+
+export interface RepoSettings {
+  repoId: string;
+  testCommand?: string;
+  buildCommand?: string;
+  maxAttempts?: number;
+  models?: Partial<Record<AgentRole, string>>;
+}
+
+export interface Settings {
+  global: GlobalSettings;
+  repos: Record<string, RepoSettings>;
+}
