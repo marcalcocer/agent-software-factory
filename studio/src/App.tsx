@@ -160,7 +160,21 @@ function App() {
     setLoginLoading(true);
     setError(null);
     try {
-      console.log('Starting Claude Code login...');
+      console.log('Checking Claude Code auth status...');
+      
+      // First try a quick refresh
+      const isAuth = await window.api.invoke('auth:refresh');
+      
+      if (isAuth) {
+        console.log('Already authenticated!');
+        const updated = await window.api.invoke('auth:status');
+        setProviders(updated);
+        setError(null);
+        return;
+      }
+      
+      // Not authenticated yet - start polling
+      console.log('Not authenticated, starting polling...');
       const success = await window.api.invoke('auth:login', 'claude-cli');
       console.log('Login result:', success);
       
@@ -170,11 +184,11 @@ function App() {
         setProviders(updated);
         setError(null);
       } else {
-        setError('Login failed - please check the Claude Code CLI window');
+        setError('Not authenticated yet. Please complete the login in your terminal, then click "Check Auth Status" again.');
       }
     } catch (error) {
-      console.error('Login failed:', error);
-      setError(`Login error: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('Login check failed:', error);
+      setError(`Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setLoginLoading(false);
     }
@@ -205,21 +219,44 @@ function App() {
 
             <section className="bg-white dark:bg-slate-800 rounded-lg p-6 shadow-sm">
               <h2 className="text-2xl font-bold mb-4">Welcome Back</h2>
-              <p className="text-slate-600 dark:text-slate-300 mb-6">
-                Authenticate with Claude to get started with the software factory.
+              <p className="text-slate-600 dark:text-slate-300 mb-4">
+                Authenticate with Claude CLI to get started with the software factory.
               </p>
 
-              <button
-                onClick={handleLogin}
-                disabled={loginLoading}
-                className={`w-full px-4 py-3 rounded-md font-medium transition-colors ${
-                  loginLoading
-                    ? 'bg-blue-400 text-white cursor-not-allowed'
-                    : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
-                }`}
-              >
-                {loginLoading ? 'Opening Claude...' : 'Login with Claude'}
-              </button>
+              {/* Instructions */}
+              <div className="bg-slate-100 dark:bg-slate-900 rounded-lg p-4 mb-6">
+                <h3 className="font-medium text-slate-900 dark:text-slate-100 mb-2">
+                  Login Instructions:
+                </h3>
+                <ol className="text-sm text-slate-600 dark:text-slate-400 space-y-2 list-decimal list-inside">
+                  <li>Open a terminal window</li>
+                  <li>Run: <code className="bg-slate-200 dark:bg-slate-800 px-2 py-0.5 rounded font-mono">claude login</code></li>
+                  <li>Type <code className="bg-slate-200 dark:bg-slate-800 px-2 py-0.5 rounded font-mono">/login</code> and press Enter</li>
+                  <li>Select the first option (OAuth login)</li>
+                  <li>Complete login in your browser</li>
+                  <li>Click "Check Auth Status" below</li>
+                </ol>
+              </div>
+
+              <div className="space-y-3">
+                <button
+                  onClick={handleLogin}
+                  disabled={loginLoading}
+                  className={`w-full px-4 py-3 rounded-md font-medium transition-colors ${
+                    loginLoading
+                      ? 'bg-blue-400 text-white cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
+                  }`}
+                >
+                  {loginLoading ? 'Checking...' : 'Check Auth Status'}
+                </button>
+
+                {loginLoading && (
+                  <p className="text-center text-sm text-slate-500">
+                    Waiting for authentication... Complete the login in your terminal.
+                  </p>
+                )}
+              </div>
             </section>
           </div>
         </main>

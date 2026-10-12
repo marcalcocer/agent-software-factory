@@ -2,7 +2,7 @@
  * IPC handlers for authentication.
  */
 import { ipcMain } from 'electron';
-import { checkClaudeAuth, triggerClaudeLogin } from '../services/claude-auth.js';
+import { checkClaudeAuth, triggerClaudeLogin, refreshAuthStatus } from '../services/claude-auth.js';
 import type { AuthProvider } from '../../shared/types';
 
 // Get status of all auth providers
@@ -38,12 +38,17 @@ ipcMain.handle('auth:status', async (): Promise<AuthProvider[]> => {
   return providers;
 });
 
-// Trigger Claude login
+// Trigger Claude login (starts polling)
 ipcMain.handle('auth:login', async (_event, provider: 'claude-cli'): Promise<boolean> => {
   if (provider === 'claude-cli') {
     return await triggerClaudeLogin();
   }
   return false;
+});
+
+// Manual refresh of auth status (for "Check Status" button)
+ipcMain.handle('auth:refresh', async (): Promise<boolean> => {
+  return await refreshAuthStatus();
 });
 
 // Set API key for a provider

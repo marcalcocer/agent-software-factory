@@ -43,6 +43,7 @@ export interface IPCChannels {
   // Authentication
   'auth:status': () => Promise<AuthProvider[]>;
   'auth:login': (provider: 'claude-cli') => Promise<boolean>;
+  'auth:refresh': () => Promise<boolean>;
   'auth:setApiKey': (provider: 'anthropic-api' | 'google-ai', key: string) => Promise<boolean>;
 
   // Settings
