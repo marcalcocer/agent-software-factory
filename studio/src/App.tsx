@@ -1,33 +1,234 @@
 import { useEffect, useState } from 'react';
 import type { AuthProvider } from '@shared/types';
+import { Sidebar } from './components/Sidebar';
+import { RepoTabs } from './components/RepoTabs';
+import { TaskInput, type TaskOptions } from './components/TaskInput';
+import { RunHistory } from './components/RunHistory';
+import { LiveOutput } from './components/LiveOutput';
+import { RunDetails } from './components/RunDetails';
+import { SettingsPanel } from './components/SettingsPanel';
+
+interface Repository {
+  name: string;
+  path: string;
+  recentRuns: number;
+}
+
+interface Run {
+  id: string;
+  task: string;
+  status: 'running' | 'completed' | 'failed' | 'escalated';
+  startTime: Date;
+  endTime?: Date;
+  summary?: {
+    durationMs: number;
+    tokensUsed: number;
+    stepsCompleted: number;
+  };
+}
 
 function App() {
   const [providers, setProviders] = useState<AuthProvider[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  // Phase 2 state
+  const [repos, setRepos] = useState<Repository[]>([]);
+  const [openTabs, setOpenTabs] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<string | null>(null);
+  const [runs, setRuns] = useState<Run[]>([]);
+  const [runLoading, setRunLoading] = useState(false);
+  const [reposLoading, setReposLoading] = useState(false);
+
+  // Phase 3 state - real-time and modals
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
+    // Test if window.api exists
+    if (!window.api) {
+      setError('window.api is not available - preload script issue');
+      setLoading(false);
+      return;
+    }
+
     // Test IPC communication
     window.api.invoke('auth:status')
       .then(setProviders)
-      .catch(console.error)
+      .catch((err) => {
+        console.error('Auth status error:', err);
+        setError(`Failed to load auth status: ${err.message || err}`);
+      })
       .finally(() => setLoading(false));
-  }, []);
+
+    // Load repositories list
+    loadRepositories();
+
+    // Subscribe to factory events
+    const unsubscribeCompleted = window.api.on('factory:completed', (runId: string, exitCode: number) => {
+      console.log(`Run ${runId} completed with exit code ${exitCode}`);
+      setRuns((prev) =>
+        prev.map((run) =>
+          run.id === runId
+            ? { ...run, status: exitCode === 0 ? 'completed' : 'failed', endTime: new Date() }
+            : run
+        )
+      );
+      if (activeRunId === runId) {
+        setActiveRunId(null);
+      }
+    });
+
+    const unsubscribeError = window.api.on('factory:error', (runId: string, error: string) => {
+      console.error(`Run ${runId} error:`, error);
+      setRuns((prev) =>
+        prev.map((run) =>
+          run.id === runId
+            ? { ...run, status: 'failed', endTime: new Date() }
+            : run
+        )
+      );
+    });
+
+    return () => {
+      unsubscribeCompleted();
+      unsubscribeError();
+    };
+  }, [activeRunId]);
+
+  const loadRepositories = async () => {
+    setReposLoading(true);
+    try {
+      const repoList = await window.api.invoke('factory:list-repos');
+      setRepos(repoList);
+    } catch (err) {
+      console.error('Failed to load repos:', err);
+    } finally {
+      setReposLoading(false);
+    }
+  };
+
+  const handleSelectRepo = (repo: Repository) => {
+    // Add to open tabs if not already open
+    if (!openTabs.includes(repo.name)) {
+      setOpenTabs([...openTabs, repo.name]);
+    }
+    setActiveTab(repo.name);
+  };
+
+  const handleCloseTab = (repoName: string) => {
+    setOpenTabs(openTabs.filter((name) => name !== repoName));
+    if (activeTab === repoName) {
+      setActiveTab(openTabs.length > 1 ? openTabs[0] : null);
+    }
+  };
+
+  const handleRunTask = async (task: string, options: TaskOptions) => {
+    if (!activeTab) return;
+
+    setRunLoading(true);
+    setError(null);
+
+    try {
+      const result = await window.api.invoke('factory:run-task', {
+        repo: activeTab,
+        task,
+        ...options,
+      });
+
+      // Add to run history
+      const newRun: Run = {
+        id: result.runId,
+        task,
+        status: 'running',
+        startTime: new Date(),
+      };
+
+      setRuns([newRun, ...runs]);
+      setActiveRunId(result.runId); // Track active run for live output
+    } catch (err) {
+      console.error('Failed to run task:', err);
+      setError(`Task execution failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRunLoading(false);
+    }
+  };
 
   const handleLogin = async () => {
+    setLoginLoading(true);
+    setError(null);
     try {
+      console.log('Starting Claude Code login...');
       const success = await window.api.invoke('auth:login', 'claude-cli');
+      console.log('Login result:', success);
+      
       if (success) {
         // Refresh provider status
         const updated = await window.api.invoke('auth:status');
         setProviders(updated);
+        setError(null);
+      } else {
+        setError('Login failed - please check the Claude Code CLI window');
       }
     } catch (error) {
       console.error('Login failed:', error);
+      setError(`Login error: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setLoginLoading(false);
     }
   };
 
+  // Show auth screen if not logged in
+  const isAuthenticated = providers.some((p) => p.status === 'authenticated');
+
+  if (!isAuthenticated && !loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+        {/* Header */}
+        <header className="border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
+          <div className="px-6 py-4 flex items-center justify-between">
+            <h1 className="text-xl font-semibold">AI Factory Studio</h1>
+            <div className="text-sm text-slate-500">v0.1.0</div>
+          </div>
+        </header>
+
+        {/* Auth Screen */}
+        <main className="p-8">
+          <div className="max-w-md mx-auto mt-20 space-y-6">
+            {error && (
+              <div className="bg-red-100 dark:bg-red-900 p-4 rounded">
+                <p className="text-red-800 dark:text-red-200 text-sm">{error}</p>
+              </div>
+            )}
+
+            <section className="bg-white dark:bg-slate-800 rounded-lg p-6 shadow-sm">
+              <h2 className="text-2xl font-bold mb-4">Welcome Back</h2>
+              <p className="text-slate-600 dark:text-slate-300 mb-6">
+                Authenticate with Claude to get started with the software factory.
+              </p>
+
+              <button
+                onClick={handleLogin}
+                disabled={loginLoading}
+                className={`w-full px-4 py-3 rounded-md font-medium transition-colors ${
+                  loginLoading
+                    ? 'bg-blue-400 text-white cursor-not-allowed'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
+                }`}
+              >
+                {loginLoading ? 'Opening Claude...' : 'Login with Claude'}
+              </button>
+            </section>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 flex flex-col">
       {/* Header */}
       <header className="border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
         <div className="px-6 py-4 flex items-center justify-between">
@@ -36,94 +237,75 @@ function App() {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="p-8">
-        <div className="max-w-4xl mx-auto space-y-8">
-          {/* Welcome */}
-          <section className="bg-white dark:bg-slate-800 rounded-lg p-6 shadow-sm">
-            <h2 className="text-2xl font-bold mb-4">Welcome to AI Factory Studio</h2>
-            <p className="text-slate-600 dark:text-slate-300 mb-4">
-              A desktop UI for the multi-agent software factory. This is Phase 1 - Foundation.
-            </p>
-            <div className="space-y-2 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="text-green-600 dark:text-green-400">✓</span>
-                <span>Electron + Vite + React structure</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-green-600 dark:text-green-400">✓</span>
-                <span>Type-safe IPC bridge</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-green-600 dark:text-green-400">✓</span>
-                <span>Monorepo structure (factory/ + studio/)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-green-600 dark:text-green-400">✓</span>
-                <span>Auto-login flow for Claude CLI</span>
-              </div>
-            </div>
-          </section>
+      {/* Main Content Area */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar */}
+        <Sidebar
+          repos={repos}
+          activeRepo={activeTab}
+          onSelectRepo={handleSelectRepo}
+          onOpenSettings={() => setSettingsOpen(true)}
+          loading={reposLoading}
+        />
 
-          {/* Auth Status */}
-          <section className="bg-white dark:bg-slate-800 rounded-lg p-6 shadow-sm">
-            <h3 className="text-lg font-semibold mb-4">Authentication Status</h3>
-            {loading ? (
-              <div className="text-slate-500">Loading...</div>
-            ) : (
-              <div className="space-y-3">
-                {providers.map((provider) => (
-                  <div
-                    key={provider.id}
-                    className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900 rounded"
-                  >
-                    <div className="flex-1">
-                      <div className="font-medium">{provider.name}</div>
-                      {provider.details && (
-                        <div className="text-sm text-slate-500">{provider.details}</div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span
-                        className={`px-2 py-1 rounded text-xs font-medium ${
-                          provider.status === 'authenticated'
-                            ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100'
-                            : provider.status === 'expired'
-                            ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100'
-                            : 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-100'
-                        }`}
-                      >
-                        {provider.status}
-                      </span>
-                      {provider.id === 'claude-cli' && provider.status !== 'authenticated' && (
-                        <button
-                          onClick={handleLogin}
-                          className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm"
-                        >
-                          Login
-                        </button>
-                      )}
-                    </div>
+        {/* Content */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Tabs */}
+          <RepoTabs
+            tabs={openTabs}
+            activeTab={activeTab || ''}
+            onSelectTab={setActiveTab}
+            onCloseTab={handleCloseTab}
+          />
+
+          {/* Main Panel */}
+          <main className="flex-1 overflow-y-auto">
+            {activeTab ? (
+              <div className="p-6 space-y-6 max-w-4xl">
+                {/* Error */}
+                {error && (
+                  <div className="bg-red-100 dark:bg-red-900 p-4 rounded">
+                    <p className="text-red-800 dark:text-red-200 text-sm">{error}</p>
                   </div>
-                ))}
+                )}
+
+                {/* Task Input */}
+                <TaskInput
+                  repoName={activeTab}
+                  onSubmit={handleRunTask}
+                  loading={runLoading}
+                />
+
+                {/* Live Output */}
+                {activeRunId && (
+                  <LiveOutput runId={activeRunId} isRunning={true} />
+                )}
+
+                {/* Run History */}
+                <RunHistory
+                  runs={runs}
+                  loading={false}
+                  onSelectRun={(runId) => setSelectedRunId(runId)}
+                />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-full text-slate-500">
+                <div className="text-center">
+                  <p className="text-lg mb-2">No repository selected</p>
+                  <p className="text-sm">Choose a repository from the sidebar to get started</p>
+                </div>
               </div>
             )}
-          </section>
-
-          {/* Next Steps */}
-          <section className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-6 border border-blue-200 dark:border-blue-800">
-            <h3 className="text-lg font-semibold mb-2 text-blue-900 dark:text-blue-100">
-              Next: Phase 2 - Core UI
-            </h3>
-            <ul className="space-y-1 text-sm text-blue-800 dark:text-blue-200">
-              <li>• Sidebar with repository list</li>
-              <li>• Tab management for multiple repos</li>
-              <li>• Task input form</li>
-              <li>• Run execution and history</li>
-            </ul>
-          </section>
+          </main>
         </div>
-      </main>
+      </div>
+
+      {/* Modals */}
+      {selectedRunId && (
+        <RunDetails runId={selectedRunId} onClose={() => setSelectedRunId(null)} />
+      )}
+
+      <SettingsPanel isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }
