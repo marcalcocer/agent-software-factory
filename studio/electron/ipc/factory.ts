@@ -19,6 +19,156 @@ const factoryCLI = path.join(__dirname, '../../../factory/src/cli/factory.ts');
 const activeRuns = new Map<string, ReturnType<typeof spawn>>();
 
 /**
+ * List available repositories in the workspace
+ */
+ipcMain.handle('factory:list-repos', async (): Promise<Array<{ name: string; path: string; recentRuns: number }>> => {
+  const workspaceRoot = path.join(__dirname, '../../../');
+  const logsDir = path.join(workspaceRoot, 'logs');
+  
+  const repos: Map<string, { name: string; path: string; recentRuns: number }> = new Map();
+
+  // Scan logs directory for recent runs to get repo names
+  if (fs.existsSync(logsDir)) {
+    const entries = fs.readdirSync(logsDir, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      
+      const summaryPath = path.join(logsDir, entry.name, 'summary.json');
+      if (!fs.existsSync(summaryPath)) continue;
+      
+      try {
+        const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+        const repoName = path.basename(summary.repository);
+        
+        if (!repos.has(repoName)) {
+          repos.set(repoName, {
+            name: repoName,
+            path: summary.repository,
+            recentRuns: 0,
+          });
+        }
+        
+        const repo = repos.get(repoName)!;
+        repo.recentRuns += 1;
+      } catch {
+        // Skip invalid entries
+      }
+    }
+  }
+
+  return Array.from(repos.values()).sort((a, b) => b.recentRuns - a.recentRuns);
+});
+
+/**
+ * Run a task on a repository (simplified interface)
+ */
+ipcMain.handle('factory:run-task', async (_event, params: {
+  repo: string;
+  task: string;
+  maxAttempts?: number;
+  dryRun?: boolean;
+}): Promise<{ runId: string }> => {
+  // Ensure auth first
+  const authenticated = await ensureClaudeAuth();
+  if (!authenticated) {
+    throw new Error('Authentication required. Please log in to Claude CLI.');
+  }
+
+  // Build CLI args
+  const args = [
+    factoryCLI,
+    'run',
+    '--repo', params.repo,
+    '--task', params.task,
+  ];
+
+  if (params.maxAttempts) {
+    args.push('--max-attempts', String(params.maxAttempts));
+  }
+  if (params.dryRun) {
+    args.push('--dry-run');
+  }
+
+  console.log('[Factory IPC] Running factory with args:', args);
+
+  // Spawn the factory process
+  const proc = spawn('npx', ['tsx', ...args], {
+    env: {
+      ...process.env,
+      FACTORY_NON_INTERACTIVE: 'true',
+    },
+    cwd: path.join(__dirname, '../../../factory'),
+  });
+
+  // Extract runId from output
+  let runId = '';
+  let buffer = '';
+
+  proc.stdout?.on('data', (data) => {
+    const text = data.toString();
+    buffer += text;
+    console.log('[Factory stdout]', text);
+    
+    // Try to extract runId from the output
+    const match = buffer.match(/Factory run ([\w-]+)/);
+    if (match && !runId) {
+      runId = match[1];
+      activeRuns.set(runId, proc);
+      console.log('[Factory IPC] Extracted runId:', runId);
+    }
+
+    // Send output to renderer for real-time display
+    if (runId) {
+      mainWindow?.webContents.send('factory:output', runId, text);
+    }
+  });
+
+  proc.stderr?.on('data', (data) => {
+    const text = data.toString();
+    console.log('[Factory stderr]', text);
+    if (runId) {
+      mainWindow?.webContents.send('factory:output', runId, text);
+    }
+  });
+
+  proc.on('close', (code) => {
+    console.log('[Factory] Process closed with code:', code);
+    if (runId) {
+      activeRuns.delete(runId);
+      mainWindow?.webContents.send('factory:completed', runId, code);
+    }
+  });
+
+  proc.on('error', (error) => {
+    console.error('[Factory] Process error:', error);
+    if (runId) {
+      mainWindow?.webContents.send('factory:error', runId, error.message);
+    }
+  });
+
+  // Wait for runId to be extracted (with timeout)
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      if (!runId) {
+        proc.kill();
+        reject(new Error('Failed to start factory run - no runId generated'));
+      }
+    }, 15000);
+    
+    const checkRunId = setInterval(() => {
+      if (runId) {
+        clearTimeout(timeout);
+        clearInterval(checkRunId);
+        resolve();
+      }
+    }, 100);
+  });
+
+  return { runId };
+});
+
+/**
  * Run a factory task
  */
 ipcMain.handle('factory:run', async (_event, params: {

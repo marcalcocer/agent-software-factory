@@ -19,6 +19,12 @@ export interface IPCChannels {
     maxAttempts?: number;
     branch?: string;
   }) => Promise<{ runId: string }>;
+  'factory:run-task': (params: {
+    repo: string;
+    task: string;
+    maxAttempts?: number;
+    dryRun?: boolean;
+  }) => Promise<{ runId: string }>;
   'factory:resume': (params: {
     runId: string;
     decision?: 'ACKNOWLEDGE' | 'ABORT';
@@ -26,6 +32,7 @@ export interface IPCChannels {
     clarifications?: string;
   }) => Promise<void>;
   'factory:list': (repoPath?: string) => Promise<FactoryRun[]>;
+  'factory:list-repos': () => Promise<Array<{ name: string; path: string; recentRuns: number }>>;
   'factory:get': (runId: string) => Promise<FactoryRun | null>;
   'factory:cancel': (runId: string) => Promise<void>;
 
@@ -57,4 +64,9 @@ export interface IPCEvents {
   'agent:event': (event: AgentEvent) => void;
   'run:status': (runId: string, status: FactoryRun['status']) => void;
   'auth:changed': (providers: AuthProvider[]) => void;
+  'factory:output': (runId: string, data: string) => void;
+  'factory:completed': (runId: string, exitCode: number) => void;
+  'factory:error': (runId: string, error: string) => void;
+  'auth:login-started': (provider: string) => void;
+  'auth:login-completed': (provider: string, success: boolean) => void;
 }
