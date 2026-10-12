@@ -13,7 +13,7 @@ function createIPC() {
       channel: K,
       ...args: Parameters<IPCChannels[K]>
     ): ReturnType<IPCChannels[K]> => {
-      return ipcRenderer.invoke(channel, ...args) as ReturnType<IPCChannels[K]>;
+      return ipcRenderer.invoke(channel, ...(args as any[])) as ReturnType<IPCChannels[K]>;
     },
 
     // Event listeners (main -> renderer)
@@ -22,7 +22,7 @@ function createIPC() {
       callback: IPCEvents[K]
     ) => {
       const subscription = (_event: Electron.IpcRendererEvent, ...args: any[]) => {
-        callback(...args);
+        (callback as any)(...args);
       };
       ipcRenderer.on(channel, subscription);
       return () => ipcRenderer.removeListener(channel, subscription);
@@ -34,7 +34,7 @@ function createIPC() {
       callback: IPCEvents[K]
     ) => {
       ipcRenderer.once(channel, (_event, ...args: any[]) => {
-        callback(...args);
+        (callback as any)(...args);
       });
     },
   };

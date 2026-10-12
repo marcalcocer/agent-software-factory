@@ -53,9 +53,9 @@ ipcMain.handle('repo:select', async (_event, repoPath: string): Promise<void> =>
   }
 });
 
-ipcMain.handle('diff:get', async (_event, repoPath: string, runId?: string): Promise<{ files: string[]; diff: string }> => {
-  // If runId is provided, get diff from that run's branch
-  // Otherwise get current working tree diff
+ipcMain.handle('diff:get', async (_event, repoPath: string, _runId?: string): Promise<{ files: string[]; diff: string }> => {
+  // TODO: If runId is provided, get diff from that run's branch
+  // For now, get current working tree diff
   
   return new Promise((resolve, reject) => {
     const proc = spawn('git', ['diff', '--name-only'], { cwd: repoPath });

@@ -39,7 +39,7 @@ ipcMain.handle('auth:status', async (): Promise<AuthProvider[]> => {
 });
 
 // Trigger Claude login
-ipcMain.handle('auth:login', async (provider: 'claude-cli'): Promise<boolean> => {
+ipcMain.handle('auth:login', async (_event, provider: 'claude-cli'): Promise<boolean> => {
   if (provider === 'claude-cli') {
     return await triggerClaudeLogin();
   }

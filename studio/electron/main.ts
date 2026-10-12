@@ -1,7 +1,7 @@
 /**
  * Electron main process - handles app lifecycle and native OS integration.
  */
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 

@@ -30,9 +30,9 @@
     "postcss": "^8.5.10",
     "tailwindcss": "^3.4.17",
     "typescript": "~5.7",
-    "vite": "^6.0.7",
-    "vite-plugin-electron": "^0.28.9",
-    "vite-plugin-electron-renderer": "^0.14.6",
+    "vite": "^6.0.0",
+    "vite-plugin-electron": "^1.1.2",
+    "vite-plugin-electron-renderer": "^0.14.5",
     "wait-on": "^8.0.1"
   }
 }
