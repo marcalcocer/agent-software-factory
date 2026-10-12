@@ -1,7 +1,7 @@
 /**
  * Claude CLI authentication service - handles auto-login flow.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mainWindow } from '../main.js';
 
 export interface AuthStatus {
@@ -59,46 +59,124 @@ export async function checkClaudeAuth(): Promise<AuthStatus> {
 }
 
 /**
- * Trigger Claude login flow - opens browser automatically.
+ * Detect the available terminal emulator on the system
+ */
+function detectTerminal(): string | null {
+  const terminals = [
+    'gnome-terminal',
+    'konsole',
+    'xfce4-terminal',
+    'mate-terminal',
+    'tilix',
+    'terminator',
+    'xterm',
+    'x-terminal-emulator',
+  ];
+
+  for (const term of terminals) {
+    try {
+      const result = spawnSync('which', [term], { encoding: 'utf8' });
+      if (result.status === 0 && result.stdout.trim()) {
+        return term;
+      }
+    } catch {
+      // Continue to next terminal
+    }
+  }
+  return null;
+}
+
+/**
+ * Trigger Claude login flow - opens a terminal window for the user to complete login.
  * 
- * This is the auto-login improvement: instead of just showing an error,
- * we spawn `claude login` which opens the browser, and wait for completion.
+ * The Claude Code CLI requires interactive input. We open a real terminal window
+ * so the user can see the CLI, type /login, and complete the authentication.
  */
 export async function triggerClaudeLogin(): Promise<boolean> {
-  // Notify renderer that login is starting
+  console.log('[Claude Auth] Starting Claude Code login...');
   mainWindow?.webContents.send('auth:login-started', 'claude-cli');
 
   try {
+    const terminal = detectTerminal();
+    
+    if (!terminal) {
+      console.error('[Claude Auth] No terminal emulator found');
+      mainWindow?.webContents.send('auth:login-completed', 'claude-cli', false);
+      return false;
+    }
+
+    console.log('[Claude Auth] Using terminal:', terminal);
+
+    // Build the command to run in the terminal
+    // We create a script that runs claude login, then waits for user to close
+    const loginCommand = 'claude login; echo ""; echo "Login complete! You can close this window."; read -p "Press Enter to close..."';
+
     const success = await new Promise<boolean>((resolve) => {
-      // Spawn claude login with stdio: inherit so the browser opens
-      const loginProc = spawn('claude', ['login'], {
-        stdio: 'inherit', // This allows the CLI to open the browser
-        timeout: 120000, // 2 minute timeout
-      });
+      let terminalProc: ReturnType<typeof spawn>;
 
-      loginProc.on('close', (code) => {
-        resolve(code === 0);
-      });
+      // Different terminals have different syntax for running commands
+      if (terminal === 'gnome-terminal') {
+        terminalProc = spawn(terminal, ['--', 'bash', '-c', loginCommand], {
+          detached: true,
+        });
+      } else if (terminal === 'konsole') {
+        terminalProc = spawn(terminal, ['-e', 'bash', '-c', loginCommand], {
+          detached: true,
+        });
+      } else if (terminal === 'xterm') {
+        terminalProc = spawn(terminal, ['-e', 'bash', '-c', loginCommand], {
+          detached: true,
+        });
+      } else {
+        // Generic fallback - most terminals support -e
+        terminalProc = spawn(terminal, ['-e', 'bash', '-c', loginCommand], {
+          detached: true,
+        });
+      }
 
-      loginProc.on('error', () => {
+      // Don't wait for the terminal to close - poll for auth instead
+      terminalProc.unref();
+
+      // Poll for authentication status
+      let attempts = 0;
+      const maxAttempts = 150; // 5 minutes (2 second intervals)
+      
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        
+        const status = await checkClaudeAuth();
+        
+        if (status.type === 'ok') {
+          clearInterval(pollInterval);
+          console.log('[Claude Auth] ✓ Authentication successful!');
+          resolve(true);
+          return;
+        }
+        
+        if (attempts >= maxAttempts) {
+          clearInterval(pollInterval);
+          console.log('[Claude Auth] Timeout waiting for authentication');
+          resolve(false);
+          return;
+        }
+        
+        if (attempts % 15 === 0) {
+          console.log(`[Claude Auth] Waiting for login... (${Math.floor(attempts * 2 / 60)}m ${(attempts * 2) % 60}s)`);
+        }
+      }, 2000);
+
+      terminalProc.on('error', (error) => {
+        clearInterval(pollInterval);
+        console.error('[Claude Auth] Terminal error:', error);
         resolve(false);
       });
     });
 
-    if (success) {
-      // Verify auth worked
-      const status = await checkClaudeAuth();
-      const authenticated = status.type === 'ok';
-      
-      // Notify renderer
-      mainWindow?.webContents.send('auth:login-completed', 'claude-cli', authenticated);
-      
-      return authenticated;
-    }
-
-    mainWindow?.webContents.send('auth:login-completed', 'claude-cli', false);
-    return false;
+    mainWindow?.webContents.send('auth:login-completed', 'claude-cli', success);
+    return success;
+    
   } catch (error) {
+    console.error('[Claude Auth] Login flow error:', error);
     mainWindow?.webContents.send('auth:login-completed', 'claude-cli', false);
     return false;
   }
