@@ -19,7 +19,11 @@ usage, and the whole graph can be exercised with **zero cost** via `npm run smok
 - [Why this exists](#why-this-exists)
 - [Architecture](#architecture)
 - [The agents](#the-agents)
+- [Which model runs each step](#which-model-runs-each-step)
+- [Anatomy of an agent call](#anatomy-of-an-agent-call)
 - [LLM resiliency: model fallback chains](#llm-resiliency-model-fallback-chains)
+- [Execution backends](#execution-backends)
+- [Cost and quota model](#cost-and-quota-model)
 - [Cascading conventions](#cascading-conventions)
 - [Observability and traceability](#observability-and-traceability)
 - [Safety model](#safety-model)
@@ -127,36 +131,128 @@ can commit, push or open a pull request — delivery is a separate, configuratio
 
 ---
 
-## LLM resiliency: model fallback chains
+## Which model runs each step
 
-Models are declared as a **native Mastra fallback chain**, so a 429 / 5xx / timeout on the
-primary provider transparently fails over to the next one, with its own retry budget:
+Roles are mapped to **capability tiers**, never to hardcoded model ids. There are two tiers:
 
-```ts
-// src/utils/model-router.ts (excerpt)
-model: [
-  { model: 'anthropic/claude-sonnet-4-6', maxRetries: 3 },  // primary
-  { model: 'openai/gpt-4o',               maxRetries: 2 },  // fallback
-]
+- **`reasoning`** — judgment, design, code authoring, security analysis, root-cause analysis.
+- **`fast`** — mechanical work: turning supplied test output into a verdict, writing docs from a
+  known diff.
+
+The factory needs **one credential**. Failover is cross-tier inside Anthropic
+(`sonnet` ⇄ `haiku`), not cross-vendor, so no second provider or second API key is required.
+
+| # | Step | Role | Tier | `claude-cli` model | `api` model |
+| --- | --- | --- | --- | --- | --- |
+| 01 | Plan the change | `pm-architect` | reasoning | `sonnet` | `claude-sonnet-4-6` |
+| 02 | Implement + write tests | `developer` | reasoning | `sonnet` | `claude-sonnet-4-6` |
+| 03 | Verify against acceptance criteria | `qa-tester` | **fast** | **`haiku`** | **`claude-haiku-4-5`** |
+| 04 | Root-cause analysis on failure | `triage` | reasoning | `sonnet` | `claude-sonnet-4-6` |
+| 05 | Code review | `reviewer` | reasoning | `sonnet` | `claude-sonnet-4-6` |
+| 06 | Security review | `security` | reasoning | `sonnet` | `claude-sonnet-4-6` |
+| 07 | Update documentation | `documentation` | **fast** | **`haiku`** | **`claude-haiku-4-5`** |
+| 08 | Commit / push / draft PR | — | *deterministic, no LLM* | — | — |
+
+**Why only QA and documentation are on the cheap tier.** Both consume evidence rather than
+produce judgment: the factory has already executed the test suite and hands over the real exit
+code, the parsed totals and the full patch, so QA is reading and classifying. Documentation
+writes prose from a diff that already exists. Everything that decides *what to build*, *whether
+code is correct*, or *whether to retry or escalate* stays on the reasoning tier — a weak triage
+model makes bad loop decisions, which is the single most expensive failure mode.
+
+**Overriding any of it.** Per role, comma-separated, primary first:
+
+```bash
+# claude-cli backend (aliases: haiku | sonnet | opus, or a full model id)
+FACTORY_CLI_MODEL_QA_TESTER="sonnet"            # promote QA to the reasoning tier
+FACTORY_CLI_MODEL_DEVELOPER="opus,sonnet"       # opus primary, sonnet failover
+
+# api backend (provider-prefixed ids)
+FACTORY_MODEL_REVIEWER="anthropic/claude-opus-4-5,anthropic/claude-sonnet-4-6"
 ```
 
-- Roles are mapped to **capability tiers** (`reasoning` / `fast`), not to hardcoded model ids,
-  so upgrading a generation is a one-line change.
-- `FACTORY_MODEL_GENERATION=legacy` switches the whole factory to the models of the original
-  specification (`anthropic/claude-3.7-sonnet`, `anthropic/claude-3.5-haiku`, GPT-4o
-  fallbacks). The default is `current`.
-- Any role can be overridden with a comma-separated chain, e.g.
-  `FACTORY_MODEL_DEVELOPER="anthropic/claude-opus-4-5,openai/gpt-5.1,google/gemini-2.5-pro"`.
-- `FACTORY_ENABLE_GOOGLE_FALLBACK=true` appends Gemini as a last resort to every chain.
-- `summary.json` records, per role, the **requested** model and the model that **actually
-  served** each call, plus a `failovers` counter — so provider degradation is visible after the
-  fact.
-
-Check the active routing and credentials at any time:
+Confirm what is actually active — this prints the resolved chain for every role:
 
 ```bash
 npm run factory -- doctor
 ```
+
+---
+
+## Anatomy of an agent call
+
+Every LLM call in the factory goes through one function, `invokeAgent`
+(`src/utils/agent-runner.ts`). There is no other path to a model, which is what makes the
+guarantees below hold everywhere.
+
+**What goes in:**
+
+1. **System prompt** — the role's prompt from `src/prompts/<role>.md`, with the resolved
+   convention cascade appended (`global-rules/` then the target repo's `AGENTS.md`).
+2. **User message** — assembled by the workflow step from labelled blocks: the task, the plan,
+   the acceptance criteria, the previous attempt's reports, the diff, the real suite output.
+   Empty blocks are dropped (`promptSection` / `composePrompt`).
+3. **Output contract** — the role's Zod schema from `src/utils/schemas.ts`.
+4. **Tool grants** — scoped per role (see [Safety model](#safety-model)).
+
+**What comes back** is always a schema-valid object. Free-text parsing is never relied on:
+
+| Backend | Structured output mechanism |
+| --- | --- |
+| `api` | Mastra `structuredOutput: { schema }` → provider-native JSON mode |
+| `claude-cli` | `--json-schema` (Zod → JSON Schema) → pre-parsed `structured_output`, then re-validated with Zod |
+
+**If validation fails**, the call walks an escalation ladder rather than failing the step:
+
+```
+rung 1   role's model          (e.g. haiku)
+rung 2   role's model again    + the exact Zod errors it violated
+rung 3   escalation model      (sonnet, FACTORY_CLI_ESCALATION_MODEL)
+```
+
+A role already on the reasoning tier gets rungs 1–2 only. Each rung is logged as an
+`agent_schema_retry` event, and a successful escalation is flagged `failedOver: true` in
+`summary.json` — so a small model quietly costing you reasoning-tier calls is visible, not
+hidden. Only if every rung fails does the step raise.
+
+**What gets recorded per call**, into `logs/<runId>/`:
+
+- a numbered artifact (`03-qa-tester.attempt-2.json`) holding the full validated payload
+- an `agent_call` event with requested model, serving model, input/output/cached/reasoning
+  tokens, tool-call count, duration and the failover flag
+- aggregated per-role totals in `summary.json` under `modelsUsed`
+
+---
+
+## LLM resiliency: model fallback chains
+
+In `api` mode, models are declared as a **native Mastra fallback chain**, so a 429 / 5xx /
+timeout transparently fails over to the next entry, each with its own retry budget:
+
+```ts
+// src/utils/model-router.ts — a reasoning role resolves to:
+model: [
+  { model: 'anthropic/claude-sonnet-4-6', maxRetries: 3 },  // primary
+  { model: 'anthropic/claude-haiku-4-5',  maxRetries: 2 },  // cross-tier failover
+]
+```
+
+In `claude-cli` mode the equivalent is native too, via `--fallback-model`:
+
+```
+--model sonnet --fallback-model opus,haiku
+```
+
+- **Defaults are Anthropic-only**, by design: one credential, no second vendor.
+- `FACTORY_ENABLE_GOOGLE_FALLBACK=true` appends `google/gemini-3.8-flash` as a last resort to
+  every chain (needs `GOOGLE_GENERATIVE_AI_API_KEY`).
+- `FACTORY_MODEL_GENERATION=legacy` switches to the Claude generation of the original
+  specification (`claude-3.7-sonnet` / `claude-3.5-haiku`). Default is `current`.
+- Other providers (OpenAI, Groq, OpenRouter, xAI, Mistral, DeepSeek) are **supported but never
+  configured by default**. Point a role at one with `FACTORY_MODEL_<ROLE>` and supply that
+  provider's key; no code change needed.
+- `summary.json` records, per role, the **requested** model, the model that **actually served**
+  the call, and a `failovers` counter — provider degradation is visible after the fact.
 
 ---
 
@@ -167,8 +263,7 @@ The factory can source its LLM calls two ways, selected with `FACTORY_PROVIDER`.
 ### `api` (default) — metered API keys
 
 Provider SDKs through Mastra's model router, with the native fallback chains described above.
-Needs `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY`. Roughly $0.10–0.15 per run with prompt
-caching enabled.
+Needs only `ANTHROPIC_API_KEY`. Roughly $0.10–0.15 per run with prompt caching enabled.
 
 ### `claude-cli` — your Claude Pro/Max subscription
 
@@ -226,6 +321,74 @@ only through the factory's own allow-listed test runner.
   tool is. Gated delivery and the reviewed diff remain the control.
 - `total_cost_usd` is reported by the CLI but not billed; `summary.json` still records full
   per-role token counts.
+
+### Credentials deliberately not used
+
+Recorded so the question doesn't get re-litigated. These were investigated and rejected:
+
+| Credential | Why not |
+| --- | --- |
+| Claude subscription **OAuth token** (`sk-ant-oat01-…`) used directly from the factory | Making it work requires sending a forged Claude Code identity (`anthropic-beta: oauth-2025-04-20` plus a spoofed "You are Claude Code" system prompt). That is circumventing an access control, and the documented consequence is account termination. The `claude-cli` backend achieves the same goal by invoking the real binary instead. |
+| **OpenCode Zen free tier** (`opencode/*`) | The API answers `403 FreeTierError: "OpenCode's free tier can only be used from within OpenCode"`. Explicitly licensed to their client. (One model briefly returned `200` while all ten siblings returned the restriction — a gap in their gating, not permission.) |
+| **OpenCode Go** (`opencode-go/*`) | `403 — An active OpenCode Go subscription is required`. |
+| OpenCode Zen paid models | `402 — Insufficient account funds`. |
+| **GitHub Copilot** OAuth token | Same client-only licensing restriction as the OpenCode free tier. |
+| **Local Ollama** | Technically fine and genuinely free — `qwen3:4b` did return schema-valid JSON. Rejected on latency: ~81 s for a trivial response, so ~12 minutes of pure wait across a 9-call pipeline. Viable as a last-resort fallback if you want it; not as a workhorse. |
+
+---
+
+## Cost and quota model
+
+### `claude-cli` — subscription window, not dollars
+
+Nothing is billed per token; usage counts against your Claude plan's **rolling usage window**.
+Measured on a real run (small repo, one clean attempt, 6 agent calls):
+
+| Metric | Value |
+| --- | --- |
+| Wall-clock | ~87 s |
+| Total tokens | ~400k |
+| of which cache reads | ~330k (cheap, but still counts toward the window) |
+| Input / output | ~13k / ~16k |
+
+Per-call overhead is the thing worth understanding. A naive headless call carries Claude Code's
+own system prompt, tool schemas and `CLAUDE.md` preamble — **~162k tokens before your prompt is
+even added**. The factory suppresses that with `--system-prompt` (replace, not append) plus
+`--exclude-dynamic-system-prompt-sections`, bringing it to **~13.8k — a 91% reduction**, i.e.
+roughly 11x more runs per window. It also measurably *improves* answers, because the CLI's
+default persona no longer biases the agent's reasoning.
+
+When the window is exhausted, the step fails with a classified `rate-limit` error, the run
+suspends, and `factory resume --run-id <id>` continues it once the window resets. Nothing is
+lost.
+
+Further reduction: point `ANTHROPIC_BASE_URL` at a caching/compression proxy such as Headroom
+(see below).
+
+### `api` — metered
+
+Measured against the real prompt sizes in this repo (~4.6k tokens of system prompt +
+conventions per call, ~25k of packed repo context):
+
+| Routing | Per clean run | With prompt caching |
+| --- | --- | --- |
+| All reasoning tier | $0.54 | **$0.20** |
+| All fast tier | $0.18 | **$0.07** |
+| Default mixed routing | — | **~$0.10–0.15** |
+
+Add ~40% for a run that retries once. `$5` of credit is roughly 30–50 runs.
+
+### Using Headroom (or any proxy) with `claude-cli`
+
+If you already run a Claude Code caching proxy, the factory uses it transparently:
+
+```bash
+FACTORY_CLAUDE_CLI_BASE_URL=http://127.0.0.1:8787   # or just ANTHROPIC_BASE_URL
+```
+
+Use the **root** URL — Claude Code appends `/v1/messages` itself, so a `/v1` suffix 404s. This
+is the real Claude Code binary talking to a proxy built for it, so nothing about the client
+identity changes; the proxy's compression and caching simply reduce window burn.
 
 ---
 
@@ -498,9 +661,15 @@ All variables are optional unless stated. See `.env.example`.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | — | Primary provider (required unless overridden/dry-run) |
-| `OPENAI_API_KEY` | — | Fallback provider |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | — | Optional last-resort fallback |
+| `FACTORY_PROVIDER` | `api` | `api` (metered key) or `claude-cli` (Claude subscription) |
+| `ANTHROPIC_API_KEY` | — | Only credential the defaults need in `api` mode |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | — | Only if `FACTORY_ENABLE_GOOGLE_FALLBACK=true` |
+| `FACTORY_CLAUDE_CLI_BASE_URL` | — | Proxy for the CLI backend (or use `ANTHROPIC_BASE_URL`) |
+| `FACTORY_CLAUDE_CLI_TIMEOUT_MS` | `600000` | Timeout for one headless `claude` call |
+| `FACTORY_CLAUDE_CLI_MAX_BUDGET_USD` | — | `--max-budget-usd` ceiling per call |
+| `FACTORY_CLAUDE_CLI_FILE_TOOLS` | `true` | Grant Claude Code's file tools, scoped to the repo |
+| `FACTORY_CLI_MODEL_<ROLE>` | — | Per-role CLI chain, e.g. `sonnet` or `opus,sonnet` |
+| `FACTORY_CLI_ESCALATION_MODEL` | `sonnet` | Model a cheap-tier call escalates to on schema failure |
 | `FACTORY_WORKSPACE_ROOT` | `~/workspace` | Hard boundary for all file operations |
 | `FACTORY_ALLOW_ANY_PATH` | `false` | Allow repositories outside the workspace |
 | `FACTORY_MAX_ATTEMPTS` | `3` | Iterations before human escalation |
@@ -564,7 +733,12 @@ route every path through `resolveInsideRepo` and every command through `src/util
 
 | Symptom | Cause / fix |
 | --- | --- |
-| `No LLM provider credentials found` | Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in `.env`, or use `--dry-run`. |
+| `No LLM provider credentials found` | Set `ANTHROPIC_API_KEY` in `.env`, or use `FACTORY_PROVIDER=claude-cli`, or `--dry-run`. |
+| `claude-cli/auth: OAuth session expired` | Run `claude login`. Claude Code keeps its own session, separate from other clients. Verify with `doctor --probe`. |
+| `claude-cli/rate-limit` | Your Claude plan's usage window is exhausted. Resume with the printed `factory resume --run-id <id>` once it resets. |
+| `claude-cli/not-installed` | `claude` is not on `PATH`. Install Claude Code, or switch to `FACTORY_PROVIDER=api`. |
+| `claude` calls 404 through a proxy | Use the **root** proxy URL (`http://127.0.0.1:8787`), not `/v1` — the CLI appends `/v1/messages` itself. |
+| Output violates schema on all rungs | The ladder (role model → repair → `sonnet`) all failed. The `agent_schema_retry` events show the exact Zod errors; usually a prompt/schema mismatch after editing a schema. |
 | `Target repository ... has uncommitted changes` | Commit or stash first: the factory needs a clean baseline to produce a reviewable diff. |
 | `Path ... is outside the factory workspace` | Move the repository under `FACTORY_WORKSPACE_ROOT` or set `FACTORY_ALLOW_ANY_PATH=true`. |
 | `Executable "..." is not allow-listed` | Add it to `FACTORY_EXTRA_ALLOWED_COMMANDS`. |

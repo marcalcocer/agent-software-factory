@@ -19,7 +19,12 @@ import { z as zod } from 'zod';
 import { appendEvent, type ArtifactStep } from '../tools/logger-tools.ts';
 import { getFactoryConfig } from './factory-config.ts';
 import { REQUEST_CONTEXT_KEYS } from './context-loader.ts';
-import { getClaudeCliChain, getPrimaryModelId, type AgentRole } from './model-router.ts';
+import {
+  getClaudeCliChain,
+  getClaudeCliEscalationModel,
+  getPrimaryModelId,
+  type AgentRole,
+} from './model-router.ts';
 import { runClaudeCli, type ClaudeCliToolPolicy } from './claude-cli.ts';
 
 export interface InvokeAgentOptions<TSchema extends z.ZodType> {
@@ -246,15 +251,37 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
 
   const basePrompt =
     options.prompt + executionEnvironmentNote(toolPolicy, options.role, options.repoPath);
-  let prompt = basePrompt;
+
+  /*
+   * Escalation ladder for a cheap-tier role:
+   *   1. the role's own model
+   *   2. the same model, told exactly which contract it broke
+   *   3. the reasoning model, so one flaky small-model response cannot escalate the run
+   *
+   * A role already on the reasoning tier simply gets passes 1 and 2.
+   */
+  const escalationModel = getClaudeCliEscalationModel();
+  const ladder: { model: string; repair: boolean }[] = [
+    { model, repair: false },
+    { model, repair: true },
+    ...(model === escalationModel ? [] : [{ model: escalationModel, repair: true }]),
+  ];
+
   let lastError = '';
 
-  for (let pass = 1; pass <= 2; pass += 1) {
+  for (const [index, rung] of ladder.entries()) {
+    const isLast = index === ladder.length - 1;
+    const prompt = rung.repair
+      ? `${basePrompt}\n\n## Output correction required\n\n` +
+        `Your previous response violated the output contract:\n${lastError}\n\n` +
+        'Return the corrected JSON only.'
+      : basePrompt;
+
     const response = await runClaudeCli({
       systemPrompt,
       prompt,
       ...(jsonSchema === undefined ? {} : { jsonSchema }),
-      model,
+      model: rung.model,
       fallbackModels,
       cwd: options.repoPath,
       toolPolicy,
@@ -284,6 +311,11 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
     const parsed = options.schema.safeParse(candidate);
 
     if (parsed.success) {
+      // Either the schema ladder escalated to another model, or the CLI's own
+      // `--fallback-model` answered: both are reported as a failover.
+      const failedOver =
+        rung.model !== model || !response.servedByModel.includes(rung.model);
+
       appendEvent(options.runId, {
         type: 'agent_call',
         role: options.role,
@@ -298,7 +330,7 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
         totalTokens: response.usage.totalTokens,
         toolCalls: response.toolCalls,
         durationMs,
-        failedOver: !response.servedByModel.includes(model),
+        failedOver,
         dryRun: false,
       });
       return {
@@ -306,7 +338,7 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
         text: response.text,
         requestedModel,
         servedByModel: response.servedByModel,
-        failedOver: !response.servedByModel.includes(model),
+        failedOver,
         usage: {
           inputTokens: response.usage.inputTokens,
           outputTokens: response.usage.outputTokens,
@@ -325,12 +357,16 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
       .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
       .join('; ');
 
-    if (pass === 1) {
-      prompt =
-        `${basePrompt}\n\n## Output correction required\n\n` +
-        `Your previous response violated the output contract:\n${lastError}\n\n` +
-        'Return the corrected JSON only.';
-    }
+    appendEvent(options.runId, {
+      type: 'agent_schema_retry',
+      role: options.role,
+      step: options.step,
+      attempt,
+      rung: index + 1,
+      model: rung.model,
+      escalatesTo: isLast ? null : (ladder[index + 1]?.model ?? null),
+      error: lastError,
+    });
   }
 
   const durationMs = Date.now() - startedAt;
@@ -341,10 +377,11 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
     attempt,
     requestedModel,
     durationMs,
-    error: `schema validation failed after repair retry: ${lastError}`,
+    error: `schema validation failed on every model in the ladder: ${lastError}`,
   });
   throw new Error(
-    `Agent "${options.role}" returned output violating its schema after one repair retry ` +
+    `Agent "${options.role}" returned output violating its schema on all ` +
+      `${ladder.length} attempts (${ladder.map((rung) => rung.model).join(' -> ')}) ` +
       `during step "${options.step}": ${lastError}`,
   );
 }

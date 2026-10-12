@@ -49,36 +49,30 @@ const ROLE_TIERS: Record<AgentRole, ModelTier> = {
   documentation: 'fast',
 };
 
-/** Roles whose OpenAI fallback is intentionally the cheaper "mini" model. */
-const MINI_FALLBACK_ROLES: ReadonlySet<AgentRole> = new Set([
-  'qa-tester',
-  'reviewer',
-  'documentation',
-]);
-
 interface GenerationModels {
   reasoningPrimary: string;
   fastPrimary: string;
-  flagshipFallback: string;
-  miniFallback: string;
   googleFallback: string;
 }
 
+/**
+ * Default chains are **Anthropic-only**.
+ *
+ * Failover is cross-tier within one provider (sonnet <-> haiku) rather than cross-vendor, so
+ * the factory needs exactly one credential. Other providers remain fully supported through
+ * `FACTORY_MODEL_<ROLE>` overrides - only the defaults are opinionated.
+ */
 const GENERATIONS: Record<'current' | 'legacy', GenerationModels> = {
   current: {
     reasoningPrimary: 'anthropic/claude-sonnet-4-6',
     fastPrimary: 'anthropic/claude-haiku-4-5',
-    flagshipFallback: 'openai/gpt-4o',
-    miniFallback: 'openai/gpt-4o-mini',
-    googleFallback: 'google/gemini-2.5-pro',
+    googleFallback: 'google/gemini-3.8-flash',
   },
   legacy: {
-    // Exact models of the original architecture specification.
+    // Claude models of the original architecture specification.
     reasoningPrimary: 'anthropic/claude-3.7-sonnet',
     fastPrimary: 'anthropic/claude-3.5-haiku',
-    flagshipFallback: 'openai/gpt-4o',
-    miniFallback: 'openai/gpt-4o-mini',
-    googleFallback: 'google/gemini-2.5-pro',
+    googleFallback: 'google/gemini-3.8-flash',
   },
 };
 
@@ -109,6 +103,18 @@ const CLI_ROLE_ENV_KEYS: Record<AgentRole, string> = {
   reviewer: 'FACTORY_CLI_MODEL_REVIEWER',
   documentation: 'FACTORY_CLI_MODEL_DOCUMENTATION',
 };
+
+/**
+ * Model a failed cheap-tier call escalates to.
+ *
+ * A small model that cannot satisfy the output contract after a repair retry is re-run here
+ * rather than failing the step: a flaky `haiku` response should not escalate a run to a human.
+ */
+export function getClaudeCliEscalationModel(): string {
+  return (
+    process.env.FACTORY_CLI_ESCALATION_MODEL?.trim() || CLI_TIER_MODELS.reasoning
+  );
+}
 
 /** Resolved CLI model + failover list for a role. */
 export function getClaudeCliChain(role: AgentRole): { model: string; fallbackModels: string[] } {
@@ -161,13 +167,13 @@ export function getModelChainIds(role: AgentRole): string[] {
   }
 
   const generation = activeGeneration();
-  const primary =
-    ROLE_TIERS[role] === 'reasoning' ? generation.reasoningPrimary : generation.fastPrimary;
-  const fallback = MINI_FALLBACK_ROLES.has(role)
-    ? generation.miniFallback
-    : generation.flagshipFallback;
+  const isReasoning = ROLE_TIERS[role] === 'reasoning';
 
-  const chain = [primary, fallback];
+  // Cross-tier failover: if the preferred tier is rate-limited, the other tier still answers.
+  const chain = isReasoning
+    ? [generation.reasoningPrimary, generation.fastPrimary]
+    : [generation.fastPrimary, generation.reasoningPrimary];
+
   if (getFactoryConfig().enableGoogleFallback) chain.push(generation.googleFallback);
   return chain;
 }
