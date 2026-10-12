@@ -156,9 +156,21 @@ async function commandRun(flags: Record<string, FlagValue>): Promise<number> {
     const credentials = checkProviderCredentials();
     if (credentials.ready.length === 0) {
       process.stderr.write(
-        `No LLM provider credentials found. Set one of: ${credentials.missing
-          .map((entry) => entry.envKey)
-          .join(', ')}\nOr run with --dry-run to exercise the graph without any LLM call.\n`,
+        [
+          `No LLM provider credentials found.`,
+          ``,
+          `Either set an API key: ${credentials.missing.map((entry) => entry.envKey).join(', ')}`,
+          ``,
+          `Or run on your Claude Pro/Max subscription - no API key needed. Make sure the Claude`,
+          `Code CLI is installed and logged in (claude login), then select the CLI backend:`,
+          ``,
+          `  FACTORY_PROVIDER=claude-cli npm run factory -- run ...`,
+          ``,
+          `Verify the session first with: FACTORY_PROVIDER=claude-cli npm run factory -- doctor --probe`,
+          ``,
+          `Or run with --dry-run to exercise the graph without any LLM call.`,
+          ``,
+        ].join('\n'),
       );
       return 2;
     }
@@ -188,6 +200,32 @@ async function commandRun(flags: Record<string, FlagValue>): Promise<number> {
     ...(asBoolean(flags.pr) === false ? { createPullRequest: false } : {}),
     ...(config.nonInteractive ? { interactive: false } : {}),
   };
+
+  // Fail fast: if no test command is available and not in dry-run, error before spending agent calls
+  if (!config.dryRun && !inputData.testCommand) {
+    const { detectProjectStack } = await import('../tools/test-runner-tools.ts');
+    const stack = detectProjectStack(repoPath);
+    if (!stack.testCommand) {
+      process.stderr.write(
+        [
+          `No runnable verification configured for this repository.`,
+          ``,
+          `The factory cannot detect a test command — repo root and immediate subdirectories`,
+          `have no recognized manifest (package.json, pom.xml, build.gradle, go.mod, etc.)`,
+          ``,
+          `Stack detected: ${stack.type} in ${stack.cwd === '.' ? 'repo root' : stack.cwd + '/'}`,
+          `Markers found: ${stack.markers.length > 0 ? stack.markers.join(', ') : '(none)'}`,
+          ``,
+          `Either:`,
+          `  - Add a build manifest at the repo root or in a subproject directory`,
+          `  - Pass --test-command "<command>" to run a specific test suite`,
+          `  - Use --dry-run to exercise the graph without verification`,
+          ``,
+        ].join('\n'),
+      );
+      return 2;
+    }
+  }
 
   heading(`Factory run ${runId}`);
   printJson('Input', { ...inputData, dryRun: config.dryRun });

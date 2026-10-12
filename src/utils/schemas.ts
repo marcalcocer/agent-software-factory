@@ -44,6 +44,7 @@ export const projectStackSchema = z.object({
   buildCommand: z.string().nullable(),
   testCommand: z.string().nullable(),
   lintCommand: z.string().nullable(),
+  cwd: z.string().describe('Working directory relative to repo root (e.g., "." or "ui" or "api").'),
   markers: z.array(z.string()).describe('Files that identified the stack.'),
 });
 export type ProjectStack = z.infer<typeof projectStackSchema>;

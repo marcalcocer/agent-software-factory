@@ -599,7 +599,7 @@ const qaTesterStep = createStep({
     // model to be the one that remembers to run it. The agent still runs targeted commands.
     let preExecuted: string | null = null;
     if (!run.dryRun && run.testCommand) {
-      const execution = await runSuite(run.repoPath, run.testCommand);
+      const execution = await runSuite(run.repoPath, run.testCommand, { cwd: run.stack.cwd });
       const outputPath = writeContextBlock(
         run.runId,
         `qa-suite-attempt-${attempt}.log`,

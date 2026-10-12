@@ -124,8 +124,14 @@ const STACKS: StackDefinition[] = [
   },
 ];
 
-/** Detects build system, test command and lint command of a repository. */
+/**
+ * Detects build system, test command and lint command of a repository.
+ * 
+ * Monorepo support: if no stack is detected at the root, scans immediate subdirectories
+ * (depth 1) for manifests and returns the first detected subproject.
+ */
 export function detectProjectStack(repoPath: string): ProjectStack {
+  // First try the root (current behavior, fast path)
   for (const stack of STACKS) {
     const found = stack.markers.filter((marker) => exists(repoPath, marker));
     if (found.length === 0) continue;
@@ -135,15 +141,60 @@ export function detectProjectStack(repoPath: string): ProjectStack {
       buildCommand: stack.build(repoPath),
       testCommand: stack.test(repoPath),
       lintCommand: stack.lint(repoPath),
+      cwd: '.',
       markers: found,
     };
   }
+
+  // Root returned unknown — scan immediate subdirectories for subprojects (monorepo pattern)
+  try {
+    const entries = fs.readdirSync(repoPath, { withFileTypes: true });
+    const subdirs = entries
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+      .map((entry) => entry.name)
+      .sort((a, b) => {
+        // Heuristic: prefer UI/frontend subdirs over backend/api (common in full-stack monorepos)
+        const frontendNames = ['ui', 'frontend', 'web', 'client', 'app', 'www'];
+        const backendNames = ['api', 'backend', 'server', 'service'];
+        const aIsFrontend = frontendNames.includes(a.toLowerCase());
+        const bIsFrontend = frontendNames.includes(b.toLowerCase());
+        const aIsBackend = backendNames.includes(a.toLowerCase());
+        const bIsBackend = backendNames.includes(b.toLowerCase());
+        if (aIsFrontend && !bIsFrontend) return -1;
+        if (!aIsFrontend && bIsFrontend) return 1;
+        if (!aIsBackend && bIsBackend) return -1;
+        if (aIsBackend && !bIsBackend) return 1;
+        return a.localeCompare(b); // fallback: alphabetical
+      });
+
+    for (const subdir of subdirs) {
+      const subdirPath = path.join(repoPath, subdir);
+      for (const stack of STACKS) {
+        const found = stack.markers.filter((marker) => exists(subdirPath, marker));
+        if (found.length === 0) continue;
+        // Found a subproject — adjust commands to run from the subdir
+        return {
+          type: stack.type,
+          language: stack.language,
+          buildCommand: stack.build(subdirPath),
+          testCommand: stack.test(subdirPath),
+          lintCommand: stack.lint(subdirPath),
+          cwd: subdir,
+          markers: found.map((m) => `${subdir}/${m}`),
+        };
+      }
+    }
+  } catch {
+    // readdirSync failed — treat as unknown
+  }
+
   return {
     type: 'unknown',
     language: 'unknown',
     buildCommand: null,
     testCommand: null,
     lintCommand: null,
+    cwd: '.',
     markers: [],
   };
 }
@@ -259,11 +310,12 @@ function toSuiteExecution(commandLine: string, result: CommandResult): SuiteExec
 export async function runSuite(
   repoPath: string,
   commandLine: string,
-  timeoutMs?: number,
+  options?: { timeoutMs?: number; cwd?: string },
 ): Promise<SuiteExecution> {
+  const effectiveCwd = options?.cwd ? path.join(repoPath, options.cwd) : repoPath;
   const result = await runCommandLine(commandLine, {
-    cwd: repoPath,
-    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    cwd: effectiveCwd,
+    ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
   });
   return toSuiteExecution(commandLine, result);
 }
@@ -361,13 +413,14 @@ export const runTestSuiteTool = createTool({
   }),
   execute: async ({ repoPath, command, timeoutMs }) => {
     const cwd = repo(repoPath);
-    const effectiveCommand = command ?? detectProjectStack(cwd).testCommand;
+    const stack = detectProjectStack(cwd);
+    const effectiveCommand = command ?? stack.testCommand;
     if (!effectiveCommand) {
       throw new Error(
         'No test command could be detected for this repository. Pass `command` explicitly.',
       );
     }
-    const execution = await runSuite(cwd, effectiveCommand, timeoutMs);
+    const execution = await runSuite(cwd, effectiveCommand, { timeoutMs, cwd: stack.cwd });
     return {
       command: execution.command,
       passed: execution.passed,

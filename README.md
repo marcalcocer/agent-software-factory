@@ -507,6 +507,26 @@ Target repositories live in `~/workspace/` (configurable via `FACTORY_WORKSPACE_
 
 ## Usage
 
+### Run on your Claude Pro/Max subscription (no API key)
+
+The factory can drive the official `claude` CLI instead of a metered Anthropic API key, so your
+subscription becomes the only credential it needs.
+
+```bash
+# 1. one-time: make sure Claude Code is installed and logged in
+claude login
+FACTORY_PROVIDER=claude-cli npm run factory -- doctor --probe   # verifies the session
+
+# 2. run as usual
+FACTORY_PROVIDER=claude-cli npm run factory -- run \
+  --repo invest-track \
+  --task "Add a dark/light/system theme toggle"
+```
+
+Put `FACTORY_PROVIDER=claude-cli` in `.env` so you don't repeat it. If the session ever
+expires you get a `claude-cli/auth` error — run `claude login` again. Nothing else changes:
+same graph, same artifacts, same resume behaviour.
+
 ### Run a task
 
 ```bash
