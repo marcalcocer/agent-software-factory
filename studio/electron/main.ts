@@ -5,6 +5,12 @@ import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Import IPC handlers FIRST (before anything else) to ensure they're registered
+import './ipc/auth.js';
+import './ipc/factory.js';
+import './ipc/settings.js';
+import './ipc/git.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Single window for now
@@ -19,7 +25,7 @@ function createWindow() {
     title: 'AI Factory Studio',
     backgroundColor: '#0f172a', // slate-900 for dark mode
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false, // Needed for access to Node APIs in preload
@@ -56,11 +62,5 @@ app.on('window-all-closed', () => {
     app.quit();
   }
 });
-
-// IPC handlers will be registered here
-import './ipc/auth.js';
-import './ipc/factory.js';
-import './ipc/settings.js';
-import './ipc/git.js';
 
 export { mainWindow };

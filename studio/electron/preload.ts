@@ -20,12 +20,14 @@ function createIPC() {
     on: <K extends keyof IPCEvents>(
       channel: K,
       callback: IPCEvents[K]
-    ) => {
+    ): (() => void) => {
       const subscription = (_event: Electron.IpcRendererEvent, ...args: any[]) => {
         (callback as any)(...args);
       };
       ipcRenderer.on(channel, subscription);
-      return () => ipcRenderer.removeListener(channel, subscription);
+      return () => {
+        ipcRenderer.removeListener(channel, subscription);
+      };
     },
 
     // One-time event listener
@@ -42,10 +44,3 @@ function createIPC() {
 
 // Expose to renderer via window.api
 contextBridge.exposeInMainWorld('api', createIPC());
-
-// TypeScript declaration for window.api
-declare global {
-  interface Window {
-    api: ReturnType<typeof createIPC>;
-  }
-}
