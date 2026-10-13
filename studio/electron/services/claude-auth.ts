@@ -10,6 +10,18 @@ export interface AuthStatus {
 }
 
 /**
+ * Extract JSON from output that may contain warning messages before the JSON.
+ */
+function extractJson(output: string): string {
+  // Find the first '{' which starts the JSON
+  const jsonStart = output.indexOf('{');
+  if (jsonStart === -1) {
+    return output; // No JSON found, return as-is
+  }
+  return output.slice(jsonStart);
+}
+
+/**
  * Check if Claude CLI is installed and authenticated.
  */
 export async function checkClaudeAuth(): Promise<AuthStatus> {
@@ -17,8 +29,10 @@ export async function checkClaudeAuth(): Promise<AuthStatus> {
   
   try {
     const result = await new Promise<{ exitCode: number; output: string }>((resolve) => {
+      // Use /dev/null for stdin to avoid the "no stdin data" warning
       const proc = spawn('claude', ['-p', 'ok', '--output-format', 'json'], {
         timeout: 15000,
+        stdio: ['ignore', 'pipe', 'pipe'], // ignore stdin, capture stdout/stderr
       });
 
       let output = '';
@@ -44,7 +58,9 @@ export async function checkClaudeAuth(): Promise<AuthStatus> {
     }
 
     try {
-      const parsed = JSON.parse(result.output);
+      // Extract JSON from output (skip any warning messages)
+      const jsonStr = extractJson(result.output);
+      const parsed = JSON.parse(jsonStr);
       console.log('[Claude Auth] Parsed JSON, is_error:', parsed.is_error);
       
       if (parsed.is_error) {
