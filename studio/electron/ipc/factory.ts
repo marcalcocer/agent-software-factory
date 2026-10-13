@@ -567,6 +567,27 @@ ipcMain.handle('factory:get-artifacts', async (_event, runId: string): Promise<R
 });
 
 /**
+ * Delete a run and all its artifacts from disk
+ */
+ipcMain.handle('factory:delete', async (_event, runId: string): Promise<void> => {
+  const runDir = path.join(__dirname, '../../factory/logs', runId);
+  
+  if (!fs.existsSync(runDir)) {
+    throw new Error(`Run ${runId} not found`);
+  }
+
+  // Cannot delete running runs
+  const proc = activeRuns.get(runId);
+  if (proc) {
+    throw new Error('Cannot delete a running task. Cancel it first.');
+  }
+
+  // Recursively delete the run directory
+  fs.rmSync(runDir, { recursive: true, force: true });
+  console.log('[Factory IPC] Deleted run:', runId);
+});
+
+/**
  * Cancel a running task
  */
 ipcMain.handle('factory:cancel', async (_event, runId: string): Promise<void> => {

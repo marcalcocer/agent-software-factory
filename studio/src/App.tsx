@@ -7,6 +7,7 @@ import { RunHistory } from './components/RunHistory';
 import { RunDetails } from './components/RunDetails';
 import { SettingsPanel } from './components/SettingsPanel';
 import { PipelineView } from './components/PipelineView';
+import { ConfirmModal } from './components/ConfirmModal';
 import { applyTheme, watchSystemTheme, type ThemeSetting } from './theme';
 
 interface Repository {
@@ -51,6 +52,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [taskDrafts, setTaskDrafts] = useState<Record<string, string>>({});
   const [theme, setTheme] = useState<ThemeSetting>('system');
+  const [deleteConfirmRunId, setDeleteConfirmRunId] = useState<string | null>(null);
 
   // Apply the theme to the document root and follow OS changes while in "system" mode.
   useEffect(() => {
@@ -264,6 +266,27 @@ function App() {
     setRuns((prev) => prev.map((run) => (run.id === runId ? { ...run, title } : run)));
   };
 
+  const handleDeleteRun = async () => {
+    if (!deleteConfirmRunId) return;
+
+    try {
+      await window.api.invoke('factory:delete', deleteConfirmRunId);
+      
+      // Remove from UI state
+      setRuns((prev) => prev.filter((run) => run.id !== deleteConfirmRunId));
+      
+      // Close any open views for this run
+      if (selectedRunId === deleteConfirmRunId) setSelectedRunId(null);
+      if (viewingHistoryRunId === deleteConfirmRunId) setViewingHistoryRunId(null);
+      
+      setDeleteConfirmRunId(null);
+    } catch (err) {
+      console.error('Failed to delete run:', err);
+      setError(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+      setDeleteConfirmRunId(null);
+    }
+  };
+
   const handleResumeRun = async (runId: string) => {
     setSelectedRunId(null);
     setRunningRepo(activeTab);
@@ -462,6 +485,7 @@ function App() {
                           onSelectRun={(runId) => setViewingHistoryRunId(runId)}
                           onResume={handleResumeRun}
                           onRename={handleRenameRun}
+                          onDelete={(runId) => setDeleteConfirmRunId(runId)}
                         />
                       );
                     })()}
@@ -502,6 +526,17 @@ function App() {
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onThemeChange={setTheme}
+      />
+
+      <ConfirmModal
+        isOpen={deleteConfirmRunId !== null}
+        title="Delete Run"
+        message={`Are you sure you want to delete this run? This will permanently delete all logs, artifacts, and history. This action cannot be undone.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        onConfirm={handleDeleteRun}
+        onCancel={() => setDeleteConfirmRunId(null)}
       />
     </div>
   );

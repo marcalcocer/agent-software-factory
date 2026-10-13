@@ -38,6 +38,7 @@ export interface IPCChannels {
   'factory:get': (runId: string) => Promise<FactoryRun | null>;
   'factory:get-artifacts': (runId: string) => Promise<RunArtifact[]>;
   'factory:cancel': (runId: string) => Promise<void>;
+  'factory:delete': (runId: string) => Promise<void>;
 
   // Real-time events
   'factory:subscribe': (runId: string) => Promise<void>;
