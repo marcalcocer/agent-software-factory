@@ -53,6 +53,7 @@ function App() {
   const [taskDrafts, setTaskDrafts] = useState<Record<string, string>>({});
   const [theme, setTheme] = useState<ThemeSetting>('system');
   const [deleteConfirmRunId, setDeleteConfirmRunId] = useState<string | null>(null);
+  const [removeConfirmRepoName, setRemoveConfirmRepoName] = useState<string | null>(null);
 
   // Apply the theme to the document root and follow OS changes while in "system" mode.
   useEffect(() => {
@@ -67,6 +68,8 @@ function App() {
       if (repo) {
         loadRunsForRepo(repo.path);
       }
+      // Clear any open pipeline view from previous tab
+      setViewingHistoryRunId(null);
     }
   }, [activeTab, repos]);
 
@@ -287,6 +290,32 @@ function App() {
     }
   };
 
+  const handleRemoveRepo = async () => {
+    if (!removeConfirmRepoName) return;
+
+    try {
+      await window.api.invoke('factory:remove-repo', removeConfirmRepoName);
+      
+      // Remove from UI state
+      setRepos((prev) => prev.filter((r) => r.name !== removeConfirmRepoName));
+      
+      // Close tab if it's open
+      setOpenTabs((prev) => prev.filter((tab) => tab !== removeConfirmRepoName));
+      
+      // Switch to first available tab if active tab was removed
+      if (activeTab === removeConfirmRepoName) {
+        const remaining = openTabs.filter((tab) => tab !== removeConfirmRepoName);
+        setActiveTab(remaining.length > 0 ? remaining[0] : null);
+      }
+      
+      setRemoveConfirmRepoName(null);
+    } catch (err) {
+      console.error('Failed to remove repo:', err);
+      setError(`Remove failed: ${err instanceof Error ? err.message : String(err)}`);
+      setRemoveConfirmRepoName(null);
+    }
+  };
+
   const handleResumeRun = async (runId: string) => {
     setSelectedRunId(null);
     setRunningRepo(activeTab);
@@ -437,6 +466,7 @@ function App() {
           onSelectRepo={handleSelectRepo}
           onBrowseRepo={handleBrowseRepo}
           onOpenSettings={() => setSettingsOpen(true)}
+          onRemoveRepo={(repoName) => setRemoveConfirmRepoName(repoName)}
           loading={reposLoading}
         />
 
@@ -537,6 +567,17 @@ function App() {
         variant="danger"
         onConfirm={handleDeleteRun}
         onCancel={() => setDeleteConfirmRunId(null)}
+      />
+
+      <ConfirmModal
+        isOpen={removeConfirmRepoName !== null}
+        title="Remove Repository"
+        message={`Remove "${removeConfirmRepoName}" from the sidebar? This won't delete any files or runs, just removes it from your saved repositories list.`}
+        confirmText="Remove"
+        cancelText="Cancel"
+        variant="warning"
+        onConfirm={handleRemoveRepo}
+        onCancel={() => setRemoveConfirmRepoName(null)}
       />
     </div>
   );

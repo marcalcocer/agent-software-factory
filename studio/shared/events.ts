@@ -35,6 +35,7 @@ export interface IPCChannels {
   }) => Promise<void>;
   'factory:list': (repoPath?: string) => Promise<FactoryRun[]>;
   'factory:list-repos': () => Promise<Array<{ name: string; path: string; recentRuns: number }>>;
+  'factory:remove-repo': (repoName: string) => Promise<void>;
   'factory:get': (runId: string) => Promise<FactoryRun | null>;
   'factory:get-artifacts': (runId: string) => Promise<RunArtifact[]>;
   'factory:cancel': (runId: string) => Promise<void>;

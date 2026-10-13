@@ -76,6 +76,21 @@ ipcMain.handle('factory:list-repos', async (): Promise<Array<{ name: string; pat
 });
 
 /**
+ * Remove a repository from saved repositories
+ */
+ipcMain.handle('factory:remove-repo', async (_event, repoName: string): Promise<void> => {
+  const { loadSettings, saveSettings } = await import('./settings.js');
+  const settings = loadSettings();
+  
+  if (settings.global.savedRepositories) {
+    settings.global.savedRepositories = settings.global.savedRepositories.filter(
+      r => r.name !== repoName
+    );
+    saveSettings(settings);
+  }
+});
+
+/**
  * Run a task on a repository (simplified interface)
  */
 ipcMain.handle('factory:run-task', async (_event, params: {
