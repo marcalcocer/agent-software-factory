@@ -22,19 +22,19 @@ export function RepoTabs({ tabs, activeTab, onSelectTab, onCloseTab, runningRepo
         return (
           <div
             key={tab}
-            className={`flex items-center gap-2 px-3 py-3 border-b-2 transition-colors whitespace-nowrap ${
-              isRunning 
-                ? 'cursor-not-allowed opacity-50'
-                : 'cursor-pointer'
-            } ${
+            className={`flex items-center gap-2 px-3 py-3 border-b-2 cursor-pointer transition-colors whitespace-nowrap ${
               activeTab === tab
                 ? 'border-blue-600 dark:border-blue-500 text-blue-600 dark:text-blue-400'
                 : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
             }`}
-            onClick={() => !isRunning && onSelectTab(tab)}
+            onClick={() => onSelectTab(tab)}
           >
             <span className="font-medium">{tab}</span>
-            {isRunning && <span className="text-xs text-blue-500 animate-pulse">●</span>}
+            {isRunning && (
+              <span className="text-xs text-blue-500 animate-pulse" title="Factory running">
+                ●
+              </span>
+            )}
             {!isRunning && (
               <button
                 onClick={(e) => {

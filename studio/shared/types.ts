@@ -59,6 +59,16 @@ export interface FactoryRun {
   error?: string;
 }
 
+export interface RunArtifact {
+  step: string;
+  attempt: number;
+  status: string;
+  model?: string;
+  durationMs?: number;
+  writtenAt?: string;
+  data: any;
+}
+
 export interface AgentEvent {
   type: 'agent_call' | 'tool_use' | 'step_completed' | 'suite_executed' | 'build_executed' | 'gate_result';
   runId: string;

@@ -5,8 +5,24 @@ import { spawn } from 'node:child_process';
 import { mainWindow } from '../main.js';
 
 export interface AuthStatus {
-  type: 'ok' | 'auth' | 'not-installed' | 'error';
+  type: 'ok' | 'auth' | 'not-installed' | 'rate-limited' | 'error';
   message?: string;
+}
+
+/**
+ * Detect usage/session-limit errors. These mean the user IS authenticated,
+ * they have simply exhausted their subscription quota for the current window.
+ * They must not be treated as a logout.
+ */
+function isRateLimitMessage(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes('session limit') ||
+    lower.includes('usage limit') ||
+    lower.includes('rate limit') ||
+    lower.includes('rate-limit') ||
+    lower.includes('resets ')
+  );
 }
 
 /**
@@ -69,6 +85,10 @@ export async function checkClaudeAuth(): Promise<AuthStatus> {
           console.log('[Claude Auth] Result: auth expired');
           return { type: 'auth', message: 'OAuth session expired' };
         }
+        if (isRateLimitMessage(msg)) {
+          console.log('[Claude Auth] Result: authenticated but rate-limited');
+          return { type: 'rate-limited', message: msg };
+        }
         console.log('[Claude Auth] Result: error -', msg.slice(0, 100));
         return { type: 'error', message: msg };
       }
@@ -82,6 +102,9 @@ export async function checkClaudeAuth(): Promise<AuthStatus> {
       
       if (result.output.includes('OAuth session expired')) {
         return { type: 'auth', message: 'OAuth session expired' };
+      }
+      if (isRateLimitMessage(result.output)) {
+        return { type: 'rate-limited', message: 'Usage limit reached' };
       }
       return { type: 'error', message: result.output.slice(0, 200) };
     }
@@ -154,6 +177,12 @@ export async function ensureClaudeAuth(): Promise<boolean> {
   const status = await checkClaudeAuth();
   
   if (status.type === 'ok') {
+    return true;
+  }
+
+  // A rate-limit means the user is authenticated; let the factory run and
+  // surface the limit itself (the run stays resumable) rather than blocking.
+  if (status.type === 'rate-limited') {
     return true;
   }
 

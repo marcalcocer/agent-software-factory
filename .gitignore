@@ -19,6 +19,7 @@ studio/out/
 # Runtime traces and local state (keep the folder, ignore the contents)
 logs/*
 !logs/.gitkeep
+factory/logs/*
 
 # Editor / OS
 .DS_Store

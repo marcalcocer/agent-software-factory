@@ -14,8 +14,11 @@ ipcMain.handle('auth:status', async (): Promise<AuthProvider[]> => {
   providers.push({
     id: 'claude-cli',
     name: 'Claude CLI (Subscription)',
-    status: claudeStatus.type === 'ok' ? 'authenticated' : 
-            claudeStatus.type === 'auth' ? 'expired' : 'not-configured',
+    // A rate-limit means the CLI is authenticated (the token works); the user
+    // has just exhausted their quota window, so keep them "authenticated".
+    status: claudeStatus.type === 'ok' || claudeStatus.type === 'rate-limited'
+              ? 'authenticated'
+              : claudeStatus.type === 'auth' ? 'expired' : 'not-configured',
     details: claudeStatus.message,
   });
 

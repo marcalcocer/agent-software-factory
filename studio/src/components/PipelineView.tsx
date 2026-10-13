@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
+import type { RunArtifact } from '../../shared/types';
+import { AgentDetail } from './AgentDetail';
 
 interface AgentStep {
   id: string;
@@ -35,6 +37,69 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
   const [currentAttempt, setCurrentAttempt] = useState(1);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [logsExpanded, setLogsExpanded] = useState(false);
+  const [artifacts, setArtifacts] = useState<RunArtifact[]>([]);
+
+  // Load agent artifacts (rich step reports) for the run
+  const loadArtifacts = useCallback(async () => {
+    if (!runId) return;
+    try {
+      const result = await window.api.invoke('factory:get-artifacts', runId);
+      setArtifacts(result);
+    } catch {
+      // Ignore artifact load errors
+    }
+  }, [runId]);
+
+  useEffect(() => {
+    if (!runId) return;
+    loadArtifacts();
+
+    // While running, poll for new artifacts as agents finish
+    if (isRunning) {
+      const interval = setInterval(loadArtifacts, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [runId, isRunning, loadArtifacts]);
+
+  // Also refresh artifacts right after the run completes
+  useEffect(() => {
+    if (runId && !isRunning) {
+      loadArtifacts();
+    }
+  }, [runId, isRunning, loadArtifacts]);
+
+  // Sync agent statuses from the finished step artifacts (more reliable than logs)
+  useEffect(() => {
+    if (artifacts.length === 0) return;
+
+    setAgents(prev => {
+      const updated = prev.map(a => ({ ...a }));
+      for (const art of artifacts) {
+        const idx = updated.findIndex(a => a.id === art.step);
+        if (idx < 0) continue;
+
+        let status: AgentStep['status'] = updated[idx].status;
+        if (art.step === 'qa-tester') {
+          status = art.status === 'PASS' ? 'completed' : 'failed';
+        } else if (art.status === 'COMPLETED' || art.status === 'PASS') {
+          status = 'completed';
+        } else if (art.status === 'FAIL') {
+          status = 'failed';
+        } else {
+          status = 'completed';
+        }
+
+        updated[idx] = { ...updated[idx], status, attempt: art.attempt };
+
+        // A retry decision re-opens the developer node
+        if (art.step === 'triage' && String(art.status).toUpperCase().includes('RETRY_DEVELOPER')) {
+          const dev = updated.findIndex(x => x.id === 'developer');
+          if (dev >= 0) updated[dev] = { ...updated[dev], status: 'retry' };
+        }
+      }
+      return updated;
+    });
+  }, [artifacts]);
 
   // Timer for elapsed time
   useEffect(() => {
@@ -124,14 +189,15 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
           updated[idx] = { ...updated[idx], status: 'running', activity: 'Running tests and checking functionality...' };
         }
       }
-      if (lowerLine.includes('qa step finished') || lowerLine.includes('qa') && lowerLine.includes('pass')) {
+      if (lowerLine.includes('qa step finished') || (lowerLine.includes('qa') && lowerLine.includes('pass'))) {
         const idx = updated.findIndex(a => a.id === 'qa-tester');
         if (idx >= 0) {
-          const verdict = line.match(/verdict[:\s]+"?(\w+)"?/i);
-          updated[idx] = { 
-            ...updated[idx], 
-            status: 'completed',
-            activity: verdict && verdict[1] === 'PASS' ? 'All tests passed ✓' : 'Tests completed'
+          const verdictMatch = line.match(/verdict[:\s]+"?(\w+)"?/i);
+          const passed = verdictMatch ? verdictMatch[1].toUpperCase() === 'PASS' : undefined;
+          updated[idx] = {
+            ...updated[idx],
+            status: passed === false ? 'failed' : 'completed',
+            activity: passed === false ? 'Verification failed ✗' : passed ? 'All checks passed ✓' : 'Tests completed',
           };
         }
       }
@@ -284,6 +350,12 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
   };
 
   const selectedAgentData = agents.find(a => a.id === selectedAgent);
+  // Latest artifact for the selected agent (prefer the newest attempt)
+  const selectedArtifact = selectedAgent
+    ? [...artifacts]
+        .filter(a => a.step === selectedAgent)
+        .sort((a, b) => (b.attempt || 0) - (a.attempt || 0))[0]
+    : undefined;
   const agentLogs = logs.filter(log => {
     if (!selectedAgent) return true;
     const lower = log.toLowerCase();
@@ -439,13 +511,36 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
         );
       })()}
 
+      {/* Selected agent report */}
+      {selectedAgentData && (
+        <div className="bg-slate-900 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 bg-slate-800 border-b border-slate-700 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">{selectedAgentData.icon}</span>
+              <span className="text-sm font-semibold text-slate-100">
+                {selectedAgentData.name} Report
+              </span>
+            </div>
+            <button
+              onClick={() => setSelectedAgent(null)}
+              className="text-xs text-slate-400 hover:text-white"
+            >
+              Close
+            </button>
+          </div>
+          <div className="p-4">
+            <AgentDetail step={selectedAgentData.id} artifact={selectedArtifact} />
+          </div>
+        </div>
+      )}
+
       {/* Technical Logs (collapsible) */}
       <div className="bg-slate-900 rounded-lg overflow-hidden">
-        <button
-          onClick={() => setLogsExpanded(!logsExpanded)}
-          className="w-full px-4 py-2 bg-slate-800 border-b border-slate-700 flex items-center justify-between hover:bg-slate-750 transition-colors"
-        >
-          <div className="flex items-center gap-2">
+        <div className="w-full px-4 py-2 bg-slate-800 border-b border-slate-700 flex items-center justify-between">
+          <button
+            onClick={() => setLogsExpanded(!logsExpanded)}
+            className="flex items-center gap-2 flex-1 text-left"
+          >
             <span className="text-slate-400">{logsExpanded ? '▼' : '▶'}</span>
             {selectedAgentData ? (
               <>
@@ -461,24 +556,24 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
                 Live
               </span>
             )}
-          </div>
-          <div className="flex items-center gap-2">
+          </button>
+          <div className="flex items-center gap-3">
             {selectedAgent && (
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setSelectedAgent(null);
-                }}
+                onClick={() => setSelectedAgent(null)}
                 className="text-xs text-slate-400 hover:text-white"
               >
                 Show All
               </button>
             )}
-            <span className="text-xs text-slate-500">
+            <button
+              onClick={() => setLogsExpanded(!logsExpanded)}
+              className="text-xs text-slate-500 hover:text-slate-300"
+            >
               {logsExpanded ? 'Click to collapse' : 'Click to expand'}
-            </span>
+            </button>
           </div>
-        </button>
+        </div>
         {logsExpanded && (
           <div className="p-4 h-48 overflow-y-auto font-mono text-xs text-slate-300 space-y-1">
             {agentLogs.length === 0 ? (

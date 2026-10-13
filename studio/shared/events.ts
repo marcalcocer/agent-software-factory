@@ -2,7 +2,7 @@
  * IPC channel definitions for type-safe communication between main and renderer.
  */
 
-import type { AgentEvent, AuthProvider, FactoryRun, Repository, Settings } from './types';
+import type { AgentEvent, AuthProvider, FactoryRun, Repository, RunArtifact, Settings } from './types';
 
 export interface IPCChannels {
   // Repository management
@@ -35,6 +35,7 @@ export interface IPCChannels {
   'factory:list': (repoPath?: string) => Promise<FactoryRun[]>;
   'factory:list-repos': () => Promise<Array<{ name: string; path: string; recentRuns: number }>>;
   'factory:get': (runId: string) => Promise<FactoryRun | null>;
+  'factory:get-artifacts': (runId: string) => Promise<RunArtifact[]>;
   'factory:cancel': (runId: string) => Promise<void>;
 
   // Real-time events

@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
-import type { FactoryRun } from '../../shared/types';
+import type { FactoryRun, RunArtifact } from '../../shared/types';
 import { ensureClaudeAuth } from '../services/claude-auth.js';
 import { mainWindow } from '../main.js';
 
@@ -23,9 +23,8 @@ const activeRuns = new Map<string, ReturnType<typeof spawn>>();
  * List available repositories in the workspace
  */
 ipcMain.handle('factory:list-repos', async (): Promise<Array<{ name: string; path: string; recentRuns: number }>> => {
-  // From dist-electron/ -> studio/ -> agent-software-factory/
-  const workspaceRoot = path.join(__dirname, '../../');
-  const logsDir = path.join(workspaceRoot, 'logs');
+  // Factory logs live in factory/logs; from dist-electron that's ../../factory/logs
+  const logsDir = path.join(__dirname, '../../factory/logs');
   
   const repos: Map<string, { name: string; path: string; recentRuns: number }> = new Map();
 
@@ -472,6 +471,48 @@ ipcMain.handle('factory:get', async (_event, runId: string): Promise<FactoryRun 
   } catch {
     return null;
   }
+});
+
+/**
+ * Get the agent artifacts (rich step outputs) for a run.
+ * Reads the numbered artifact JSON files written by each agent.
+ */
+ipcMain.handle('factory:get-artifacts', async (_event, runId: string): Promise<RunArtifact[]> => {
+  const runDir = path.join(__dirname, '../../factory/logs', runId);
+
+  if (!fs.existsSync(runDir)) {
+    return [];
+  }
+
+  const artifacts: RunArtifact[] = [];
+
+  try {
+    const files = fs
+      .readdirSync(runDir)
+      .filter((f) => /^\d{2}-.*\.json$/.test(f))
+      .sort();
+
+    for (const file of files) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(path.join(runDir, file), 'utf8'));
+        artifacts.push({
+          step: raw.step,
+          attempt: raw.attempt ?? 1,
+          status: raw.status,
+          model: raw.model,
+          durationMs: raw.durationMs,
+          writtenAt: raw.writtenAt,
+          data: raw.data ?? {},
+        });
+      } catch {
+        // Skip corrupt artifact files
+      }
+    }
+  } catch {
+    return [];
+  }
+
+  return artifacts;
 });
 
 /**
