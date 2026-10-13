@@ -78,7 +78,7 @@ Usage:
 
 Commands:
   run         Execute the factory against a target repository
-  resume      Resume a suspended run (clarification or human escalation)
+  resume      Resume a suspended run, or restart a failed one from its last step
   list        List recent runs and their status
   show        Print the summary.json of a run
   doctor      Check configuration, credentials and external tooling
@@ -101,11 +101,12 @@ run flags:
                             security-block | escalate | clarify
 
 resume flags:
-  --run-id <runId>          Run to resume (required)
+  --run-id <runId>          Run to resume or restart (required)
   --clarifications "<text>" Answers for a plan clarification request
   --decision <ABORT|ACKNOWLEDGE>  Decision for a human escalation
   --guidance "<text>"       Guidance recorded with the decision
-  --step <stepId>           Explicit step to resume (optional)
+  --step <stepId>           Explicit step to re-enter (optional; failed runs restart
+                            from their failed step automatically)
 
 Examples:
   npm run factory -- run --repo invest-track --task "Add pagination to GET /api/positions"
@@ -337,6 +338,42 @@ async function writeFailureSummary(
   });
 }
 
+/**
+ * Find the deepest step that failed so a failed run can be restarted from it.
+ * Nested workflow steps are keyed as `parent.child`, so the longest key is the
+ * most specific (leaf) failure - the right place to re-enter the graph.
+ */
+function findResumeStep(state: unknown): string | undefined {
+  const steps = (state as { steps?: Record<string, { status?: string }> } | null)?.steps ?? {};
+  return Object.entries(steps)
+    .filter(([, value]) => value?.status === 'failed')
+    .map(([stepId]) => stepId)
+    .sort((a, b) => b.split('.').length - a.split('.').length || b.localeCompare(a))[0];
+}
+
+function reportResumeResult(
+  runId: string,
+  result: {
+    status: string;
+    result?: { status?: string; traceDir?: string; summaryPath?: string };
+    suspendPayload?: unknown;
+  },
+): number {
+  if (result.status === 'success') {
+    heading(`Run ${runId}: ${result.result?.status ?? 'COMPLETED'}`);
+    printJson('Result', result.result);
+    return 0;
+  }
+  if (result.status === 'suspended') {
+    heading(`Run ${runId} SUSPENDED again - human input required`);
+    printJson('Suspend payload', result.suspendPayload);
+    return 3;
+  }
+  heading(`Run ${runId} FAILED`);
+  printJson('Result', result);
+  return 1;
+}
+
 async function commandResume(flags: Record<string, FlagValue>): Promise<number> {
   const runId = asString(flags['run-id']);
   if (!runId) {
@@ -354,8 +391,37 @@ async function commandResume(flags: Record<string, FlagValue>): Promise<number> 
     );
     return 2;
   }
+
+  const explicitStep = asString(flags.step);
+  const run = await workflow.createRun({ runId });
+
+  // A failed run is re-entered from the step that failed. Mastra's timeTravel re-runs
+  // the graph from that step while reusing every persisted step result before it, so
+  // the planner's work, earlier attempts and the git branch are all preserved.
+  if (state.status === 'failed') {
+    const resumeStep = explicitStep ?? findResumeStep(state);
+    if (!resumeStep) {
+      process.stderr.write(
+        `Run "${runId}" failed but no failed step could be located. Pass --step <stepId> to pick one.\n`,
+      );
+      return 2;
+    }
+    heading(`Restarting failed run ${runId}`);
+    process.stdout.write(`Re-entering the workflow at step "${resumeStep}".\n`);
+    try {
+      const result = await run.timeTravel({ step: resumeStep });
+      return reportResumeResult(runId, result);
+    } catch (error) {
+      heading(`Run ${runId} FAILED`);
+      process.stderr.write(`${(error as Error)?.message ?? String(error)}\n`);
+      return 1;
+    }
+  }
+
   if (state.status !== 'suspended') {
-    process.stderr.write(`Run "${runId}" is not suspended (status: ${state.status}).\n`);
+    process.stderr.write(
+      `Run "${runId}" cannot be resumed (status: ${state.status}). Only suspended or failed runs can be resumed.\n`,
+    );
     return 2;
   }
 
@@ -370,30 +436,15 @@ async function commandResume(flags: Record<string, FlagValue>): Promise<number> 
         ...(guidance ? { guidance } : {}),
       };
 
-  const explicitStep = asString(flags.step);
-
   heading(`Resuming run ${runId}`);
   printJson('Resume data', resumeData);
 
-  const run = await workflow.createRun({ runId });
   const result = await run.resume({
     resumeData: resumeData as never,
     ...(explicitStep ? { step: explicitStep } : {}),
   });
 
-  if (result.status === 'success') {
-    heading(`Run ${runId}: ${result.result.status}`);
-    printJson('Result', result.result);
-    return 0;
-  }
-  if (result.status === 'suspended') {
-    heading(`Run ${runId} SUSPENDED again`);
-    printJson('Suspend payload', result.suspendPayload);
-    return 3;
-  }
-  heading(`Run ${runId} FAILED`);
-  printJson('Result', result);
-  return 1;
+  return reportResumeResult(runId, result);
 }
 
 async function commandList(flags: Record<string, FlagValue>): Promise<number> {

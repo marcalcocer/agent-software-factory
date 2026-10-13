@@ -31,6 +31,7 @@ export interface IPCChannels {
     decision?: 'ACKNOWLEDGE' | 'ABORT';
     guidance?: string;
     clarifications?: string;
+    step?: string;
   }) => Promise<void>;
   'factory:list': (repoPath?: string) => Promise<FactoryRun[]>;
   'factory:list-repos': () => Promise<Array<{ name: string; path: string; recentRuns: number }>>;

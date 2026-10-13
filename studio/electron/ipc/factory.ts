@@ -356,7 +356,13 @@ ipcMain.handle('factory:resume', async (_event, params: {
   decision?: 'ACKNOWLEDGE' | 'ABORT';
   guidance?: string;
   clarifications?: string;
+  step?: string;
 }): Promise<void> => {
+  const authenticated = await ensureClaudeAuth();
+  if (!authenticated) {
+    throw new Error('Authentication required. Please log in to Claude CLI.');
+  }
+
   const args = [factoryCLI, 'resume', '--run-id', params.runId];
 
   if (params.decision) {
@@ -368,25 +374,68 @@ ipcMain.handle('factory:resume', async (_event, params: {
   if (params.clarifications) {
     args.push('--clarifications', params.clarifications);
   }
+  if (params.step) {
+    args.push('--step', params.step);
+  }
 
-  const proc = spawn('npx', ['tsx', ...args], {
+  // Use system node (not Electron's) to run the factory via tsx, same as `run`.
+  const factoryDir = path.resolve(__dirname, '../../factory');
+  const rootDir = path.resolve(__dirname, '../..');
+  const tsxPath = path.join(rootDir, 'node_modules/.bin/tsx');
+
+  const proc = spawn('node', [tsxPath, ...args], {
     env: {
       ...process.env,
-      FACTORY_PROVIDER: 'claude-cli',
       FACTORY_NON_INTERACTIVE: 'true',
+      FACTORY_PROVIDER: 'claude-cli',
     },
-    cwd: path.join(__dirname, '../../factory'),
+    cwd: factoryDir,
   });
 
-  activeRuns.set(params.runId, proc);
+  const runId = params.runId;
+  activeRuns.set(runId, proc);
+
+  const stripAnsi = (str: string) => str
+    .replace(/\x1B\[[0-9;]*[A-Za-z]/g, '')
+    .replace(/\[([0-9;]+)m/g, '');
+
+  let stdoutLineBuffer = '';
+  let stderrLineBuffer = '';
 
   proc.stdout?.on('data', (data) => {
-    mainWindow?.webContents.send('factory:output', params.runId, data.toString());
+    const chunk = data.toString();
+    console.log('[Factory resume stdout]', chunk);
+    stdoutLineBuffer += chunk;
+    const lines = stdoutLineBuffer.split('\n');
+    stdoutLineBuffer = lines.pop() || '';
+    for (const line of lines) {
+      const cleanLine = stripAnsi(line).trim();
+      if (cleanLine) mainWindow?.webContents.send('factory:output', runId, cleanLine);
+    }
+  });
+
+  proc.stderr?.on('data', (data) => {
+    const chunk = data.toString();
+    console.log('[Factory resume stderr]', chunk);
+    stderrLineBuffer += chunk;
+    const lines = stderrLineBuffer.split('\n');
+    stderrLineBuffer = lines.pop() || '';
+    for (const line of lines) {
+      const cleanLine = stripAnsi(line).trim();
+      if (cleanLine) mainWindow?.webContents.send('factory:output', runId, `ERROR: ${cleanLine}`);
+    }
+  });
+
+  proc.on('error', (error) => {
+    console.error('[Factory resume] Process error:', error);
+    activeRuns.delete(runId);
+    mainWindow?.webContents.send('factory:error', runId, error.message);
   });
 
   proc.on('close', (code) => {
-    activeRuns.delete(params.runId);
-    mainWindow?.webContents.send('factory:completed', params.runId, code);
+    console.log('[Factory resume] Process closed with code:', code);
+    activeRuns.delete(runId);
+    mainWindow?.webContents.send('factory:completed', runId, code ?? 1);
   });
 });
 

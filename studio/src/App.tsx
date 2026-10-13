@@ -198,6 +198,29 @@ function App() {
     }
   };
 
+  const handleResumeRun = async (runId: string) => {
+    setSelectedRunId(null);
+    setRunningRepo(activeTab);
+    setActiveRunId(runId);
+    setRunLoading(true);
+    setError(null);
+    setRuns((prev) =>
+      prev.map((run) =>
+        run.id === runId ? { ...run, status: 'running', endTime: undefined } : run
+      )
+    );
+
+    try {
+      await window.api.invoke('factory:resume', { runId });
+    } catch (err) {
+      console.error('Failed to resume run:', err);
+      setError(`Resume failed: ${err instanceof Error ? err.message : String(err)}`);
+      setRunLoading(false);
+      setRunningRepo(null);
+      setActiveRunId(null);
+    }
+  };
+
   const handleLogin = async () => {
     setLoginLoading(true);
     setError(null);
@@ -394,7 +417,11 @@ function App() {
 
       {/* Modals */}
       {selectedRunId && (
-        <RunDetails runId={selectedRunId} onClose={() => setSelectedRunId(null)} />
+        <RunDetails
+          runId={selectedRunId}
+          onClose={() => setSelectedRunId(null)}
+          onResume={handleResumeRun}
+        />
       )}
 
       <SettingsPanel isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />

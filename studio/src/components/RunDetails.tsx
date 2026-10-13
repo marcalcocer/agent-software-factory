@@ -11,6 +11,7 @@ interface RunStep {
 interface RunDetailsProps {
   runId: string;
   onClose: () => void;
+  onResume?: (runId: string) => void;
 }
 
 const AGENT_LABELS: Record<string, string> = {
@@ -49,9 +50,9 @@ function humanizeError(raw: string): string {
     return (
       'Claude subscription usage limit reached.\n\n' +
       'You are still signed in — you have simply used up your quota for the current window. ' +
-      'Wait for the limit to reset (the message usually says when, e.g. "resets 10:10pm") and run again. ' +
-      'The run can also be resumed later with:\n' +
-      'npm run factory -- resume --run-id <runId>'
+      'Wait for the limit to reset (the message usually says when, e.g. "resets 10:10pm"), ' +
+      'then press "Resume run" to continue from where it stopped — the plan and any finished ' +
+      'steps are kept.'
     );
   }
 
@@ -66,7 +67,7 @@ function humanizeError(raw: string): string {
   return msg;
 }
 
-export function RunDetails({ runId, onClose }: RunDetailsProps) {
+export function RunDetails({ runId, onClose, onResume }: RunDetailsProps) {
   const [steps, setSteps] = useState<RunStep[]>([]);
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<{
@@ -114,6 +115,14 @@ export function RunDetails({ runId, onClose }: RunDetailsProps) {
   };
 
   const isFailed = summary?.status === 'FAILED' || summary?.status === 'failed';
+  const isSuspended = summary?.status === 'SUSPENDED' || summary?.status === 'suspended';
+  const [resuming, setResuming] = useState(false);
+
+  const handleResume = () => {
+    if (!onResume) return;
+    setResuming(true);
+    onResume(runId);
+  };
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -173,6 +182,23 @@ export function RunDetails({ runId, onClose }: RunDetailsProps) {
                       ? humanizeError(summary.error)
                       : 'The run failed and did not record a reason.'}
                   </p>
+                </div>
+              )}
+
+              {/* Resume / retry */}
+              {(isFailed || isSuspended) && onResume && (
+                <div className="flex items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900 rounded-lg p-4">
+                  <div className="text-sm text-slate-600 dark:text-slate-400">
+                    Resume from the last unfinished step. Completed steps, the plan and the
+                    work branch are all preserved.
+                  </div>
+                  <button
+                    onClick={handleResume}
+                    disabled={resuming}
+                    className="shrink-0 px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+                  >
+                    {resuming ? 'Resuming…' : '▶ Resume run'}
+                  </button>
                 </div>
               )}
 
