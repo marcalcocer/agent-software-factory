@@ -115,8 +115,17 @@ export function RunDetails({ runId, onClose }: RunDetailsProps) {
                 <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">
                   Execution Steps
                 </h3>
-                <div className="space-y-3">
-                  {steps.map((step, idx) => {
+                {steps.length === 0 ? (
+                  <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-4">
+                    <p className="text-yellow-800 dark:text-yellow-200 text-sm">
+                      {summary && summary.status === 'failed' 
+                        ? 'Run failed before execution steps could be generated. Check the factory logs for error details.'
+                        : 'No execution steps available for this run.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {steps.map((step, idx) => {
                     const isSuccess = step.status === 'COMPLETED' || step.status === 'PASS' || step.status.includes('APPROVED');
                     const isFailed = step.status === 'FAILED' || step.status.includes('FAILED');
                     const isRetry = step.status.includes('RETRY') || step.status.includes('CHANGES_REQUESTED');
@@ -161,7 +170,8 @@ export function RunDetails({ runId, onClose }: RunDetailsProps) {
                       </div>
                     );
                   })}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

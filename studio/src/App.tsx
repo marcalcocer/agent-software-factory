@@ -43,6 +43,7 @@ function App() {
 
   // Phase 3 state - real-time and modals
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [runningRepo, setRunningRepo] = useState<string | null>(null); // Track which repo is running
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [taskDrafts, setTaskDrafts] = useState<Record<string, string>>({});
@@ -80,6 +81,7 @@ function App() {
       if (activeRunId === runId) {
         setActiveRunId(null);
         setRunLoading(false); // Stop showing pipeline when run completes
+        setRunningRepo(null); // Clear running repo
       }
     });
 
@@ -95,6 +97,7 @@ function App() {
       if (activeRunId === runId) {
         setActiveRunId(null);
         setRunLoading(false); // Stop showing pipeline on error
+        setRunningRepo(null); // Clear running repo
       }
     });
 
@@ -161,6 +164,7 @@ function App() {
     if (!activeTab) return;
 
     setRunLoading(true);
+    setRunningRepo(activeTab); // Track which repo is running
     setError(null);
 
     try {
@@ -332,7 +336,7 @@ function App() {
             activeTab={activeTab || ''}
             onSelectTab={setActiveTab}
             onCloseTab={handleCloseTab}
-            disabled={runLoading}
+            runningRepo={runningRepo}
           />
 
           {/* Main Panel */}
@@ -347,7 +351,7 @@ function App() {
                 )}
 
                 {/* Task Input or Pipeline View */}
-                {runLoading ? (
+                {runLoading && activeTab === runningRepo ? (
                   <PipelineView runId={activeRunId} isRunning={runLoading} />
                 ) : (
                   <>
@@ -359,7 +363,7 @@ function App() {
                       loading={false}
                     />
 
-                    {/* Run History - only show when not running */}
+                    {/* Run History - only show when not running on this repo */}
                     <RunHistory
                       runs={runs}
                       loading={false}
