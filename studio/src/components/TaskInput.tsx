@@ -1,22 +1,20 @@
-import { useState } from 'react';
-
 interface TaskInputProps {
   repoName: string;
+  value: string;
+  onChange: (value: string) => void;
   onSubmit: (task: string) => void;
   loading: boolean;
 }
 
-export function TaskInput({ repoName, onSubmit, loading }: TaskInputProps) {
-  const [task, setTask] = useState('');
-
+export function TaskInput({ repoName, value, onChange, onSubmit, loading }: TaskInputProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!task.trim()) return;
+    if (!value.trim()) return;
 
-    onSubmit(task);
+    onSubmit(value);
 
-    // Reset form
-    setTask('');
+    // Clear the draft after submission
+    onChange('');
   };
 
   return (
@@ -31,8 +29,8 @@ export function TaskInput({ repoName, onSubmit, loading }: TaskInputProps) {
           What should the factory build or fix?
         </label>
         <textarea
-          value={task}
-          onChange={(e) => setTask(e.target.value)}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
           placeholder="e.g., Add dark mode with system theme support..."
           disabled={loading}
           rows={5}
@@ -45,7 +43,7 @@ export function TaskInput({ repoName, onSubmit, loading }: TaskInputProps) {
 
       <button
         type="submit"
-        disabled={loading || !task.trim()}
+        disabled={loading || !value.trim()}
         className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-medium rounded-md transition-colors disabled:cursor-not-allowed"
       >
         {loading ? 'Running Factory...' : 'Run Factory'}

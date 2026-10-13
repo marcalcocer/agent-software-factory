@@ -45,6 +45,7 @@ function App() {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [taskDrafts, setTaskDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     // Test if window.api exists
@@ -339,8 +340,9 @@ function App() {
 
                 {/* Task Input */}
                 <TaskInput
-                  key={activeTab} // Force new instance when switching repos
                   repoName={activeTab}
+                  value={taskDrafts[activeTab] || ''}
+                  onChange={(value) => setTaskDrafts({ ...taskDrafts, [activeTab]: value })}
                   onSubmit={handleRunTask}
                   loading={runLoading}
                 />
