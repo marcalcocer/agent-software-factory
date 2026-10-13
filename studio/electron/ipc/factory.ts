@@ -112,14 +112,17 @@ ipcMain.handle('factory:run-task', async (_event, params: {
   const factoryDir = path.resolve(__dirname, '../../factory');
   console.log('[Factory IPC] Factory directory:', factoryDir);
 
-  // Spawn the factory process using shell to ensure PATH is available
-  const proc = spawn('npx', ['tsx', ...args], {
+  // Use node directly (from Electron's process.execPath) to run the factory
+  // This avoids PATH issues and shell quote escaping problems
+  const tsxPath = path.join(factoryDir, 'node_modules/.bin/tsx');
+  
+  // Build the command: node ./node_modules/.bin/tsx factory.ts run --repo ... --task ...
+  const proc = spawn(process.execPath, [tsxPath, ...args], {
     env: {
       ...process.env,
       FACTORY_NON_INTERACTIVE: 'true',
     },
     cwd: factoryDir,
-    shell: true, // Use shell to get proper PATH resolution
   });
 
   // Extract runId from output
