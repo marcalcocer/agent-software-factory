@@ -1,5 +1,8 @@
+import { useRef, useState } from 'react';
+
 interface Run {
   id: string;
+  title: string;
   task: string;
   status: 'running' | 'completed' | 'failed' | 'escalated';
   startTime: Date;
@@ -16,9 +19,43 @@ interface RunHistoryProps {
   loading: boolean;
   onSelectRun?: (runId: string) => void;
   onResume?: (runId: string) => void;
+  onRename?: (runId: string, title: string) => void;
 }
 
-export function RunHistory({ runs, loading, onSelectRun, onResume }: RunHistoryProps) {
+export function RunHistory({ runs, loading, onSelectRun, onResume, onRename }: RunHistoryProps) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // A single click opens the run details, but delay it briefly so a double-click
+  // on the title (rename) can cancel the open.
+  const scheduleOpen = (runId: string) => {
+    if (openTimer.current) clearTimeout(openTimer.current);
+    openTimer.current = setTimeout(() => {
+      openTimer.current = null;
+      onSelectRun?.(runId);
+    }, 250);
+  };
+
+  const cancelOpen = () => {
+    if (openTimer.current) {
+      clearTimeout(openTimer.current);
+      openTimer.current = null;
+    }
+  };
+
+  const startEdit = (run: Run) => {
+    cancelOpen();
+    setEditingId(run.id);
+    setEditValue(run.title);
+  };
+
+  const commitEdit = (run: Run) => {
+    const next = editValue.trim();
+    if (next && next !== run.title) onRename?.(run.id, next);
+    setEditingId(null);
+  };
+
   if (loading) {
     return (
       <div className="bg-white dark:bg-slate-800 rounded-lg p-6 shadow-sm">
@@ -30,7 +67,7 @@ export function RunHistory({ runs, loading, onSelectRun, onResume }: RunHistoryP
   if (runs.length === 0) {
     return (
       <div className="bg-white dark:bg-slate-800 rounded-lg p-6 shadow-sm text-center text-slate-500">
-        No runs yet. Start by submitting a task above.
+        No runs yet. Start by submitting a task below.
       </div>
     );
   }
@@ -45,18 +82,44 @@ export function RunHistory({ runs, loading, onSelectRun, onResume }: RunHistoryP
         {runs.map((run) => (
           <div
             key={run.id}
-            onClick={() => onSelectRun?.(run.id)}
+            onClick={() => {
+              if (editingId) return;
+              onSelectRun?.(run.id);
+            }}
             className="p-4 hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer transition-colors"
           >
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
                 <div className="flex items-start gap-2 mb-1">
-                  <p 
-                    className="font-medium text-slate-900 dark:text-slate-100 line-clamp-2 flex-1"
-                    title={run.task}
-                  >
-                    {run.task}
-                  </p>
+                  {editingId === run.id ? (
+                    <input
+                      autoFocus
+                      value={editValue}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      onBlur={() => commitEdit(run)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitEdit(run);
+                        else if (e.key === 'Escape') setEditingId(null);
+                      }}
+                      className="flex-1 min-w-0 px-2 py-1 text-sm font-medium rounded border border-blue-400 dark:border-blue-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 outline-none"
+                    />
+                  ) : (
+                    <span
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        startEdit(run);
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        scheduleOpen(run.id);
+                      }}
+                      title={`Double-click to rename\n\n${run.task}`}
+                      className="flex-1 min-w-0 truncate font-medium text-slate-900 dark:text-slate-100 cursor-text"
+                    >
+                      {run.title}
+                    </span>
+                  )}
                   {run.status === 'running' && (
                     <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200">
                       <span className="animate-pulse">●</span>
@@ -79,7 +142,7 @@ export function RunHistory({ runs, loading, onSelectRun, onResume }: RunHistoryP
                     </span>
                   )}
                 </div>
-                <div className="text-sm text-slate-500 dark:text-slate-400">
+                <div className="text-sm text-slate-500 dark:text-slate-400 truncate">
                   {run.id}
                 </div>
                 {run.status === 'failed' && onResume && (

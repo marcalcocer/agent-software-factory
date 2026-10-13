@@ -7,6 +7,7 @@ import { RunHistory } from './components/RunHistory';
 import { RunDetails } from './components/RunDetails';
 import { SettingsPanel } from './components/SettingsPanel';
 import { PipelineView } from './components/PipelineView';
+import { applyTheme, watchSystemTheme, type ThemeSetting } from './theme';
 
 interface Repository {
   name: string;
@@ -16,6 +17,7 @@ interface Repository {
 
 interface Run {
   id: string;
+  title: string;
   task: string;
   status: 'running' | 'completed' | 'failed' | 'escalated';
   startTime: Date;
@@ -47,6 +49,13 @@ function App() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [taskDrafts, setTaskDrafts] = useState<Record<string, string>>({});
+  const [theme, setTheme] = useState<ThemeSetting>('system');
+
+  // Apply the theme to the document root and follow OS changes while in "system" mode.
+  useEffect(() => {
+    applyTheme(theme);
+    return watchSystemTheme(() => applyTheme(theme));
+  }, [theme]);
 
   useEffect(() => {
     // Test if window.api exists
@@ -67,6 +76,11 @@ function App() {
 
     // Load repositories list
     loadRepositories();
+
+    // Restore the saved theme
+    window.api.invoke('settings:get')
+      .then((settings) => setTheme(settings.global.theme))
+      .catch(() => {});
 
     // Subscribe to factory events
     const unsubscribeCompleted = window.api.on('factory:completed', (runId: string, exitCode: number) => {
@@ -181,6 +195,7 @@ function App() {
       // Add to run history
       const newRun: Run = {
         id: result.runId,
+        title: 'Untitled run',
         task,
         status: 'running',
         startTime: new Date(),
@@ -196,6 +211,10 @@ function App() {
       setError(`Task execution failed: ${err instanceof Error ? err.message : String(err)}`);
       setRunLoading(false); // Only stop loading on error during submission
     }
+  };
+
+  const handleRenameRun = (runId: string, title: string) => {
+    setRuns((prev) => prev.map((run) => (run.id === runId ? { ...run, title } : run)));
   };
 
   const handleResumeRun = async (runId: string) => {
@@ -378,6 +397,22 @@ function App() {
                   <PipelineView runId={activeRunId} isRunning={runLoading} />
                 ) : (
                   <>
+                    {/* Run History - shown above the task input when there's history */}
+                    {(() => {
+                      const repoRuns = runs.filter(run => run.id.includes(activeTab));
+                      if (repoRuns.length === 0) return null;
+
+                      return (
+                        <RunHistory
+                          runs={repoRuns}
+                          loading={false}
+                          onSelectRun={(runId) => setSelectedRunId(runId)}
+                          onResume={handleResumeRun}
+                          onRename={handleRenameRun}
+                        />
+                      );
+                    })()}
+
                     <TaskInput
                       repoName={activeTab}
                       value={taskDrafts[activeTab] || ''}
@@ -386,21 +421,6 @@ function App() {
                       loading={false}
                       hasHistory={runs.some(run => run.id.includes(activeTab))}
                     />
-
-                    {/* Run History - only show when there's history for this repo */}
-                    {(() => {
-                      const repoRuns = runs.filter(run => run.id.includes(activeTab));
-                      if (repoRuns.length === 0) return null;
-                      
-                      return (
-                        <RunHistory
-                          runs={repoRuns}
-                          loading={false}
-                          onSelectRun={(runId) => setSelectedRunId(runId)}
-                          onResume={handleResumeRun}
-                        />
-                      );
-                    })()}
                   </>
                 )}
               </div>
@@ -425,7 +445,11 @@ function App() {
         />
       )}
 
-      <SettingsPanel isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsPanel
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onThemeChange={setTheme}
+      />
     </div>
   );
 }

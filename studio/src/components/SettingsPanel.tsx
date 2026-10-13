@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+import type { ThemeSetting } from '../theme';
 
 interface SettingsPanelProps {
   isOpen: boolean;
   onClose: () => void;
+  onThemeChange?: (theme: ThemeSetting) => void;
 }
 
 interface Settings {
@@ -16,7 +18,7 @@ interface Settings {
   activeProvider: 'claude-cli' | 'api';
 }
 
-export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
+export function SettingsPanel({ isOpen, onClose, onThemeChange }: SettingsPanelProps) {
   const [settings, setSettings] = useState<Settings>({
     theme: 'system',
     workspaceRoot: '',
@@ -93,7 +95,11 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                 </label>
                 <select
                   value={settings.theme}
-                  onChange={(e) => setSettings({ ...settings, theme: e.target.value as Settings['theme'] })}
+                  onChange={(e) => {
+                    const theme = e.target.value as Settings['theme'];
+                    setSettings({ ...settings, theme });
+                    onThemeChange?.(theme);
+                  }}
                   className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-900"
                 >
                   <option value="system">System</option>
