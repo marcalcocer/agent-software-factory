@@ -1,0 +1,43 @@
+{
+  "step": "documentation",
+  "attempt": 2,
+  "status": "COMPLETED",
+  "model": "claude-haiku-5-5",
+  "durationMs": 20598,
+  "writtenAt": "2026-10-13T15:52:46.268Z",
+  "data": {
+    "status": "COMPLETED",
+    "summary": "Updated ui/README.md to document the new Light/Dark/System theme switch (feature bullet and ThemeToggle.jsx entry in the component list). No CHANGELOG.md or OpenAPI spec exists in the repository, so neither was touched. The PR title and body were written from the QA, review and security reports and the diff; no claims beyond those reports were made.",
+    "updatedFiles": [
+      {
+        "path": "ui/README.md",
+        "changeType": "MODIFIED",
+        "description": "Added a Themes feature bullet (Light, Dark, System; stored in the browser and applied before render) and a ThemeToggle.jsx entry in the Main UI Components list."
+      }
+    ],
+    "changelogEntry": {
+      "section": "None",
+      "entries": []
+    },
+    "openApiUpdated": false,
+    "openApiNotes": "No OpenAPI/Swagger spec exists in the repository. The change is UI-only and does not alter any HTTP contract, so there was nothing to update.",
+    "pullRequest": {
+      "title": "feat(ui): add light/dark/system theme toggle and boxed nav links",
+      "body": "## Summary\nUsers asked for a dark mode and a way to choose between light, dark and system themes, and reported that the header's Home and About links were hard to read on the page. This change adds a Light / Dark / System theme switch next to the existing privacy (eye) toggle, applies the chosen theme before the first paint, and renders Home and About as boxed links, with the active one shown as a black box with white text.\n\n## Changes\n- **Theme logic** (`ui/src/lib/theme.js`): pure helpers for reading the stored preference, resolving the effective theme, applying the `dark` class, dispatching a change event, and subscribing to OS colour-scheme changes.\n- **ThemeToggle** (`ui/src/components/ThemeToggle.jsx`): rendered on desktop and mobile beside `PrivacyToggle`. It keeps instances in sync through the change event and the `storage` event, and re-applies the theme when the OS preference changes while \"System\" is selected.\n- **Layout** (`ui/src/layouts/Layout.astro`): inline script that applies the stored theme before paint to avoid a flash of the wrong theme.\n- **Header** (`ui/src/components/Header.astro`): Home and About as boxed links; the active link has a black background and white text in light mode.\n- **Tailwind** (`ui/tailwind.config.mjs`): `darkMode` set to `class`.\n- **Dark variants** across layout, header, cards, tables, modals, the investment pages and the About page. The investment graph modal reads the theme so chart text, axes, legend and grid remain readable.\n- **Tests** (`ui/src/lib/__tests__/theme.test.js`): unit tests for `resolveTheme`, `setTheme` event dispatch and `subscribeToSystemTheme`.\n- **Docs** (`ui/README.md`): feature bullet and component entry for the theme switch.\n\n## Test plan\n- `npm test` (cwd `ui/`): exit code 0, 52 tests run, 52 passed, 0 failed, 0 skipped. Executed by the factory QA step.\n- `npm run build` (cwd `ui/`): exit code 0. Executed by the factory QA step.\n- Acceptance criteria verified by QA: the boxed Home/About header links, the theme toggle beside the privacy toggle on desktop and mobile, persistence of the Light/Dark/System choice, the pre-paint theme script, dark-mode surfaces, and passing `resolveTheme` unit tests.\n\n## Quality gates\n- **QA**: PASS.\n- **Code review**: APPROVED_WITH_SUGGESTIONS. Only minor and nit-level suggestions remain, none blocking.\n- **Security**: PASS, risk level NONE.\n\n## Risks & rollback\n- **Visual regressions**: dark variants were added to many components, so unthemed elements could show low contrast in dark mode. Review the main pages in both themes.\n- **Chart tooltips**: the custom tooltip HTML is not themed and may look light in dark mode (see follow-ups).\n- **Storage**: the preference is stored under the `theme` key in `localStorage`. If storage is unavailable, the theme still applies for the session.\n- **Rollback**: revert this commit. No data migration or backend change is involved. A leftover `theme` key in users' browsers is harmless.\n\n## Follow-ups\n- Theme the custom chart tooltip (`getCustomTooltip`) for dark mode.\n- No `CHANGELOG.md` exists in the repository, so no changelog entry was added.",
+      "labels": [
+        "enhancement",
+        "ui"
+      ],
+      "breakingChanges": false,
+      "testPlan": [
+        "cd ui && npm test: exit 0, 52 passed, 0 failed, 0 skipped (factory QA)",
+        "cd ui && npm run build: exit 0 (factory QA)"
+      ]
+    },
+    "followUps": [
+      "No CHANGELOG.md exists in the repository; consider creating one so future user-facing changes such as this theme switch can be recorded.",
+      "Theme the custom chart tooltip HTML (getCustomTooltip) for dark mode, as noted in the developer report.",
+      "The root-level docs/ pages (index.html, privacy.html) are a static landing page and were not updated for the theme; a human should decide whether they need dark styling."
+    ]
+  }
+}

@@ -4,10 +4,9 @@ import { Sidebar } from './components/Sidebar';
 import { RepoTabs } from './components/RepoTabs';
 import { TaskInput } from './components/TaskInput';
 import { RunHistory } from './components/RunHistory';
-import { LiveOutput } from './components/LiveOutput';
 import { RunDetails } from './components/RunDetails';
 import { SettingsPanel } from './components/SettingsPanel';
-import { AgentTimeline } from './components/AgentTimeline';
+import { PipelineView } from './components/PipelineView';
 
 interface Repository {
   name: string;
@@ -339,10 +338,8 @@ function App() {
                   </div>
                 )}
 
-                {/* Task Input or Agent Timeline */}
-                {runLoading ? (
-                  <AgentTimeline runId={activeRunId} isRunning={runLoading} />
-                ) : (
+                {/* Task Input */}
+                {!runLoading && (
                   <TaskInput
                     repoName={activeTab}
                     value={taskDrafts[activeTab] || ''}
@@ -352,9 +349,9 @@ function App() {
                   />
                 )}
 
-                {/* Live Output */}
-                {activeRunId && (
-                  <LiveOutput runId={activeRunId} isRunning={runLoading} />
+                {/* Pipeline View (during execution) */}
+                {runLoading && activeRunId && (
+                  <PipelineView runId={activeRunId} isRunning={runLoading} />
                 )}
 
                 {/* Run History */}

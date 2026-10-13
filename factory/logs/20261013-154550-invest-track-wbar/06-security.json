@@ -1,0 +1,17 @@
+{
+  "step": "security",
+  "attempt": 1,
+  "status": "PASS/NONE",
+  "model": "claude-sonnet-5-5",
+  "durationMs": 6052,
+  "writtenAt": "2026-10-13T15:50:32.111Z",
+  "data": {
+    "status": "PASS",
+    "riskLevel": "NONE",
+    "summary": "The diff adds a light/dark/system theme toggle and Tailwind dark variants. The only logic is theme preference handling. The localStorage value is whitelisted against light/dark/system before use. It only toggles a CSS class and colorScheme, with no HTML injection, no network calls, no secrets and no new dependencies. The inline script in Layout.astro is static with no interpolated data. No security regression found. Part of the diff was truncated, but the visible and described changes are class-name edits only.",
+    "findings": [],
+    "secretsDetected": [],
+    "dependencyRisks": [],
+    "mustFixBeforeMerge": []
+  }
+}

@@ -1,0 +1,189 @@
+{
+  "step": "pm-architect",
+  "attempt": 1,
+  "status": "COMPLETED",
+  "model": "claude-sonnet-5-5",
+  "durationMs": 91485,
+  "writtenAt": "2026-10-13T15:47:21.742Z",
+  "data": {
+    "plan": {
+      "summary": "Fix header contrast by putting Home/About in boxed items (active one a black box with white text) and add a theme toggle (Light / Dark / System) beside the existing privacy eye button. Theme logic lives in a pure JS module (testable with the existing node --test runner), a React ThemeToggle persists the choice in localStorage, an inline script in Layout applies the dark class before paint, Tailwind switches to darkMode 'class', and dark: variants are added to the main surfaces (layout, header, modals, cards, tables).",
+      "understanding": "After the change the header shows Home and About as boxed items (active one black with white text, the other bordered and theme-aware) and a theme toggle next to the eye button. The user can choose Light, Dark or System (follows OS prefers-color-scheme). The choice persists across reloads and pages, is applied without flash, and System mode reacts live to OS changes. Layout, header, cards, tables and modals respect the dark class so no white-on-white or black-on-black text appears.",
+      "ambiguityLevel": "MINOR",
+      "clarificationQuestions": [],
+      "assumptions": [
+        "The 'black box' applies to the active nav item (black bg, white text); the inactive item gets a light bordered box in light mode and a dark-gray box in dark mode.",
+        "Theme control is a single icon button (sun/moon/computer from @heroicons/react, already a dependency) opening a small menu with Light, Dark, System; default is System.",
+        "Preference is stored in localStorage key 'theme' with values 'light' | 'dark' | 'system'.",
+        "Dark mode uses Tailwind darkMode: 'class' toggling 'dark' on <html>; no new dependencies.",
+        "Existing components only get dark: variants for background/text/border; no layout redesign; chart colors unchanged."
+      ],
+      "acceptanceCriteria": [
+        "Given the header, Home and About each render inside a box; the active one has a black background and white text in light mode.",
+        "Given desktop and mobile header, a theme toggle button is rendered next to the PrivacyToggle eye button.",
+        "Given the user selects Dark, html has class 'dark' and localStorage theme='dark'; selecting Light removes the class and stores 'light'.",
+        "Given System is selected and OS prefers dark, html has class 'dark'; when the OS preference changes the class updates without reload.",
+        "Given a stored preference, reloading any page applies the theme before first paint (inline script in Layout).",
+        "Given dark mode, page background, header, cards, tables and modals use dark backgrounds with light text (no unreadable text).",
+        "resolveTheme unit tests pass and npm test and npm run build succeed in ui/."
+      ],
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Theme logic module",
+          "description": "Create ui/src/lib/theme.js (new) exporting THEME_STORAGE_KEY, THEME_CHANGE_EVENT, getStoredTheme(storage), resolveTheme(preference, systemPrefersDark) returning 'light'|'dark', applyTheme(preference, doc, matchMedia) toggling 'dark' on documentElement, and setTheme(preference). Pure functions with injected storage/document for testability; invalid stored values fall back to 'system'.",
+          "type": "FEATURE",
+          "targetFiles": [
+            "ui/src/lib/theme.js"
+          ],
+          "risk": "LOW",
+          "dependsOn": []
+        },
+        {
+          "id": "T2",
+          "title": "Tailwind class dark mode",
+          "description": "Add darkMode: 'class' to tailwind config so dark: variants follow the html.dark class rather than the OS media query.",
+          "type": "INFRA",
+          "targetFiles": [
+            "ui/tailwind.config.mjs"
+          ],
+          "risk": "LOW",
+          "dependsOn": []
+        },
+        {
+          "id": "T3",
+          "title": "No-flash init script and dark body styles",
+          "description": "In Layout.astro add an is:inline script in head that reads localStorage 'theme', checks prefers-color-scheme and sets the dark class on <html> before paint (keep logic identical to theme.js); update body classes to bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100; add color-scheme handling.",
+          "type": "FEATURE",
+          "targetFiles": [
+            "ui/src/layouts/Layout.astro"
+          ],
+          "risk": "MEDIUM",
+          "dependsOn": [
+            "T1",
+            "T2"
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "ThemeToggle component",
+          "description": "Create ui/src/components/ThemeToggle.jsx (new) modelled on PrivacyToggle.jsx: button with SunIcon/MoonIcon/ComputerDesktopIcon opening a menu with Light, Dark, System; uses theme.js, listens to matchMedia change when System, aria-label/aria-checked, closes on outside click and Escape. Styling matches the eye button, with dark: variants.",
+          "type": "FEATURE",
+          "targetFiles": [
+            "ui/src/components/ThemeToggle.jsx"
+          ],
+          "risk": "MEDIUM",
+          "dependsOn": [
+            "T1"
+          ]
+        },
+        {
+          "id": "T5",
+          "title": "Header: boxed nav links and theme toggle",
+          "description": "In Header.astro render ThemeToggle (client:load) next to PrivacyToggle in desktop and mobile areas; give Home/About a box style (rounded-md px-3 py-2 border); active item bg-black text-white; inactive border-slate-300 text-slate-900 dark:border-slate-600 dark:text-slate-100 with hover states; nav bg-white/80 dark:bg-slate-900/80 and border dark variants; fix logo text and mobile menu dark classes. Remove the conflicting md:bg-white and non-class dark variants.",
+          "type": "BUGFIX",
+          "targetFiles": [
+            "ui/src/components/Header.astro"
+          ],
+          "risk": "MEDIUM",
+          "dependsOn": [
+            "T3",
+            "T4"
+          ]
+        },
+        {
+          "id": "T6",
+          "title": "Dark variants for app surfaces",
+          "description": "Add dark: classes for bg/text/border to BaseModal, ModalHeader, other modals' containers/inputs, Home, Investment, Details, Summary, InvestmentStats, entries table/mobile list, LoadingSpinner, NotFound and about.astro/investment.astro/404.astro wrappers. Only color utilities; no structural change.",
+          "type": "FEATURE",
+          "targetFiles": [
+            "ui/src/components/modals/BaseModal.jsx",
+            "ui/src/components/modals/ModalHeader.jsx",
+            "ui/src/components/Home.jsx",
+            "ui/src/components/investments/Investment.jsx",
+            "ui/src/components/investments/Details.jsx",
+            "ui/src/components/investments/Summary.jsx",
+            "ui/src/components/investments/InvestmentStats.jsx",
+            "ui/src/components/investments/InvestmentSection/InvestmentEntriesTable.jsx",
+            "ui/src/components/investments/InvestmentSection/InvestmentEntriesMobile.jsx",
+            "ui/src/components/investments/InvestmentsDetailsSection/InvestmentsDetailsListItem.jsx",
+            "ui/src/components/LoadingSpinner.jsx",
+            "ui/src/components/NotFound.jsx",
+            "ui/src/pages/about.astro"
+          ],
+          "risk": "MEDIUM",
+          "dependsOn": [
+            "T2"
+          ]
+        },
+        {
+          "id": "T7",
+          "title": "Unit tests for theme logic",
+          "description": "Create ui/src/lib/__tests__/theme.test.js (new) using node:test and node:assert, following ChartUtils.test.js style: resolveTheme for light/dark/system with each system preference; getStoredTheme with missing, invalid and valid values; applyTheme adds/removes 'dark' on a fake documentElement classList and persists. Helpers at end of file, explicit imports.",
+          "type": "TEST",
+          "targetFiles": [
+            "ui/src/lib/__tests__/theme.test.js"
+          ],
+          "risk": "LOW",
+          "dependsOn": [
+            "T1"
+          ]
+        }
+      ],
+      "testStrategy": {
+        "unitTests": [
+          "theme.test.js: resolveTheme(light|dark|system, prefersDark true/false)",
+          "theme.test.js: getStoredTheme returns 'system' for null/invalid, returns stored valid value",
+          "theme.test.js: applyTheme toggles 'dark' class on fake documentElement and persists preference",
+          "Existing ForecastUtils and ChartUtils tests remain green"
+        ],
+        "integrationTests": [
+          "npm run build in ui/ compiles Astro pages with ThemeToggle and the new Tailwind config"
+        ],
+        "e2eChecks": [
+          "Manual/browser: toggle Light, Dark, System in header; reload and verify persistence and no flash",
+          "Verify Home/About boxes readable in both themes on / and /about, desktop and mobile widths"
+        ],
+        "commands": [
+          "cd ui && npm test",
+          "cd ui && npm run build"
+        ]
+      },
+      "conventionNotes": [
+        "AGENTS.md: avoid wildcard imports; use explicit imports in all files including tests.",
+        "AGENTS.md: place helper methods at the end of test files; run the test suite after adding or modifying tests.",
+        "AGENTS.md: use var for local variables in methods where possible; explicit types for fields/params (applied to JS locals as const/var consistent with existing style).",
+        "AGENTS.md: create comprehensive tests for new classes following existing test patterns (node:test in src/lib/__tests__).",
+        "Global testing rules: deterministic tests, inject storage/document/matchMedia instead of touching globals, test names describe behaviour.",
+        "Java/Lombok/Spring rules do not apply: change is confined to the ui/ Astro/React frontend."
+      ],
+      "outOfScope": [
+        "Backend (Spring) changes",
+        "Restyling chart (ApexCharts/Recharts) colors for dark mode",
+        "Server-side persistence of theme preference",
+        "New dependencies or UI libraries",
+        "Layout redesign beyond color/box styling"
+      ],
+      "risks": [
+        {
+          "description": "Switching Tailwind darkMode from media to class changes existing dark: behaviour for OS-dark users who have not chosen a theme.",
+          "severity": "MEDIUM",
+          "mitigation": "Default preference is 'system', which applies the dark class when the OS prefers dark, preserving parity; dark: variants are added across surfaces so nothing is half-themed."
+        },
+        {
+          "description": "Flash of wrong theme or Astro hydration mismatch in ThemeToggle.",
+          "severity": "MEDIUM",
+          "mitigation": "Inline script sets the class before paint; ThemeToggle reads stored value in useEffect like PrivacyToggle, avoiding SSR mismatch."
+        },
+        {
+          "description": "Missed components remain white-on-white in dark mode.",
+          "severity": "LOW",
+          "mitigation": "Grep for bg-white, text-gray-*, border-gray-* across ui/src and add dark variants for every hit."
+        }
+      ],
+      "suggestedBranchName": "feature/ui-theme-toggle-and-header-boxes",
+      "commitMessage": "feat(ui): add light/dark/system theme toggle and boxed nav links"
+    },
+    "clarificationsUsed": null
+  }
+}

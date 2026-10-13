@@ -1,0 +1,119 @@
+{
+  "step": "qa-tester",
+  "attempt": 2,
+  "status": "PASS",
+  "model": "claude-haiku-5-5",
+  "durationMs": 22089,
+  "writtenAt": "2026-10-13T15:52:09.953Z",
+  "data": {
+    "verdict": "PASS",
+    "passed": true,
+    "summary": "Attempt 2 passes the automated gate. `npm test` in ui/ exited 0 with 52 tests, 52 passing, 0 failing, and `npm run build` exited 0; both results come from the factory's pre-executed runs, and I did not re-run them. The theme logic, the inline no-flash script in Layout.astro and the Header/ThemeToggle wiring match the acceptance criteria by code inspection. Criterion 6 (dark-mode readability across all pages and modals) and the browser-only checks were not executed and remain unverified.",
+    "executedCommands": [
+      {
+        "command": "npm test (cwd ui/, pre-executed by factory)",
+        "exitCode": 0,
+        "durationMs": 253,
+        "timedOut": false
+      },
+      {
+        "command": "npm run build (cwd ui/, pre-executed by factory)",
+        "exitCode": 0,
+        "durationMs": 2145,
+        "timedOut": false
+      }
+    ],
+    "totals": {
+      "tests": 52,
+      "passed": 52,
+      "failed": 0,
+      "skipped": 0
+    },
+    "failures": [],
+    "e2eChecks": [
+      {
+        "name": "Header Home/About boxes (light mode active state)",
+        "request": "Code inspection of ui/src/components/Header.astro (activeLink class)",
+        "expected": "Active link has black background and white text in light mode",
+        "actual": "activeLink = 'border-black bg-black text-white dark:border-slate-500'; applied to Home or About on both desktop and mobile lists",
+        "passed": true
+      },
+      {
+        "name": "ThemeToggle beside PrivacyToggle (desktop and mobile)",
+        "request": "Code inspection of Header.astro",
+        "expected": "ThemeToggle rendered next to PrivacyToggle in both header variants",
+        "actual": "ThemeToggle client:load follows PrivacyToggle in the md:flex block and in the md:hidden block",
+        "passed": true
+      },
+      {
+        "name": "Persistence and html class on explicit selection",
+        "request": "Code inspection of theme.js setTheme/applyTheme and ThemeToggle select()",
+        "expected": "Dark sets class 'dark' and localStorage theme='dark'; Light removes the class and stores 'light'",
+        "actual": "setTheme persists the value and applyTheme toggles the 'dark' class; covered by unit tests (persists the preference and applies it, removes the dark class when the preference is light)",
+        "passed": true
+      },
+      {
+        "name": "System preference and live OS change",
+        "request": "Code inspection of theme.js subscribeToSystemTheme and ThemeToggle",
+        "expected": "System + OS dark gives class 'dark'; OS change updates class without reload",
+        "actual": "subscribeToSystemTheme listens to the matchMedia 'change' event and reapplies only when preference is 'system'; covered by unit tests",
+        "passed": true
+      },
+      {
+        "name": "No flash on reload (inline script before first paint)",
+        "request": "Code inspection of ui/src/layouts/Layout.astro",
+        "expected": "Inline script in head reads localStorage and sets the dark class before body renders",
+        "actual": "is:inline script in <head> reads localStorage 'theme', resolves system via matchMedia and toggles 'dark' on documentElement",
+        "passed": true
+      },
+      {
+        "name": "Dark-mode readability across page, header, cards, tables, modals",
+        "request": "Visual check in browser on / and /about at desktop and mobile widths",
+        "expected": "Dark backgrounds with light text everywhere",
+        "actual": "Not executed: no browser available to QA. Dark classes were added to the touched components, but the diff does not show every table and modal covered. Developer lists the chart tooltip as unthemed.",
+        "passed": false
+      },
+      {
+        "name": "resolveTheme unit tests and npm test/build green",
+        "request": "npm test and npm run build in ui/",
+        "expected": "Exit 0 for both, resolveTheme tests pass",
+        "actual": "npm test exit 0, 52/52 pass including the resolveTheme group; npm run build exit 0",
+        "passed": true
+      }
+    ],
+    "weakenedVerification": {
+      "detected": false,
+      "evidence": [
+        "theme.test.js is a new file; no existing test was deleted, skipped or disabled in the diff.",
+        "ForecastUtils and ChartUtils tests still appear as passing in the suite output.",
+        "No assertions were loosened in the diff."
+      ]
+    },
+    "bugReports": [
+      {
+        "title": "Chart tooltip is not themed for dark mode",
+        "severity": "MINOR",
+        "stepsToReproduce": [
+          "Set the theme to Dark via the header ThemeToggle.",
+          "Open an investment graph modal.",
+          "Hover a data point to show the custom tooltip (getCustomTooltip)."
+        ],
+        "expected": "Tooltip uses dark background with light text in dark mode.",
+        "actual": "Developer report lists the custom tooltip HTML as not themed; it is likely to keep light styling.",
+        "evidence": "Developer report followUps: 'Chart tooltip custom HTML (getCustomTooltip) is not themed for dark mode.' Not verified in a browser."
+      },
+      {
+        "title": "No component-level test for ThemeToggle or the InvestmentGraphModal MutationObserver",
+        "severity": "MINOR",
+        "stepsToReproduce": [
+          "Inspect ui/src/lib/__tests__/theme.test.js and the test list.",
+          "Search for tests covering ThemeToggle.jsx or InvestmentGraphModal.tsx."
+        ],
+        "expected": "Event and storage sync and chart color switching are covered by tests, as AGENTS.md asks for comprehensive tests for new classes.",
+        "actual": "Only the theme.js helpers are unit tested. ThemeToggle's event/storage listeners and the MutationObserver chart colouring have no tests.",
+        "evidence": "The only new test file is ui/src/lib/__tests__/theme.test.js; the Developer report testsAdded lists only that file."
+      }
+    ],
+    "recommendation": "Before merge, verify the dark-mode visuals in a browser at / and /about (desktop and mobile widths) and fix any unreadable tables or modals. Then theme the custom tooltip returned by getCustomTooltip in ui/src/components/modals/InvestmentGraphModal.tsx, reading the 'dark' class on document.documentElement the same way the chart colours do. Optionally add a test for ThemeToggle's THEME_CHANGE_EVENT and storage listeners."
+  }
+}

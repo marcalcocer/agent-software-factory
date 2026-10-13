@@ -1,0 +1,608 @@
+diff --git a/ui/src/components/Header.astro b/ui/src/components/Header.astro
+index 021380b..7f671b8 100644
+--- a/ui/src/components/Header.astro
++++ b/ui/src/components/Header.astro
+@@ -1,59 +1,49 @@
+ ---
+ import PrivacyToggle from "./PrivacyToggle";
++import ThemeToggle from "./ThemeToggle";
+ 
+ const base = import.meta.env.BASE_URL;
+ const currentPath = Astro.url.pathname;
++
++const isHome = currentPath === base || currentPath === base.slice(0, -1);
++const isAbout = currentPath === `${base}about` || currentPath === `${base}about/`;
++
++const linkBase = "block rounded-md border px-3 py-2 transition-colors";
++const activeLink = "border-black bg-black text-white dark:border-slate-500";
++const inactiveLink =
++  "border-slate-300 text-slate-900 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-700";
++const homeClass = `${linkBase} ${isHome ? activeLink : inactiveLink}`;
++const aboutClass = `${linkBase} ${isAbout ? activeLink : inactiveLink}`;
+ ---
+ 
+-<nav class="bg-white/80 backdrop-blur-md border-b border-slate-200">
++<nav class="bg-white/80 backdrop-blur-md border-b border-slate-200 dark:bg-slate-900/80 dark:border-slate-700">
+   <div class="max-w-screen-xl flex flex-wrap items-center justify-between mx-auto p-4">
+     <!-- Logo Section -->
+     <div class="flex items-center space-x-3 rtl:space-x-reverse">
+       <a href={base} class="flex items-center space-x-2">
+         <img src={`${base}logo.svg`} class="h-8" />
+-        <span class="self-center text-2xl font-semibold whitespace-nowrap dark:text-white">InvestTrack</span>
++        <span class="self-center text-2xl font-semibold whitespace-nowrap text-slate-900 dark:text-white">InvestTrack</span>
+       </a>
+     </div>
+ 
+-    <!-- Right-aligned Desktop Nav and Privacy Toggle -->
++    <!-- Right-aligned Desktop Nav, Privacy Toggle and Theme Toggle -->
+     <div class="hidden w-full md:flex md:w-auto md:items-center space-x-3 rtl:space-x-reverse">
+-      <PrivacyToggle client:load class="mr-4" /> {/* Eye button left of nav links */}
+-      <ul class="font-medium flex flex-col p-4 md:p-0 mt-4 md:mt-0 md:flex-row md:space-x-8 rtl:space-x-reverse md:border-0 md:bg-white dark:bg-gray-800 md:dark:bg-gray-900 dark:border-gray-700">
+-        <!-- Home Link -->
++      <PrivacyToggle client:load />
++      <ThemeToggle client:load />
++      <ul class="font-medium flex flex-col p-4 md:p-0 mt-4 md:mt-0 md:flex-row md:space-x-3 rtl:space-x-reverse md:border-0">
+         <li>
+-          <a
+-            href={base}
+-            class={`block py-2 px-3 rounded-sm md:p-0 ${
+-              currentPath === base || currentPath === base.slice(0, -1)
+-                ? "text-white bg-blue-700 md:bg-transparent md:text-blue-700 dark:text-white md:dark:text-blue-500"
+-                : "text-gray-900 hover:bg-gray-100 md:hover:bg-transparent md:hover:text-blue-700 dark:text-white md:dark:hover:text-blue-500 dark:hover:bg-gray-700 dark:hover:text-white"
+-            }`}
+-            aria-current={currentPath === base || currentPath === base.slice(0, -1) ? "page" : undefined}
+-          >
+-            Home
+-          </a>
++          <a href={base} class={homeClass} aria-current={isHome ? "page" : undefined}>Home</a>
+         </li>
+-
+-        <!-- About Link -->
+         <li>
+-          <a
+-            href={`${base}about`}
+-            class={`block py-2 px-3 rounded-sm md:p-0 ${
+-              currentPath === `${base}about` || currentPath === `${base}about/`
+-                ? "text-white bg-blue-700 md:bg-transparent md:text-blue-700 dark:text-white md:dark:text-blue-500"
+-                : "text-gray-900 hover:bg-gray-100 md:hover:bg-transparent md:hover:text-blue-700 dark:text-white md:dark:hover:text-blue-500 dark:hover:bg-gray-700 dark:hover:text-white"
+-            }`}
+-            aria-current={currentPath === `${base}about` || currentPath === `${base}about/` ? "page" : undefined}
+-          >
+-            About
+-          </a>
++          <a href={`${base}about`} class={aboutClass} aria-current={isAbout ? "page" : undefined}>About</a>
+         </li>
+       </ul>
+     </div>
+ 
+-    <!-- Mobile Menu Button and Mobile Privacy Toggle -->
++    <!-- Mobile Menu Button, Privacy Toggle and Theme Toggle -->
+     <div class="flex items-center md:hidden space-x-3 rtl:space-x-reverse">
+       <PrivacyToggle client:load />
++      <ThemeToggle client:load />
+       <button
+         data-collapse-toggle="navbar-default"
+         type="button"
+@@ -70,35 +60,12 @@ const currentPath = Astro.url.pathname;
+ 
+     <!-- Mobile Navigation Links (collapsible) -->
+     <div class="hidden w-full md:hidden" id="navbar-default">
+-      <ul class="font-medium flex flex-col p-4 mt-4 border border-gray-100 rounded-lg bg-gray-50 dark:bg-gray-800 dark:border-gray-700">
+-        <!-- Home Link -->
++      <ul class="font-medium flex flex-col gap-2 p-4 mt-4 border border-gray-100 rounded-lg bg-gray-50 dark:bg-gray-800 dark:border-gray-700">
+         <li>
+-          <a
+-            href={base}
+-            class={`block py-2 px-3 rounded-sm md:p-0 ${
+-              currentPath === base || currentPath === base.slice(0, -1)
+-                ? "text-white bg-blue-700 md:bg-transparent md:text-blue-700 dark:text-white md:dark:text-blue-500"
+-                : "text-gray-900 hover:bg-gray-100 md:hover:bg-transparent md:hover:text-blue-700 dark:text-white md:dark:hover:text-blue-500 dark:hover:bg-gray-700 dark:hover:text-white"
+-            }`}
+-            aria-current={currentPath === base || currentPath === base.slice(0, -1) ? "page" : undefined}
+-          >
+-            Home
+-          </a>
++          <a href={base} class={homeClass} aria-current={isHome ? "page" : undefined}>Home</a>
+         </li>
+-
+-        <!-- About Link -->
+         <li>
+-          <a
+-            href={`${base}about`}
+-            class={`block py-2 px-3 rounded-sm md:p-0 ${
+-              currentPath === `${base}about` || currentPath === `${base}about/`
+-                ? "text-white bg-blue-700 md:bg-transparent md:text-blue-700 dark:text-white md:dark:text-blue-500"
+-                : "text-gray-900 hover:bg-gray-100 md:hover:bg-transparent md:hover:text-blue-700 dark:text-white md:dark:hover:text-blue-500 dark:hover:bg-gray-700 dark:hover:text-white"
+-            }`}
+-            aria-current={currentPath === `${base}about` || currentPath === `${base}about/` ? "page" : undefined}
+-          >
+-            About
+-          </a>
++          <a href={`${base}about`} class={aboutClass} aria-current={isAbout ? "page" : undefined}>About</a>
+         </li>
+       </ul>
+     </div>
+@@ -117,4 +84,4 @@ const currentPath = Astro.url.pathname;
+       });
+     }
+   });
+-</script>
+\ No newline at end of file
++</script>
+diff --git a/ui/src/components/NotFound.jsx b/ui/src/components/NotFound.jsx
+index d2a9f39..e0145c4 100644
+--- a/ui/src/components/NotFound.jsx
++++ b/ui/src/components/NotFound.jsx
+@@ -1,8 +1,8 @@
+ export default function NotFound() {
+     return (
+-        <div className="min-h-screen flex flex-col justify-center items-center bg-gray-100">
++        <div className="min-h-screen flex flex-col justify-center items-center bg-gray-100 dark:bg-slate-900">
+             <h1 className="text-5xl font-bold text-red-600">404</h1>
+-            <p className="text-xl mt-4 text-gray-700">Page not found</p>
++            <p className="text-xl mt-4 text-gray-700 dark:text-slate-300">Page not found</p>
+             <a
+                 href="/"
+                 className="mt-6 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+diff --git a/ui/src/components/PrivacyToggle.jsx b/ui/src/components/PrivacyToggle.jsx
+index da54d76..1fedf5f 100644
+--- a/ui/src/components/PrivacyToggle.jsx
++++ b/ui/src/components/PrivacyToggle.jsx
+@@ -25,7 +25,7 @@ export default function PrivacyToggle() {
+     return (
+         <button
+             onClick={togglePrivacy}
+-            className="p-2 text-gray-500 hover:text-gray-700 focus:outline-none transition-colors duration-200"
++            className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 focus:outline-none transition-colors duration-200"
+             title={isPrivate ? "Show values" : "Hide values"}
+         >
+             {isPrivate ? (
+diff --git a/ui/src/components/ThemeToggle.jsx b/ui/src/components/ThemeToggle.jsx
+new file mode 100644
+index 0000000..b072c8d
+--- /dev/null
++++ b/ui/src/components/ThemeToggle.jsx
+@@ -0,0 +1,126 @@
++import { useState, useEffect, useRef } from 'react';
++import { SunIcon, MoonIcon, ComputerDesktopIcon } from '@heroicons/react/24/outline';
++import {
++    THEME_CHANGE_EVENT,
++    THEME_STORAGE_KEY,
++    getStoredTheme,
++    setTheme,
++    applyTheme,
++    subscribeToSystemTheme,
++} from '../lib/theme';
++
++const OPTIONS = [
++    { value: 'light', label: 'Light', Icon: SunIcon },
++    { value: 'dark', label: 'Dark', Icon: MoonIcon },
++    { value: 'system', label: 'System', Icon: ComputerDesktopIcon },
++];
++
++export default function ThemeToggle() {
++    const [preference, setPreference] = useState('system');
++    const [isOpen, setIsOpen] = useState(false);
++    const containerRef = useRef(null);
++    const preferenceRef = useRef('system');
++
++    useEffect(() => {
++        preferenceRef.current = preference;
++    }, [preference]);
++
++    useEffect(() => {
++        const stored = getStoredTheme(window.localStorage);
++        preferenceRef.current = stored;
++        setPreference(stored);
++
++        const handleThemeChange = (event) => {
++            preferenceRef.current = event.detail;
++            setPreference(event.detail);
++        };
++        const handleStorage = (event) => {
++            if (event.key !== THEME_STORAGE_KEY) return;
++            const value = getStoredTheme(window.localStorage);
++            preferenceRef.current = value;
++            setPreference(value);
++            applyTheme(value, document, window.matchMedia.bind(window));
++        };
++        window.addEventListener(THEME_CHANGE_EVENT, handleThemeChange);
++        window.addEventListener('storage', handleStorage);
++        return () => {
++            window.removeEventListener(THEME_CHANGE_EVENT, handleThemeChange);
++            window.removeEventListener('storage', handleStorage);
++        };
++    }, []);
++
++    useEffect(() => {
++        return subscribeToSystemTheme(
++            window.matchMedia.bind(window),
++            document,
++            () => preferenceRef.current,
++        );
++    }, []);
++
++    useEffect(() => {
++        if (!isOpen) return undefined;
++        const handleClick = (event) => {
++            if (containerRef.current && !containerRef.current.contains(event.target)) {
++                setIsOpen(false);
++            }
++        };
++        const handleKey = (event) => {
++            if (event.key === 'Escape') setIsOpen(false);
++        };
++        document.addEventListener('mousedown', handleClick);
++        document.addEventListener('keydown', handleKey);
++        return () => {
++            document.removeEventListener('mousedown', handleClick);
++            document.removeEventListener('keydown', handleKey);
++        };
++    }, [isOpen]);
++
++    const select = (value) => {
++        setPreference(value);
++        setTheme(value);
++        setIsOpen(false);
++    };
++
++    const current = OPTIONS.find((option) => option.value === preference) || OPTIONS[2];
++    const CurrentIcon = current.Icon;
++
++    return (
++        <div className="relative" ref={containerRef}>
++            <button
++                type="button"
++                onClick={() => setIsOpen(!isOpen)}
++                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 focus:outline-none transition-colors duration-200"
++                title={`Theme: ${current.label}`}
++                aria-label={`Theme: ${current.label}`}
++                aria-haspopup="menu"
++                aria-expanded={isOpen}
++            >
++                <CurrentIcon className="w-6 h-6" />
+
+[... 56531 characters truncated ...]
+
+ }
++        var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
++        var resolved = preference === 'system' ? (prefersDark ? 'dark' : 'light') : preference;
++        document.documentElement.classList.toggle('dark', resolved === 'dark');
++        document.documentElement.style.colorScheme = resolved;
++      })();
++    </script>
+   </head>
+-  <body class="bg-slate-50 text-slate-900">
++  <body class="bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100">
+     <slot />
+   </body>
+ </html>
+diff --git a/ui/src/lib/__tests__/theme.test.js b/ui/src/lib/__tests__/theme.test.js
+new file mode 100644
+index 0000000..0448925
+--- /dev/null
++++ b/ui/src/lib/__tests__/theme.test.js
+@@ -0,0 +1,225 @@
++import assert from "node:assert/strict";
++import { describe, it } from "node:test";
++import {
++    THEME_CHANGE_EVENT,
++    THEME_STORAGE_KEY,
++    applyTheme,
++    getStoredTheme,
++    resolveTheme,
++    setTheme,
++    subscribeToSystemTheme,
++}from "../theme.js";
++
++describe("theme.resolveTheme", () => {
++    it("returns light when the preference is light regardless of the system", () => {
++        assert.equal(resolveTheme("light", true), "light");
++        assert.equal(resolveTheme("light", false), "light");
++    });
++
++    it("returns dark when the preference is dark regardless of the system", () => {
++        assert.equal(resolveTheme("dark", true), "dark");
++        assert.equal(resolveTheme("dark", false), "dark");
++    });
++
++    it("follows the system when the preference is system", () => {
++        assert.equal(resolveTheme("system", true), "dark");
++        assert.equal(resolveTheme("system", false), "light");
++    });
++});
++
++describe("theme.getStoredTheme", () => {
++    it("falls back to system when nothing is stored", () => {
++        assert.equal(getStoredTheme(createStorage()), "system");
++    });
++
++    it("falls back to system when the stored value is invalid", () => {
++        assert.equal(getStoredTheme(createStorage("purple")), "system");
++    });
++
++    it("returns the stored value when it is valid", () => {
++        assert.equal(getStoredTheme(createStorage("dark")), "dark");
++        assert.equal(getStoredTheme(createStorage("light")), "light");
++    });
++
++    it("falls back to system when storage throws", () => {
++        const storage = {
++            getItem() {
++                throw new Error("denied");
++            },
++        };
++        assert.equal(getStoredTheme(storage), "system");
++    });
++});
++
++describe("theme.applyTheme", () => {
++    it("adds the dark class when the preference is dark", () => {
++        const doc = createDocument();
++
++        const resolved = applyTheme("dark", doc, createMatchMedia(false));
++
++        assert.equal(resolved, "dark");
++        assert.ok(doc.documentElement.classes.has("dark"));
++    });
++
++    it("removes the dark class when the preference is light", () => {
++        const doc = createDocument(["dark"]);
++
++        const resolved = applyTheme("light", doc, createMatchMedia(true));
++
++        assert.equal(resolved, "light");
++        assert.ok(!doc.documentElement.classes.has("dark"));
++    });
++
++    it("applies the dark class when system is selected and the OS prefers dark", () => {
++        const doc = createDocument();
++
++        applyTheme("system", doc, createMatchMedia(true));
++
++        assert.ok(doc.documentElement.classes.has("dark"));
++    });
++
++    it("removes the dark class when system is selected and the OS prefers light", () => {
++        const doc = createDocument(["dark"]);
++
++        applyTheme("system", doc, createMatchMedia(false));
++
++        assert.ok(!doc.documentElement.classes.has("dark"));
++    });
++});
++
++describe("theme.setTheme", () => {
++    it("persists the preference and applies it", () => {
++        const storage = createStorage();
++        const doc = createDocument();
++
++        const resolved = setTheme("dark", storage, doc, createMatchMedia(false));
++
++        assert.equal(resolved, "dark");
++        assert.equal(storage.getItem(THEME_STORAGE_KEY), "dark");
++        assert.ok(doc.documentElement.classes.has("dark"));
++    });
++
++    it("stores system when the preference is invalid", () => {
++        const storage = createStorage();
++        const doc = createDocument();
++
++        setTheme("bogus", storage, doc, createMatchMedia(false));
++
++        assert.equal(storage.getItem(THEME_STORAGE_KEY), "system");
++    });
++
++    it("dispatches the theme change event with the stored value", () => {
++        const dispatched = [];
++        const originalWindow = globalThis.window;
++        const originalCustomEvent = globalThis.CustomEvent;
++        globalThis.window = { dispatchEvent: (event) => dispatched.push(event) };
++        globalThis.CustomEvent = class {
++            constructor(type, init) {
++                this.type = type;
++                this.detail = init.detail;
++            }
++        };
++        const storage = createStorage();
++
++        try {
++            setTheme("dark", storage, createDocument(), createMatchMedia(false));
++        } finally {
++            globalThis.window = originalWindow;
++            globalThis.CustomEvent = originalCustomEvent;
++        }
++
++        assert.equal(dispatched.length, 1);
++        assert.equal(dispatched[0].type, THEME_CHANGE_EVENT);
++        assert.equal(dispatched[0].detail, storage.getItem(THEME_STORAGE_KEY));
++    });
++});
++
++describe("theme.subscribeToSystemTheme", () => {
++    it("applies the dark class on an OS change while the preference is system", () => {
++        const doc = createDocument();
++        const media = createChangeableMatchMedia(false);
++        subscribeToSystemTheme(media.matchMedia, doc, () => "system");
++
++        media.change(true);
++
++        assert.ok(doc.documentElement.classes.has("dark"));
++    });
++
++    it("ignores OS changes while the preference is light", () => {
++        const doc = createDocument();
++        const media = createChangeableMatchMedia(false);
++        subscribeToSystemTheme(media.matchMedia, doc, () => "light");
++
++        media.change(true);
++
++        assert.ok(!doc.documentElement.classes.has("dark"));
++    });
++
++    it("ignores OS changes while the preference is dark", () => {
++        const doc = createDocument(["dark"]);
++        const media = createChangeableMatchMedia(false);
++        subscribeToSystemTheme(media.matchMedia, doc, () => "dark");
++
++        media.change(false);
++
++        assert.ok(doc.documentElement.classes.has("dark"));
++    });
++
++    it("stops reacting after unsubscribe", () => {
++        const doc = createDocument();
++        const media = createChangeableMatchMedia(false);
++        const unsubscribe = subscribeToSystemTheme(media.matchMedia, doc, () => "system");
++
++        unsubscribe();
++        media.change(true);
++
++        assert.ok(!doc.documentElement.classes.has("dark"));
++    });
++});
++
++function createChangeableMatchMedia(initialMatches) {
++    let matches = initialMatches;
++    const listeners = new Set();
++    const mediaQueryList = {
++        get matches() {
++            return matches;
++        },
++        addEventListener: (_type, listener) => listeners.add(listener),
++        removeEventListener: (_type, listener) => listeners.delete(listener),
++    };
++    return {
++        matchMedia: () => mediaQueryList,
++        change: (value) => {
++            matches = value;
++            listeners.forEach((listener) => listener());
++        },
++    };
++}
++
++function createStorage(initialValue = null) {
++    let value = initialValue;
++    return {
++        getItem: () => value,
++        setItem: (_key, newValue) => {
++            value = newValue;
++        },
++    };
++}
++
++function createDocument(initialClasses = []) {
++    const classes = new Set(initialClasses);
++    return {
++        documentElement: {
++            classes,
++            style: {},
++            classList: {
++                add: (name) => classes.add(name),
++                remove: (name) => classes.delete(name),
++            },
++        },
++    };
++}
++
++function createMatchMedia(prefersDark) {
++    return () => ({ matches: prefersDark });
++}
+diff --git a/ui/src/lib/theme.js b/ui/src/lib/theme.js
+new file mode 100644
+index 0000000..27728e7
+--- /dev/null
++++ b/ui/src/lib/theme.js
+@@ -0,0 +1,68 @@
++export const THEME_STORAGE_KEY = 'theme';
++export const THEME_CHANGE_EVENT = 'themeChanged';
++export const THEME_PREFERENCES = ['light', 'dark', 'system'];
++
++const DARK_QUERY = '(prefers-color-scheme: dark)';
++
++export const getStoredTheme = (storage) => {
++    try {
++        const value = storage ? storage.getItem(THEME_STORAGE_KEY) : null;
++        return THEME_PREFERENCES.includes(value) ? value : 'system';
++    } catch {
++        return 'system';
++    }
++};
++
++export const resolveTheme = (preference, systemPrefersDark) => {
++    if (preference === 'light' || preference === 'dark') {
++        return preference;
++    }
++    return systemPrefersDark ? 'dark' : 'light';
++};
++
++export const applyTheme = (preference, doc, matchMedia) => {
++    const systemPrefersDark = typeof matchMedia === 'function' ? Boolean(matchMedia(DARK_QUERY).matches) : false;
++    const resolved = resolveTheme(preference, systemPrefersDark);
++    const root = doc.documentElement;
++    if (resolved === 'dark') {
++        root.classList.add('dark');
++    } else {
++        root.classList.remove('dark');
++    }
++    if (root.style) {
++        root.style.colorScheme = resolved;
++    }
++    return resolved;
++};
++
++/**
++ * Re-applies the theme whenever the OS color scheme changes, but only while the current
++ * preference (read lazily through getPreference) is 'system'. Returns an unsubscribe function.
++ */
++export const subscribeToSystemTheme = (matchMedia, doc, getPreference) => {
++    if (typeof matchMedia !== 'function') {
++        return () => {};
++    }
++    const media = matchMedia(DARK_QUERY);
++    const handleChange = () => {
++        if (getPreference() === 'system') {
++            applyTheme('system', doc, matchMedia);
++        }
++    };
++    media.addEventListener('change', handleChange);
++    return () => media.removeEventListener('change', handleChange);
++};
++
++export const setTheme =(preference, storage = window.localStorage, doc = document, matchMedia = window.matchMedia.bind(window)) => {
++    const value = THEME_PREFERENCES.includes(preference) ? preference : 'system';
++    try {
++        storage.setItem(THEME_STORAGE_KEY, value);
++    } catch {
++        // Storage may be unavailable (private mode); the theme is still applied for this session.
++    }
++    const resolved = applyTheme(value, doc, matchMedia);
++    if (typeof window !== 'undefined') {
++        window.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT, { detail: value }));
++    }
++    return resolved;
++};
+diff --git a/ui/src/pages/about.astro b/ui/src/pages/about.astro
+index febad8c..974c893 100644
+--- a/ui/src/pages/about.astro
++++ b/ui/src/pages/about.astro
+@@ -10,7 +10,7 @@ import Header from "@/components/Header.astro";
+     <h1 class="text-2xl sm:text-3xl lg:text-4xl font-bold text-center text-green-600 mb-4 sm:mb-6">
+       About InvestTrack
+     </h1>
+-    <p class="text-center text-gray-700 text-base sm:text-lg lg:text-xl leading-relaxed sm:leading-loose">
++    <p class="text-center text-gray-700 dark:text-slate-300 text-base sm:text-lg lg:text-xl leading-relaxed sm:leading-loose">
+       InvestTrack is a personal finance application designed to help you monitor
+       and manage your investments. Whether you're tracking stocks, funds, or real
+       estate, InvestTrack offers a simple and clear interface to keep an eye on
+diff --git a/ui/tailwind.config.mjs b/ui/tailwind.config.mjs
+index 19f0614..e3d98e3 100644
+--- a/ui/tailwind.config.mjs
++++ b/ui/tailwind.config.mjs
+@@ -1,5 +1,6 @@
+ /** @type {import('tailwindcss').Config} */
+ export default {
++	darkMode: 'class',
+ 	content: ['./src/**/*.{astro,html,js,jsx,md,mdx,svelte,ts,tsx,vue}'],
+ 	theme: {
+ 		extend: {},

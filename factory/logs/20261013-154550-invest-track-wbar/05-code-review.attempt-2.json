@@ -1,0 +1,65 @@
+{
+  "step": "code-review",
+  "attempt": 2,
+  "status": "APPROVED_WITH_SUGGESTIONS",
+  "model": "claude-sonnet-5-5",
+  "durationMs": 15601,
+  "writtenAt": "2026-10-13T15:52:25.603Z",
+  "data": {
+    "status": "APPROVED_WITH_SUGGESTIONS",
+    "summary": "The change covers all acceptance criteria: Home/About boxes with a black active state, a ThemeToggle next to PrivacyToggle on desktop and mobile, light/dark/system persistence, an inline pre-paint script in Layout, dark variants across components, and tested pure helpers in theme.js. QA reports 52 tests passing. Only minor and nit-level improvements remain.",
+    "scores": {
+      "correctness": 4,
+      "maintainability": 4,
+      "conventions": 4,
+      "testQuality": 4
+    },
+    "findings": [
+      {
+        "severity": "MINOR",
+        "file": "ui/src/components/ThemeToggle.jsx",
+        "line": null,
+        "issue": "The preference is synchronised through several overlapping paths: the preferenceRef effect, the manual ref assignments in the handlers, and the setPreference call in select(). The THEME_CHANGE_EVENT listener already updates state, so select()'s own setPreference is redundant and the ref is written in multiple places.",
+        "suggestion": "Keep a single update path: derive the ref in the one effect on [preference], and let select() call only setTheme (the event listener updates state). That removes the duplicate ref assignments.",
+        "rule": null
+      },
+      {
+        "severity": "MINOR",
+        "file": "ui/src/lib/theme.js",
+        "line": null,
+        "issue": "The pre-paint logic in Layout.astro duplicates getStoredTheme, resolveTheme and applyTheme. The two copies can drift apart, and the inline copy is untested.",
+        "suggestion": "Add a short comment in both places stating that they must be kept in sync, since an is:inline script cannot import the module.",
+        "rule": null
+      },
+      {
+        "severity": "NIT",
+        "file": "ui/src/lib/__tests__/theme.test.js",
+        "line": 10,
+        "issue": "Formatting: `}from` is missing a space. In theme.js, `setTheme =(` is also missing a space.",
+        "suggestion": "Use `} from` and `setTheme = (`.",
+        "rule": null
+      },
+      {
+        "severity": "NIT",
+        "file": "ui/src/components/Header.astro",
+        "line": 63,
+        "issue": "The mobile menu container still uses the gray-50/gray-800 palette while the rest of the dark theme uses slate.",
+        "suggestion": "Align to slate-800/slate-700 for consistency.",
+        "rule": null
+      }
+    ],
+    "conventionViolations": [],
+    "architectureNotes": [
+      "Theme logic is correctly isolated in a pure, dependency-injected lib/theme.js (storage, document and matchMedia are injected), so it is unit-testable under node:test.",
+      "The chart modal tracks the html dark class via a MutationObserver, which also covers system-driven changes without extra wiring."
+    ],
+    "positives": [
+      "Injectable storage, document and matchMedia make the tests deterministic.",
+      "Tests cover the invalid-value fallback, a storage that throws, system changes, and unsubscribe.",
+      "Inline script prevents a flash of the wrong theme.",
+      "Header refactor removed the duplicated link class strings.",
+      "Cross-tab sync via the storage event and a same-page event."
+    ],
+    "mustFixBeforeMerge": []
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "step": "triage",
+  "attempt": 1,
+  "status": "RETRY_DEVELOPER",
+  "model": "claude-sonnet-5-5",
+  "durationMs": 13976,
+  "writtenAt": "2026-10-13T15:51:00.522Z",
+  "data": {
+    "source": "CODE_REVIEW",
+    "modelDecision": "RETRY_DEVELOPER",
+    "effectiveDecision": "RETRY_DEVELOPER",
+    "guardrailOverrides": [],
+    "report": {
+      "decision": "RETRY_DEVELOPER",
+      "rootCause": {
+        "category": "PRODUCTION_CODE",
+        "explanation": "ThemeToggle keeps preference in local component state and never subscribes to THEME_CHANGE_EVENT (dispatched by setTheme) or the 'storage' event. Header mounts two ThemeToggle instances (desktop + mobile), so after one changes the theme the other shows a stale icon/label, and if it was on 'system' its matchMedia listener re-applies 'system' on an OS flip, overriding the user's explicit choice. Tests/build are green; this is a real correctness defect in the system-mode acceptance criterion.",
+        "evidence": [
+          "ui/src/components/ThemeToggle.jsx lines 16-18 read storage only on mount; no listener for 'themeChanged'",
+          "ui/src/components/ThemeToggle.jsx lines 20-26 re-apply 'system' from a possibly stale preference",
+          "ui/src/lib/theme.js line 47 dispatches THEME_CHANGE_EVENT with no consumer",
+          "Code review finding MAJOR on ThemeToggle.jsx; QA 47/47 pass, build exit 0, security PASS"
+        ]
+      },
+      "confidence": 0.9,
+      "loopDetected": false,
+      "loopEvidence": "First attempt (1 of 3); no previous attempts or hints to compare against.",
+      "developerHints": [
+        "In ui/src/components/ThemeToggle.jsx, add a useEffect that registers window.addEventListener(THEME_CHANGE_EVENT, handler) with handler = (e) => setPreference(e.detail), and cleans up on unmount. Import THEME_CHANGE_EVENT from '../lib/theme'. This keeps the desktop and mobile instances in sync and ensures only the current preference drives the matchMedia effect.",
+        "In the same component also listen to window 'storage' events: when event.key === THEME_STORAGE_KEY (import it), call setPreference(getStoredTheme(window.localStorage)) and applyTheme(...) so other tabs stay in sync.",
+        "Make select() avoid redundant local state drift: keep setPreference(value) + setTheme(value) but rely on the event handler for peers; do not remove the event dispatch in theme.js (it now has a consumer).",
+        "Add a test in ui/src/lib/__tests__/theme.test.js that setTheme dispatches THEME_CHANGE_EVENT with detail equal to the stored value. Since node:test has no window, stub globalThis.window with { dispatchEvent, localStorage } and a minimal CustomEvent, restoring them afterwards. Keep helpers at end of file, explicit imports.",
+        "Optional but recommended: extract subscribeToSystemTheme(matchMedia, doc, getPreference) into ui/src/lib/theme.js returning an unsubscribe function, use it in ThemeToggle's effect, and unit-test it with an injected fake matchMedia that fires its 'change' listener (assert dark class toggles for system, and not for light/dark preference).",
+        "Charts (ApexCharts/Recharts in ui/src/components/modals/InvestmentGraphModal.tsx): set light label/axis/legend text colors when document.documentElement.classList.contains('dark'), re-evaluating on THEME_CHANGE_EVENT, or at minimum give the chart container a dark: class that makes text readable. Do not weaken any existing tests.",
+        "Run npm test and npm run build in ui/ after changes, per AGENTS.md."
+      ],
+      "filesToInspect": [
+        "ui/src/components/ThemeToggle.jsx",
+        "ui/src/lib/theme.js",
+        "ui/src/lib/__tests__/theme.test.js",
+        "ui/src/components/Header.astro",
+        "ui/src/components/modals/InvestmentGraphModal.tsx"
+      ],
+      "infraActions": [],
+      "humanQuestion": "",
+      "escalationSummary": "",
+      "summary": "Tests, build and security pass, but the review's MAJOR finding is valid: two ThemeToggle instances in Header have independent state and nothing consumes THEME_CHANGE_EVENT, so a stale instance can show the wrong icon and re-apply 'system' on an OS change, overriding the user's choice. Retry the developer with a concrete fix (subscribe to the event and 'storage'), a dispatch test, and chart readability in dark mode."
+    }
+  }
+}

@@ -247,7 +247,10 @@ ipcMain.handle('factory:run', async (_event, params: {
   let stderrLineBuffer = '';
 
   // Helper to strip ANSI color codes for cleaner display
-  const stripAnsi = (str: string) => str.replace(/\x1B\[[0-9;]*[JKmsu]/g, '');
+  // Matches ESC[ followed by any params and ending character, plus common color codes like [32m
+  const stripAnsi = (str: string) => str
+    .replace(/\x1B\[[0-9;]*[A-Za-z]/g, '')  // Standard ANSI escape sequences
+    .replace(/\[([0-9;]+)m/g, '');           // Bare color codes without ESC (sometimes appear)
 
   proc.stdout?.on('data', (data) => {
     const chunk = data.toString();
@@ -366,7 +369,8 @@ ipcMain.handle('factory:resume', async (_event, params: {
  * List all runs (optionally filtered by repo)
  */
 ipcMain.handle('factory:list', async (_event, repoPath?: string): Promise<FactoryRun[]> => {
-  const logsDir = path.join(__dirname, '../../logs'); // logs/ at monorepo root
+  // Factory logs are in factory/logs
+  const logsDir = path.join(__dirname, '../../factory/logs');
   
   if (!fs.existsSync(logsDir)) {
     return [];
@@ -416,7 +420,9 @@ ipcMain.handle('factory:list', async (_event, repoPath?: string): Promise<Factor
  * Get details of a specific run
  */
 ipcMain.handle('factory:get', async (_event, runId: string): Promise<FactoryRun | null> => {
-  const summaryPath = path.join(__dirname, '../../logs', runId, 'summary.json');
+  // Factory logs are in factory/logs, from dist-electron that's ../../factory/logs
+  const summaryPath = path.join(__dirname, '../../factory/logs', runId, 'summary.json');
+  console.log('[Factory IPC] Loading summary from:', summaryPath);
   
   if (!fs.existsSync(summaryPath)) {
     return null;
