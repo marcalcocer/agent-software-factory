@@ -8,11 +8,7 @@ interface RepoTabsProps {
 
 export function RepoTabs({ tabs, activeTab, onSelectTab, onCloseTab, runningRepo = null }: RepoTabsProps) {
   if (tabs.length === 0) {
-    return (
-      <div className="border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-3 text-slate-500 dark:text-slate-400">
-        No repositories opened. Select one from the sidebar.
-      </div>
-    );
+    return null;
   }
 
   return (
