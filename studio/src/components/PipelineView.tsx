@@ -39,8 +39,21 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [logsExpanded, setLogsExpanded] = useState(false);
   const [artifacts, setArtifacts] = useState<RunArtifact[]>([]);
+  const [startedAt, setStartedAt] = useState<string | null>(null);
 
-  // Load agent artifacts (rich step reports) for the run
+  // Load run metadata and artifacts
+  const loadRunData = useCallback(async () => {
+    if (!runId) return;
+    try {
+      const run = await window.api.invoke('factory:get', runId);
+      if (run) {
+        setStartedAt(run.startedAt);
+      }
+    } catch {
+      // Ignore errors
+    }
+  }, [runId]);
+
   const loadArtifacts = useCallback(async () => {
     if (!runId) return;
     try {
@@ -53,6 +66,7 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
 
   useEffect(() => {
     if (!runId) return;
+    loadRunData();
     loadArtifacts();
 
     // While running, poll for new artifacts as agents finish
@@ -60,7 +74,7 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
       const interval = setInterval(loadArtifacts, 3000);
       return () => clearInterval(interval);
     }
-  }, [runId, isRunning, loadArtifacts]);
+  }, [runId, isRunning, loadRunData, loadArtifacts]);
 
   // Also refresh artifacts right after the run completes
   useEffect(() => {
@@ -159,22 +173,32 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
     setAgents(nodes);
   }, [artifacts]);
 
-  // Timer for elapsed time
+  // Timer for elapsed time - calculate from actual startedAt timestamp
   useEffect(() => {
-    if (!isRunning) return;
-    const interval = setInterval(() => {
-      setElapsedTime(prev => prev + 1);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [isRunning]);
+    if (!startedAt) return;
+    
+    const updateElapsed = () => {
+      const elapsed = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
+      setElapsedTime(elapsed);
+    };
+    
+    // Update immediately
+    updateElapsed();
+    
+    // Then update every second if running
+    if (isRunning) {
+      const interval = setInterval(updateElapsed, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [startedAt, isRunning]);
 
   // Reset when new run starts
   useEffect(() => {
     if (runId && isRunning) {
       setAgents(INITIAL_AGENTS.map(a => ({ ...a, status: 'pending' })));
       setLogs([]);
-      setElapsedTime(0);
       setCurrentAttempt(1);
+      // Don't reset elapsedTime - it's calculated from startedAt
     }
   }, [runId, isRunning]);
 
