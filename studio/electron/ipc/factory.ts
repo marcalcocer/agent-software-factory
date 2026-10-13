@@ -129,32 +129,58 @@ ipcMain.handle('factory:run-task', async (_event, params: {
 
   // Extract runId from output
   let runId = '';
-  let buffer = '';
+  let runIdBuffer = '';
+  let stdoutLineBuffer = '';
+  let stderrLineBuffer = '';
+
+  // Helper to strip ANSI color codes for cleaner display
+  const stripAnsi = (str: string) => str
+    .replace(/\x1B\[[0-9;]*[A-Za-z]/g, '')  // Standard ANSI escape sequences
+    .replace(/\[([0-9;]+)m/g, '');           // Bare color codes without ESC
 
   proc.stdout?.on('data', (data) => {
-    const text = data.toString();
-    buffer += text;
-    console.log('[Factory stdout]', text);
+    const chunk = data.toString();
+    runIdBuffer += chunk;
+    console.log('[Factory stdout]', chunk);
     
-    // Try to extract runId from the output
-    const match = buffer.match(/Factory run ([\w-]+)/);
+    // Try to extract runId from the accumulated output
+    const match = runIdBuffer.match(/Factory run ([\w-]+)/);
     if (match && !runId) {
       runId = match[1];
       activeRuns.set(runId, proc);
       console.log('[Factory IPC] Extracted runId:', runId);
     }
 
-    // Send output to renderer for real-time display
+    // Send complete lines to renderer for real-time display
     if (runId) {
-      mainWindow?.webContents.send('factory:output', runId, text);
+      stdoutLineBuffer += chunk;
+      const lines = stdoutLineBuffer.split('\n');
+      stdoutLineBuffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        const cleanLine = stripAnsi(line).trim();
+        if (cleanLine) {
+          mainWindow?.webContents.send('factory:output', runId, cleanLine);
+        }
+      }
     }
   });
 
   proc.stderr?.on('data', (data) => {
-    const text = data.toString();
-    console.log('[Factory stderr]', text);
+    const chunk = data.toString();
+    console.log('[Factory stderr]', chunk);
+    
     if (runId) {
-      mainWindow?.webContents.send('factory:output', runId, text);
+      stderrLineBuffer += chunk;
+      const lines = stderrLineBuffer.split('\n');
+      stderrLineBuffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const cleanLine = stripAnsi(line).trim();
+        if (cleanLine) {
+          mainWindow?.webContents.send('factory:output', runId, `ERROR: ${cleanLine}`);
+        }
+      }
     }
   });
 

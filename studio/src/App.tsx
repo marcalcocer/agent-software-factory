@@ -338,8 +338,10 @@ function App() {
                   </div>
                 )}
 
-                {/* Task Input */}
-                {!runLoading && (
+                {/* Task Input or Pipeline View */}
+                {runLoading ? (
+                  <PipelineView runId={activeRunId} isRunning={runLoading} />
+                ) : (
                   <TaskInput
                     repoName={activeTab}
                     value={taskDrafts[activeTab] || ''}
@@ -347,11 +349,6 @@ function App() {
                     onSubmit={handleRunTask}
                     loading={false}
                   />
-                )}
-
-                {/* Pipeline View (during execution) */}
-                {runLoading && activeRunId && (
-                  <PipelineView runId={activeRunId} isRunning={runLoading} />
                 )}
 
                 {/* Run History */}

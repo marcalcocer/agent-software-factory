@@ -203,6 +203,51 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
     };
   }, [runId, updateAgentFromLog]);
 
+  // Show starting state when runId is not yet available
+  if (!runId && isRunning) {
+    return (
+      <div className="space-y-4">
+        {/* Starting header */}
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg p-6 text-white">
+          <div className="flex items-center gap-4">
+            <div className="relative">
+              <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-5 h-5 bg-white rounded-full animate-pulse"></div>
+              </div>
+            </div>
+            <div>
+              <h3 className="font-bold text-xl">Starting Factory...</h3>
+              <p className="text-sm text-white/80">Initializing multi-agent pipeline</p>
+            </div>
+          </div>
+        </div>
+        
+        {/* Skeleton pipeline */}
+        <div className="bg-white dark:bg-slate-800 rounded-lg p-6 overflow-x-auto">
+          <div className="flex items-center justify-between min-w-[800px]">
+            {INITIAL_AGENTS.map((agent, index) => (
+              <div key={agent.id} className="flex items-center">
+                <div className="flex flex-col items-center opacity-50">
+                  <div className="w-16 h-16 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-2xl animate-pulse">
+                    {agent.icon}
+                  </div>
+                  <span className="mt-2 text-sm font-medium text-slate-400">{agent.name}</span>
+                </div>
+                {index < INITIAL_AGENTS.length - 1 && (
+                  <div className="flex items-center mx-2">
+                    <div className="h-1 w-8 bg-slate-200 dark:bg-slate-700"></div>
+                    <div className="w-0 h-0 border-t-[6px] border-t-transparent border-b-[6px] border-b-transparent border-l-[8px] border-l-slate-200 dark:border-l-slate-700"></div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!runId) {
     return null;
   }
