@@ -339,6 +339,7 @@ function App() {
 
                 {/* Task Input */}
                 <TaskInput
+                  key={activeTab} // Force new instance when switching repos
                   repoName={activeTab}
                   onSubmit={handleRunTask}
                   loading={runLoading}
