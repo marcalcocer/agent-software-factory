@@ -51,7 +51,7 @@ function humanizeError(raw: string): string {
       'Claude subscription usage limit reached.\n\n' +
       'You are still signed in — you have simply used up your quota for the current window. ' +
       'Wait for the limit to reset (the message usually says when, e.g. "resets 10:10pm"), ' +
-      'then press "Resume run" to continue from where it stopped — the plan and any finished ' +
+      'then press "Retry run" to continue from where it stopped — the plan and any finished ' +
       'steps are kept.'
     );
   }
@@ -189,15 +189,21 @@ export function RunDetails({ runId, onClose, onResume }: RunDetailsProps) {
               {(isFailed || isSuspended) && onResume && (
                 <div className="flex items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900 rounded-lg p-4">
                   <div className="text-sm text-slate-600 dark:text-slate-400">
-                    Resume from the last unfinished step. Completed steps, the plan and the
-                    work branch are all preserved.
+                    {isFailed ? 'Retry' : 'Resume'} from the last unfinished step. Completed steps,
+                    the plan and the work branch are all preserved.
                   </div>
                   <button
                     onClick={handleResume}
                     disabled={resuming}
                     className="shrink-0 px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium transition-colors"
                   >
-                    {resuming ? 'Resuming…' : '▶ Resume run'}
+                    {resuming
+                      ? isFailed
+                        ? 'Retrying…'
+                        : 'Resuming…'
+                      : isFailed
+                      ? '▶ Retry run'
+                      : '▶ Resume run'}
                   </button>
                 </div>
               )}

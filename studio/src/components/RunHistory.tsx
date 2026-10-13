@@ -90,7 +90,7 @@ export function RunHistory({ runs, loading, onSelectRun, onResume }: RunHistoryP
                     }}
                     className="mt-2 px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors"
                   >
-                    ▶ Resume
+                    ▶ Retry
                   </button>
                 )}
               </div>
