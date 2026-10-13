@@ -13,7 +13,8 @@ import { mainWindow } from '../main.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Path to the factory CLI (now in factory/ subdirectory)
-const factoryCLI = path.join(__dirname, '../../../factory/src/cli/factory.ts');
+// Path to factory CLI - from dist-electron/ go up to studio/, then up to agent-software-factory/, then into factory/
+const factoryCLI = path.join(__dirname, '../../factory/src/cli/factory.ts');
 
 // Active run processes
 const activeRuns = new Map<string, ReturnType<typeof spawn>>();
@@ -22,7 +23,8 @@ const activeRuns = new Map<string, ReturnType<typeof spawn>>();
  * List available repositories in the workspace
  */
 ipcMain.handle('factory:list-repos', async (): Promise<Array<{ name: string; path: string; recentRuns: number }>> => {
-  const workspaceRoot = path.join(__dirname, '../../../');
+  // From dist-electron/ -> studio/ -> agent-software-factory/
+  const workspaceRoot = path.join(__dirname, '../../');
   const logsDir = path.join(workspaceRoot, 'logs');
   
   const repos: Map<string, { name: string; path: string; recentRuns: number }> = new Map();
@@ -107,7 +109,7 @@ ipcMain.handle('factory:run-task', async (_event, params: {
   console.log('[Factory IPC] Running factory with args:', args);
 
   // Get the factory directory - handle both dev and production paths
-  const factoryDir = path.resolve(__dirname, '../../../factory');
+  const factoryDir = path.resolve(__dirname, '../../factory');
   console.log('[Factory IPC] Factory directory:', factoryDir);
 
   // Spawn the factory process using shell to ensure PATH is available
@@ -230,7 +232,7 @@ ipcMain.handle('factory:run', async (_event, params: {
       FACTORY_ALLOW_PUSH: 'false',
       FACTORY_ALLOW_PR: 'false',
     },
-    cwd: path.join(__dirname, '../../../factory'),
+    cwd: path.join(__dirname, '../../factory'),
   });
 
   // Extract runId from output
@@ -309,7 +311,7 @@ ipcMain.handle('factory:resume', async (_event, params: {
       FACTORY_PROVIDER: 'claude-cli',
       FACTORY_NON_INTERACTIVE: 'true',
     },
-    cwd: path.join(__dirname, '../../../factory'),
+    cwd: path.join(__dirname, '../../factory'),
   });
 
   activeRuns.set(params.runId, proc);
@@ -328,7 +330,7 @@ ipcMain.handle('factory:resume', async (_event, params: {
  * List all runs (optionally filtered by repo)
  */
 ipcMain.handle('factory:list', async (_event, repoPath?: string): Promise<FactoryRun[]> => {
-  const logsDir = path.join(__dirname, '../../../logs'); // logs/ stays at monorepo root
+  const logsDir = path.join(__dirname, '../../logs'); // logs/ at monorepo root
   
   if (!fs.existsSync(logsDir)) {
     return [];
@@ -378,7 +380,7 @@ ipcMain.handle('factory:list', async (_event, repoPath?: string): Promise<Factor
  * Get details of a specific run
  */
 ipcMain.handle('factory:get', async (_event, runId: string): Promise<FactoryRun | null> => {
-  const summaryPath = path.join(__dirname, '../../../logs', runId, 'summary.json');
+  const summaryPath = path.join(__dirname, '../../logs', runId, 'summary.json');
   
   if (!fs.existsSync(summaryPath)) {
     return null;
