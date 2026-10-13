@@ -169,6 +169,25 @@ const EMPTY_USAGE: ClaudeCliUsage = {
  * first `{` rather than assuming stdout is pure JSON.
  */
 function parseEnvelope(stdout: string): ClaudeCliEnvelope | null {
+  // Try parsing as stream-json format (newline-delimited JSON events)
+  const lines = stdout.trim().split('\n');
+  if (lines.length > 1) {
+    // Stream format: find the final "result" event which contains all metadata
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      if (!line) continue;
+      try {
+        const event = JSON.parse(line);
+        if (event.type === 'result') {
+          return event as ClaudeCliEnvelope;
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+  }
+
+  // Fall back to single JSON envelope format (legacy --output-format=json)
   const start = stdout.indexOf('{');
   if (start === -1) return null;
   const candidate = stdout.slice(start);
@@ -279,8 +298,10 @@ function classifyFailure(
 function buildArgs(request: ClaudeCliRequest): string[] {
   const args = [
     '--print',
+    '--verbose',
     '--output-format',
-    'json',
+    'stream-json',
+    '--include-partial-messages',
     // Each factory call is stateless; never pollute the user's resumable session history.
     '--no-session-persistence',
     // Drops the CLI's dynamic system-prompt sections (env/git/CLAUDE.md preamble): the single
@@ -341,6 +362,9 @@ export async function runClaudeCli(request: ClaudeCliRequest): Promise<ClaudeCli
   // Optional caching/compression proxy (e.g. Headroom) in front of the Anthropic API.
   if (config.claudeCliBaseUrl) env.ANTHROPIC_BASE_URL = config.claudeCliBaseUrl;
 
+  // Buffer for streaming JSON lines
+  let streamBuffer = '';
+
   let result: CommandResult;
   try {
     result = await runProcess('claude', buildArgs(request), {
@@ -353,6 +377,30 @@ export async function runClaudeCli(request: ClaudeCliRequest): Promise<ClaudeCli
       // The JSON envelope must never be truncated by the shared output cap.
       maxOutputChars: 32_000_000,
       env,
+      onStdout: (chunk) => {
+        // Parse streaming JSON events (newline-delimited) and emit text deltas in real-time
+        streamBuffer += chunk;
+        const lines = streamBuffer.split('\n');
+        streamBuffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const event = JSON.parse(line);
+            // Extract text deltas from content_block_delta events
+            if (
+              event.type === 'stream_event' &&
+              event.event?.type === 'content_block_delta' &&
+              event.event?.delta?.text
+            ) {
+              // Emit the text delta to stdout so the frontend sees it in real-time
+              process.stdout.write(event.event.delta.text);
+            }
+          } catch {
+            // Ignore malformed lines; the final events may not be perfect JSON
+          }
+        }
+      },
     });
   } catch (error) {
     return {

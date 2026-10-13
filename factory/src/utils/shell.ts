@@ -37,6 +37,8 @@ export interface RunCommandOptions {
   trusted?: boolean;
   /** Input piped to stdin. */
   stdin?: string;
+  /** Called with each stdout chunk as it arrives (for streaming LLM output). */
+  onStdout?: (chunk: string) => void;
 }
 
 const FORBIDDEN_PATTERN = /[;&|`$><\n\r]|\|\||&&|\$\(/;
@@ -164,7 +166,9 @@ export async function runProcess(
     }, timeoutMs);
 
     child.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf8');
+      const text = chunk.toString('utf8');
+      stdout += text;
+      options.onStdout?.(text);
     });
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');

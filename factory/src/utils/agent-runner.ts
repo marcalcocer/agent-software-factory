@@ -453,9 +453,15 @@ export async function invokeAgent<TSchema extends z.ZodType>(
 
   // Subscription-backed backend: delegate to the official Claude Code binary.
   if (getFactoryConfig().provider === 'claude-cli') {
+    if (!dryRun) {
+      process.stdout.write(`Agent "${options.role}" started on step "${options.step}"...\n`);
+    }
     return await invokeViaClaudeCli(options, requestContext, requestedModel, startedAt);
   }
 
+  if (!dryRun) {
+    process.stdout.write(`Agent "${options.role}" started on step "${options.step}"...\n`);
+  }
   try {
     const response = await options.agent.generate(options.prompt, {
       structuredOutput: { schema: options.schema as never },
