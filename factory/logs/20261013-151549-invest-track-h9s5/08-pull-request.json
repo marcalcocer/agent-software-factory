@@ -1,0 +1,38 @@
+{
+  "step": "delivery",
+  "attempt": 1,
+  "status": "COMMITTED",
+  "model": null,
+  "durationMs": null,
+  "writtenAt": "2026-10-13T15:22:21.715Z",
+  "data": {
+    "delivery": {
+      "committed": true,
+      "commitSha": "d824728f0228a1c94f117f751c85d501591a524e",
+      "commitMessage": "feat(ui): add light/dark/system theme toggle and dark nav box",
+      "pushed": true,
+      "pullRequestCreated": false,
+      "pullRequestUrl": null,
+      "branch": "factory/on-investrack-i-see-the-top-leve-h9s5",
+      "pendingActions": [
+        "Open the pull request manually: GitHub CLI (`gh`) not found. Install it and run `gh auth login` to open PRs."
+      ],
+      "notes": []
+    },
+    "pullRequest": {
+      "title": "feat(ui): add light/dark/system theme toggle and dark nav box",
+      "body": "## Summary\nInvestTrack now supports a Light, Dark, or System-default colour scheme, so the app follows the user's preference and the OS setting by default. The theme is chosen with a button placed next to the existing privacy (eye) toggle in the header, and the choice is remembered between visits. The Home and About links now sit in a dark box, so they stand out on the page.\n\n## Changes\n- **Theme logic** (`ui/src/lib/theme.js`): pure, injectable helpers for normalising, cycling, storing and applying the theme. They set the `dark` class on `<html>` and handle the `system` option via `prefers-color-scheme`.\n- **Pre-paint script** (`ui/src/layouts/Layout.astro`): an inline script in `<head>` applies the stored theme before first paint, which avoids a flash of the wrong theme.\n- **Theme button** (`ui/src/components/ThemeToggle.jsx`): cycles Light -> Dark -> System, persists the choice under the `theme` key in localStorage, and updates immediately. It is added to the desktop and mobile header in `ui/src/components/Header.astro`. It has an accessible label naming the current mode, and it stays in sync across instances and when the OS setting changes while `System` is selected.\n- **Dark styling**: `dark:` variants on the page shell, header and main components and modals. Tailwind is set to `darkMode: 'class'` in `ui/tailwind.config.mjs`. Global dark rules are in `ui/src/styles/global.css`.\n- **Home/About container**: the links are wrapped in a `bg-slate-900` box with light link text, in both themes.\n- **Tests** (`ui/src/lib/__tests__/theme.test.js`): unit tests for the theme helpers.\n- **Docs**: feature and component lists updated in `README.md` and `ui/README.md`.\n\n## Test plan\n- `npm test` (cwd `ui/`): exit code 0, 53 tests run, 53 passed, 0 failed, 0 skipped. The test run was executed by the factory QA step.\n- `npm run build` (cwd `ui/`): exit code 0.\n- Acceptance criteria from the execution plan were checked by QA, which returned a PASS verdict. These cover the OS light/dark defaults, the stored `light`/`dark`/`system` preferences, the pre-paint class, the live `system` update, the button cycle and persistence, the button placement in both headers, the Home/About container, and the theme colours.\n\n## Quality gates\n- **QA**: PASS (53/53 tests, build exit 0).\n- **Code review**: APPROVED_WITH_SUGGESTIONS. Only minor polish items remain, and none block the change.\n- **Security**: PASS, risk level NONE.\n\n## Risks & rollback\n- **Theme flash or mismatch**: the pre-paint script in `Layout.astro` is the critical piece. If it is removed or broken, the page may flash the wrong theme on load.\n- **Initial toggle state**: the button starts in the `system` state and reads the stored value after mount, so its icon and label may briefly show `System` before the stored value is applied.\n- **Colour coverage**: dark variants were added to the shell, header, main components and modals. Any component not updated will keep light colours in dark mode.\n- **Rollback**: revert the commit. The theme is stored only in the browser under the `theme` key, so reverting leaves no server-side state. Stale `theme` values in localStorage are ignored once the code is reverted.\n\n## Follow-ups\n- Confirm the minor polish suggestions from code review, which the review summary did not itemise.\n- The HTML pages under `docs/` (`index.html`, `privacy.html`) were not reviewed for theme-specific content.\n- The repository has no CHANGELOG.md, so the change was not recorded there.",
+      "labels": [
+        "feature",
+        "ui",
+        "documentation"
+      ],
+      "breakingChanges": false,
+      "testPlan": [
+        "npm test (cwd ui/): exit 0, 53 run, 53 passed, 0 failed, 0 skipped (QA pre-executed)",
+        "npm run build (cwd ui/): exit 0 (QA pre-executed)",
+        "QA verdict PASS against the execution plan acceptance criteria"
+      ]
+    }
+  }
+}

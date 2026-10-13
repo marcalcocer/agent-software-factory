@@ -1,0 +1,17 @@
+{
+  "step": "security",
+  "attempt": 2,
+  "status": "PASS/NONE",
+  "model": "claude-sonnet-5-5",
+  "durationMs": 5722,
+  "writtenAt": "2026-10-13T15:21:39.404Z",
+  "data": {
+    "status": "PASS",
+    "riskLevel": "NONE",
+    "summary": "The diff adds a client-side light/dark/system theme toggle (React component, theme helper, an inline pre-paint script, CSS overrides and Tailwind darkMode config). No untrusted input reaches a dangerous sink. The localStorage value is whitelisted against ['light','dark','system'] in both the helper and the inline script, and the CustomEvent detail is normalized before use. The only DOM writes are a fixed 'dark' class and colorScheme set to a fixed string. No secrets, new dependencies, network calls or server-side changes were added.",
+    "findings": [],
+    "secretsDetected": [],
+    "dependencyRisks": [],
+    "mustFixBeforeMerge": []
+  }
+}

@@ -1,0 +1,209 @@
+{
+  "step": "pm-architect",
+  "attempt": 1,
+  "status": "COMPLETED",
+  "model": "claude-sonnet-5-5",
+  "durationMs": 126370,
+  "writtenAt": "2026-10-13T15:17:56.213Z",
+  "data": {
+    "plan": {
+      "summary": "Add a Light / Dark / System theme preference to the Astro + React + Tailwind UI in ui/. Switch Tailwind to darkMode 'class'. Put the theme logic in a pure, node-testable module ui/src/lib/theme.js. Apply the theme before first paint with an inline script in Layout.astro. Add a ThemeToggle.jsx button next to the existing PrivacyToggle eye button in Header.astro. Wrap the Home/About links in a dark rounded box. Add dark: variants to the page shell, header and main components/modals so the whole page follows the theme.",
+      "understanding": "Today the header text uses dark: variants driven by the OS prefers-color-scheme media query, but the header background is always bg-white/80 and the body is always bg-slate-50 text-slate-900, so header and page disagree (white text on a light background or the reverse). After the change: (1) Home and About sit inside a black/dark box with legible text in every theme. (2) A theme button sits beside the eye button in the desktop and mobile header. (3) The user can choose Light, Dark or System default; the choice persists in localStorage, System follows the OS and reacts live to OS changes, and the whole app (header, page, cards, tables, modals) renders consistently with no flash of the wrong theme on load.",
+      "ambiguityLevel": "MINOR",
+      "clarificationQuestions": [],
+      "assumptions": [
+        "'Home and About in a box whose color is black' means the nav links are wrapped in a rounded container with a dark (slate-900) background and light text, with the active link highlighted; in dark mode the box keeps a subtle border so it stays distinguishable from the dark page.",
+        "The theme control is a single icon button (sun / moon / computer icons from @heroicons/react, already a dependency) that cycles Light -> Dark -> System, with title and aria-label showing the current mode.",
+        "Default preference when nothing is stored is 'system'. localStorage key is 'theme' with values 'light' | 'dark' | 'system', mirroring the existing 'privacyMode' key style.",
+        "Dark styling is added with Tailwind dark: variants to existing surfaces (backgrounds, text, borders) in the 19 files that use light backgrounds; no redesign. ApexCharts/Recharts theming is best-effort and not required."
+      ],
+      "acceptanceCriteria": [
+        "Given no stored preference and an OS in light mode, when the page loads, then <html> has no 'dark' class; given the OS is in dark mode, then <html> has class 'dark'.",
+        "Given localStorage theme='dark', when the page loads, then <html> has class 'dark' regardless of the OS setting, applied before first paint by an inline script in the <head>.",
+        "Given localStorage theme='light', when the OS is in dark mode, then <html> does not have class 'dark'.",
+        "Given preference 'system', when the OS color scheme changes, then the 'dark' class on <html> updates without reload.",
+        "When the theme button is clicked, then the preference cycles light -> dark -> system -> light, is saved to localStorage key 'theme', and the class on <html> updates immediately.",
+        "The theme button renders immediately next to the PrivacyToggle eye button in both the desktop and the mobile header and has an accessible label naming the current mode.",
+        "The Home and About links are rendered inside a container with a dark background (bg-slate-900) and light link text, in both light and dark themes.",
+        "The header background, body background and text colours all switch with the theme (no light header on a dark page or vice versa).",
+        "theme.js unit tests pass via npm test, and npm run build completes."
+      ],
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Enable class-based dark mode in Tailwind",
+          "description": "In ui/tailwind.config.mjs add darkMode: 'class' so dark: variants follow the <html class='dark'> toggle instead of the OS media query.",
+          "type": "INFRA",
+          "targetFiles": [
+            "ui/tailwind.config.mjs"
+          ],
+          "risk": "LOW",
+          "dependsOn": []
+        },
+        {
+          "id": "T2",
+          "title": "Create pure theme logic module",
+          "description": "New file ui/src/lib/theme.js, plain ESM JS with no DOM access at import time. Export THEME_STORAGE_KEY='theme', THEME_CHANGE_EVENT, THEMES=['light','dark','system'], normalizeTheme(value) (invalid/null -> 'system'), nextTheme(current) (cycle light->dark->system->light), resolveIsDark(theme, prefersDark) (boolean), and DOM-facing helpers getStoredTheme(storage), storeTheme(theme, storage), applyTheme(theme, {root, matchMedia}) that toggle the 'dark' class and set root.style.colorScheme. Helpers take injected storage/root/matchMedia so they are testable under node --test.",
+          "type": "FEATURE",
+          "targetFiles": [
+            "ui/src/lib/theme.js"
+          ],
+          "risk": "LOW",
+          "dependsOn": []
+        },
+        {
+          "id": "T3",
+          "title": "Apply theme before first paint in Layout",
+          "description": "In ui/src/layouts/Layout.astro add an <script is:inline> in <head> that reads localStorage 'theme' (try/catch for blocked storage), resolves against matchMedia('(prefers-color-scheme: dark)') and adds/removes 'dark' on document.documentElement. Keep its logic equivalent to theme.js resolveIsDark (inline because it must run synchronously). Change body classes to 'bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100'.",
+          "type": "FEATURE",
+          "targetFiles": [
+            "ui/src/layouts/Layout.astro"
+          ],
+          "risk": "MEDIUM",
+          "dependsOn": [
+            "T1",
+            "T2"
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "Add ThemeToggle React component",
+          "description": "New file ui/src/components/ThemeToggle.jsx modelled on PrivacyToggle.jsx. Holds the preference in state (initialised in useEffect from getStoredTheme), on click uses nextTheme, storeTheme and applyTheme, and dispatches THEME_CHANGE_EVENT. While preference is 'system', registers a matchMedia 'change' listener and re-applies the theme, cleaned up on unmount or preference change. Renders SunIcon / MoonIcon / ComputerDesktopIcon from @heroicons/react/24/outline with matching title and aria-label ('Theme: Light|Dark|System default'). Button classes same as PrivacyToggle plus dark:text-gray-300 dark:hover:text-white.",
+          "type": "FEATURE",
+          "targetFiles": [
+            "ui/src/components/ThemeToggle.jsx"
+          ],
+          "risk": "LOW",
+          "dependsOn": [
+            "T2"
+          ]
+        },
+        {
+          "id": "T5",
+          "title": "Header: dark nav box, theme toggle, theme-aware surface",
+          "description": "In ui/src/components/Header.astro: (a) nav background 'bg-white/80 border-slate-200 dark:bg-slate-900/80 dark:border-slate-700'; logo text 'text-slate-900 dark:text-white'. (b) Wrap the Home/About <ul> (desktop and the collapsible mobile list) in a box: 'bg-slate-900 text-white rounded-lg px-3 py-1 dark:ring-1 dark:ring-slate-600'; remove the md:bg-white / dark:bg-gray-* classes from the ul and set link classes to light text (text-gray-200 hover:bg-slate-700 hover:text-white; active: text-white bg-blue-700 rounded). Do not leave any media-query-dependent contrast bug. (c) Import ThemeToggle and render <ThemeToggle client:load /> directly after each <PrivacyToggle client:load /> (desktop and mobile). Also update the hamburger button dark classes to match. Keep the existing hamburger script.",
+          "type": "FEATURE",
+          "targetFiles": [
+            "ui/src/components/Header.astro"
+          ],
+          "risk": "MEDIUM",
+          "dependsOn": [
+            "T1",
+            "T4"
+          ]
+        },
+        {
+          "id": "T6",
+          "title": "Add dark variants to page shell and main components",
+          "description": "Add dark: variants to existing light-only classes, minimal and mechanical: bg-white -> dark:bg-slate-800, bg-slate-50/bg-gray-50/bg-gray-100 -> dark:bg-slate-900 or dark:bg-slate-700, text-gray-700/900 -> dark:text-gray-200/100, border-* -> dark:border-slate-700. Files: pages/about.astro, pages/404.astro, components/Home.jsx, NotFound.jsx, LoadingSpinner.jsx, investments/{Investment,Summary,InvestmentStats,Details,ViewDetailsButton}.jsx, investments/InvestmentSection/*.jsx, investments/InvestmentsDetailsSection/InvestmentsDetailsListItem.jsx, modals/*.jsx|tsx (BaseModal, ModalHeader, and each modal's inputs/panels). Do not change logic or layout.",
+          "type": "FEATURE",
+          "targetFiles": [
+            "ui/src/pages/about.astro",
+            "ui/src/pages/404.astro",
+            "ui/src/components/Home.jsx",
+            "ui/src/components/NotFound.jsx",
+            "ui/src/components/investments/Investment.jsx",
+            "ui/src/components/investments/Summary.jsx",
+            "ui/src/components/investments/InvestmentStats.jsx",
+            "ui/src/components/investments/InvestmentSection/InvestmentEntriesTable.jsx",
+            "ui/src/components/investments/InvestmentSection/InvestmentEntriesMobile.jsx",
+            "ui/src/components/investments/InvestmentSection/InvestmentForecastSection.jsx",
+            "ui/src/components/investments/InvestmentsDetailsSection/InvestmentsDetailsListItem.jsx",
+            "ui/src/components/modals/BaseModal.jsx",
+            "ui/src/components/modals/ModalHeader.jsx",
+            "ui/src/components/modals/ConfirmDeleteModal.jsx",
+            "ui/src/components/modals/CreateInvestmentModal.jsx",
+            "ui/src/components/modals/EditInvestmentModal.jsx",
+            "ui/src/components/modals/CreateEntryModal.jsx",
+            "ui/src/components/modals/UpdateEntryModal.jsx",
+            "ui/src/components/modals/CreateForecastModal.jsx",
+            "ui/src/components/modals/EditForecastModal.jsx",
+            "ui/src/components/modals/InvestmentGraphModal.tsx"
+          ],
+          "risk": "MEDIUM",
+          "dependsOn": [
+            "T1"
+          ]
+        },
+        {
+          "id": "T7",
+          "title": "Unit tests for theme logic",
+          "description": "New file ui/src/lib/__tests__/theme.test.js using node:test and node:assert/strict like ChartUtils.test.js (explicit imports, helpers at the end of the file, should-style behaviour names). Cover normalizeTheme (null, garbage, valid values), nextTheme cycle incl. unknown input, resolveIsDark for all theme x prefersDark combinations, getStoredTheme/storeTheme with a fake storage (including a storage that throws), and applyTheme toggling the 'dark' class and colorScheme on a fake root with a fake matchMedia.",
+          "type": "TEST",
+          "targetFiles": [
+            "ui/src/lib/__tests__/theme.test.js"
+          ],
+          "risk": "LOW",
+          "dependsOn": [
+            "T2"
+          ]
+        }
+      ],
+      "testStrategy": {
+        "unitTests": [
+          "theme.test.js: normalizeTheme falls back to 'system' for null/invalid values",
+          "theme.test.js: nextTheme cycles light -> dark -> system -> light",
+          "theme.test.js: resolveIsDark returns true for 'dark', false for 'light', and follows prefersDark for 'system'",
+          "theme.test.js: getStoredTheme/storeTheme round-trip and tolerate a storage that throws",
+          "theme.test.js: applyTheme adds/removes the 'dark' class and sets colorScheme on the injected root"
+        ],
+        "integrationTests": [
+          "npm run build in ui/ compiles Astro pages with the new component and Tailwind config without errors"
+        ],
+        "e2eChecks": [
+          "Manual/browser: load the app with OS light and dark; confirm the header, body and modals match and Home/About sit in the dark box",
+          "Manual: click the theme button through light/dark/system, reload, and confirm persistence and no flash of the wrong theme",
+          "Manual: with 'system' selected, flip the OS theme and confirm a live update",
+          "Manual: confirm the theme button sits beside the eye button on desktop and mobile widths"
+        ],
+        "commands": [
+          "cd ui && npm test",
+          "cd ui && npm run build"
+        ]
+      },
+      "conventionNotes": [
+        "AGENTS.md: avoid wildcard imports; use explicit imports in all files, especially tests.",
+        "AGENTS.md: create comprehensive tests for new classes following the pattern of existing tests (node:test in ui/src/lib/__tests__).",
+        "AGENTS.md: place helper methods at the end of the test file.",
+        "AGENTS.md: after creating or modifying any test, run the test suite and confirm it passes.",
+        "AGENTS.md: use var for local variables inside methods wherever possible (const stays fine in JS where var would change semantics; prefer const/let per existing code style).",
+        "Global testing rules: tests are deterministic, so inject storage, root and matchMedia rather than relying on globals; never weaken or skip existing tests.",
+        "Global rules: no hardcoded secrets or environment-specific values; English identifiers and comments; no formatting-only churn mixed into functional changes.",
+        "Java conventions are not applicable: this task touches only the Node/Astro UI under ui/."
+      ],
+      "outOfScope": [
+        "Backend (Spring) changes of any kind",
+        "Persisting the theme preference server-side or per user account",
+        "Full re-theming of ApexCharts/Recharts charts beyond what already works",
+        "Redesigning layouts, spacing or typography",
+        "Adding new dependencies or a UI/theme library",
+        "Custom colour palettes or additional themes beyond light/dark/system"
+      ],
+      "risks": [
+        {
+          "description": "Flash of the wrong theme on load, or hydration mismatch, because React components initialise state before localStorage is read.",
+          "severity": "MEDIUM",
+          "mitigation": "Apply the class with a synchronous inline script in <head>; keep ThemeToggle state initialisation in useEffect (same pattern as PrivacyToggle) so SSR markup is stable."
+        },
+        {
+          "description": "Switching Tailwind to darkMode 'class' means existing OS-driven dark: classes stop applying unless the dark class is set, which changes current behaviour for OS-dark users who have no stored preference.",
+          "severity": "LOW",
+          "mitigation": "Default preference is 'system', and the inline script adds the 'dark' class when the OS prefers dark, preserving that behaviour."
+        },
+        {
+          "description": "Some components may be left with unstyled light surfaces in dark mode (missed bg-white or text colours), causing unreadable text.",
+          "severity": "MEDIUM",
+          "mitigation": "Grep for bg-white, bg-gray-*, bg-slate-*, text-gray-*, text-slate-* and border-* across ui/src after editing and confirm each has a dark: counterpart; check modals and charts visually."
+        },
+        {
+          "description": "Logic duplication between the inline script in Layout.astro and theme.js can drift.",
+          "severity": "LOW",
+          "mitigation": "Keep the inline script minimal and note in a comment that it mirrors resolveIsDark in theme.js; unit tests cover theme.js."
+        }
+      ],
+      "suggestedBranchName": "feature/theme-toggle-dark-mode",
+      "commitMessage": "feat(ui): add light/dark/system theme toggle and dark nav box"
+    },
+    "clarificationsUsed": null
+  }
+}

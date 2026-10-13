@@ -27,6 +27,14 @@ export interface Repository {
   lastAccessed?: string;
 }
 
+export interface RunStep {
+  step: string;
+  attempt: number;
+  status: string;
+  durationMs: number;
+  artifact?: string;
+}
+
 export interface FactoryRun {
   runId: string;
   repoId: string;
@@ -47,6 +55,7 @@ export interface FactoryRun {
     security?: string;
     documentation?: string;
   };
+  steps?: RunStep[];
   error?: string;
 }
 

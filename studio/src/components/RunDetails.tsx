@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
 
 interface RunStep {
-  step: number;
-  agent: string;
-  status: 'completed' | 'running' | 'pending' | 'failed';
-  duration?: number;
-  tokens?: number;
-  result?: string;
+  step: string;
+  attempt: number;
+  status: string;
+  durationMs: number;
+  artifact?: string;
 }
 
 interface RunDetailsProps {
@@ -60,14 +59,10 @@ export function RunDetails({ runId, onClose }: RunDetailsProps) {
           tokens: run.tokens?.total,
         });
         
-        // Parse steps from the run data (simplified for now)
-        // In a real implementation, we'd read the trace files
-        const mockSteps: RunStep[] = [
-          { step: 1, agent: 'pm-architect', status: 'completed', duration: 2500, tokens: 1500 },
-          { step: 2, agent: 'developer', status: 'completed', duration: 5000, tokens: 3000 },
-          { step: 3, agent: 'qa-tester', status: 'completed', duration: 3000, tokens: 2000 },
-        ];
-        setSteps(mockSteps);
+        // Use the real steps from summary.json
+        if (run.steps) {
+          setSteps(run.steps);
+        }
       }
     } catch (error) {
       console.error('Failed to load run details:', error);
@@ -121,42 +116,51 @@ export function RunDetails({ runId, onClose }: RunDetailsProps) {
                   Execution Steps
                 </h3>
                 <div className="space-y-3">
-                  {steps.map((step) => (
-                    <div
-                      key={step.step}
-                      className={`flex items-center gap-4 p-3 rounded-lg ${
-                        step.status === 'completed'
-                          ? 'bg-green-50 dark:bg-green-900/20'
-                          : step.status === 'running'
-                          ? 'bg-blue-50 dark:bg-blue-900/20'
-                          : step.status === 'failed'
-                          ? 'bg-red-50 dark:bg-red-900/20'
-                          : 'bg-slate-50 dark:bg-slate-900'
-                      }`}
-                    >
-                      <span className="text-2xl">{AGENT_ICONS[step.agent] || '🤖'}</span>
-                      <div className="flex-1">
-                        <div className="font-medium text-slate-900 dark:text-slate-100">
-                          {AGENT_LABELS[step.agent] || step.agent}
+                  {steps.map((step, idx) => {
+                    const isSuccess = step.status === 'COMPLETED' || step.status === 'PASS' || step.status.includes('APPROVED');
+                    const isFailed = step.status === 'FAILED' || step.status.includes('FAILED');
+                    const isRetry = step.status.includes('RETRY') || step.status.includes('CHANGES_REQUESTED');
+                    
+                    return (
+                      <div
+                        key={`${step.step}-${step.attempt}-${idx}`}
+                        className={`flex items-center gap-4 p-3 rounded-lg ${
+                          isSuccess
+                            ? 'bg-green-50 dark:bg-green-900/20'
+                            : isFailed
+                            ? 'bg-red-50 dark:bg-red-900/20'
+                            : isRetry
+                            ? 'bg-yellow-50 dark:bg-yellow-900/20'
+                            : 'bg-slate-50 dark:bg-slate-900'
+                        }`}
+                      >
+                        <span className="text-2xl">{AGENT_ICONS[step.step] || '🤖'}</span>
+                        <div className="flex-1">
+                          <div className="font-medium text-slate-900 dark:text-slate-100">
+                            {AGENT_LABELS[step.step] || step.step}
+                            {step.attempt > 1 && (
+                              <span className="ml-2 text-xs text-slate-500">(Attempt {step.attempt})</span>
+                            )}
+                          </div>
+                          <div className="text-sm text-slate-500">
+                            {step.durationMs ? `${(step.durationMs / 1000).toFixed(1)}s` : ''}
+                            {step.status && ` • ${step.status}`}
+                          </div>
                         </div>
-                        <div className="text-sm text-slate-500">
-                          {step.duration && `${step.duration}ms`}
-                          {step.tokens && ` • ${step.tokens} tokens`}
+                        <div>
+                          {isSuccess && (
+                            <span className="text-green-600 dark:text-green-400">✓</span>
+                          )}
+                          {isFailed && (
+                            <span className="text-red-600 dark:text-red-400">✗</span>
+                          )}
+                          {isRetry && (
+                            <span className="text-yellow-600 dark:text-yellow-400">⟳</span>
+                          )}
                         </div>
                       </div>
-                      <div>
-                        {step.status === 'completed' && (
-                          <span className="text-green-600 dark:text-green-400">✓</span>
-                        )}
-                        {step.status === 'running' && (
-                          <span className="text-blue-600 dark:text-blue-400 animate-pulse">●</span>
-                        )}
-                        {step.status === 'failed' && (
-                          <span className="text-red-600 dark:text-red-400">✗</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>

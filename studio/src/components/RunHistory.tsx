@@ -49,10 +49,13 @@ export function RunHistory({ runs, loading, onSelectRun }: RunHistoryProps) {
           >
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-medium text-slate-900 dark:text-slate-100 truncate">
-                    {run.task.substring(0, 60)}
-                  </span>
+                <div className="flex items-start gap-2 mb-1">
+                  <p 
+                    className="font-medium text-slate-900 dark:text-slate-100 line-clamp-2 flex-1"
+                    title={run.task}
+                  >
+                    {run.task}
+                  </p>
                   {run.status === 'running' && (
                     <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200">
                       <span className="animate-pulse">●</span>

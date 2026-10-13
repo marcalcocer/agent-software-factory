@@ -242,27 +242,58 @@ ipcMain.handle('factory:run', async (_event, params: {
 
   // Extract runId from output
   let runId = '';
-  let buffer = '';
+  let runIdBuffer = '';
+  let stdoutLineBuffer = '';
+  let stderrLineBuffer = '';
+
+  // Helper to strip ANSI color codes for cleaner display
+  const stripAnsi = (str: string) => str.replace(/\x1B\[[0-9;]*[JKmsu]/g, '');
 
   proc.stdout?.on('data', (data) => {
-    buffer += data.toString();
+    const chunk = data.toString();
+    runIdBuffer += chunk;
+    console.log('[Factory stdout]', chunk);
     
-    // Try to extract runId from the output
-    const match = buffer.match(/Factory run ([\w-]+)/);
+    // Try to extract runId from the accumulated output
+    const match = runIdBuffer.match(/Factory run ([\w-]+)/);
     if (match && !runId) {
       runId = match[1];
+      console.log('[Factory IPC] Extracted runId:', runId);
       activeRuns.set(runId, proc);
     }
 
-    // Send output to renderer for real-time display
+    // Send complete lines to renderer for real-time display
     if (runId) {
-      mainWindow?.webContents.send('factory:output', runId, data.toString());
+      stdoutLineBuffer += chunk;
+      const lines = stdoutLineBuffer.split('\n');
+      // Keep the last incomplete line in buffer
+      stdoutLineBuffer = lines.pop() || '';
+
+      // Send each complete line
+      for (const line of lines) {
+        const cleanLine = stripAnsi(line).trim();
+        if (cleanLine) {
+          mainWindow?.webContents.send('factory:output', runId, cleanLine);
+        }
+      }
     }
   });
 
   proc.stderr?.on('data', (data) => {
+    const chunk = data.toString();
+    console.log('[Factory stderr]', chunk);
+    
     if (runId) {
-      mainWindow?.webContents.send('factory:output', runId, data.toString());
+      stderrLineBuffer += chunk;
+      const lines = stderrLineBuffer.split('\n');
+      stderrLineBuffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const cleanLine = stripAnsi(line).trim();
+        if (cleanLine) {
+          mainWindow?.webContents.send('factory:output', runId, `ERROR: ${cleanLine}`);
+        }
+      }
     }
   });
 
@@ -404,6 +435,7 @@ ipcMain.handle('factory:get', async (_event, runId: string): Promise<FactoryRun 
       finishedAt: summary.finishedAt,
       tokens: summary.tokens,
       gates: summary.gates,
+      steps: summary.steps || [],
     };
   } catch {
     return null;

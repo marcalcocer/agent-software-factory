@@ -1,0 +1,144 @@
+{
+  "step": "qa-tester",
+  "attempt": 1,
+  "status": "PASS",
+  "model": "claude-haiku-5-5",
+  "durationMs": 50082,
+  "writtenAt": "2026-10-13T15:19:45.752Z",
+  "data": {
+    "verdict": "PASS",
+    "passed": true,
+    "summary": "The factory-supplied `npm test` (cwd ui/) exited 0 with 48 of 48 tests passing, and `npm run build` exited 0 and produced 4 pages. I did not execute either command myself. Static inspection of the diff shows every acceptance criterion is implemented: the pre-paint inline script, the three-state cycle with localStorage persistence, the live system listener, the ThemeToggle beside PrivacyToggle in both headers, the bg-slate-900 Home/About box, and the theme-aware header and body. The remaining gaps are non-blocking: the browser checks were not run, and the project's `var` convention is not followed in the new JS.",
+    "executedCommands": [
+      {
+        "command": "npm test (cwd ui/; supplied by factory, not run by QA)",
+        "exitCode": 0,
+        "durationMs": 241,
+        "timedOut": false
+      },
+      {
+        "command": "npm run build (cwd ui/; supplied by factory, not run by QA)",
+        "exitCode": 0,
+        "durationMs": 3077,
+        "timedOut": false
+      }
+    ],
+    "totals": {
+      "tests": 48,
+      "passed": 48,
+      "failed": 0,
+      "skipped": 0
+    },
+    "failures": [],
+    "e2eChecks": [
+      {
+        "name": "AC1: no stored preference, OS light/dark sets html.dark",
+        "request": "Static read of Layout.astro inline script (no 'theme' key -> theme='system' -> matchMedia prefers-color-scheme)",
+        "expected": "No 'dark' class on OS light; 'dark' class on OS dark",
+        "actual": "Script computes isDark from matchMedia and toggles 'dark' on documentElement",
+        "passed": true
+      },
+      {
+        "name": "AC2: stored 'dark' wins before first paint",
+        "request": "Static read of Layout.astro: inline <script is:inline> in <head>",
+        "expected": "localStorage theme='dark' -> class 'dark' regardless of OS, applied in head",
+        "actual": "Script runs synchronously in <head> and forces isDark=true for stored 'dark'",
+        "passed": true
+      },
+      {
+        "name": "AC3: stored 'light' overrides OS dark",
+        "request": "Static read of Layout.astro and theme.js resolveIsDark",
+        "expected": "No 'dark' class when stored 'light' and OS dark",
+        "actual": "resolveIsDark('light', true) === false; inline script only adds class when isDark",
+        "passed": true
+      },
+      {
+        "name": "AC4: 'system' follows live OS change",
+        "request": "Static read of ThemeToggle.jsx change listener",
+        "expected": "'dark' class updates on matchMedia change without reload while theme is 'system'",
+        "actual": "addEventListener('change') attached only when theme==='system' and calls applyTheme('system', ...)",
+        "passed": true
+      },
+      {
+        "name": "AC5: click cycles light->dark->system->light, saves 'theme', updates html immediately",
+        "request": "Static read of ThemeToggle.cycleTheme + theme.js nextTheme/storeTheme/applyTheme",
+        "expected": "Cycle order, localStorage key 'theme', immediate class update",
+        "actual": "nextTheme cycles THEMES in that order; storeTheme writes THEME_STORAGE_KEY='theme'; applyTheme called synchronously in the click handler",
+        "passed": true
+      },
+      {
+        "name": "AC6: theme button beside eye button in desktop and mobile headers with accessible label",
+        "request": "Static read of Header.astro markup and ThemeToggle aria-label",
+        "expected": "ThemeToggle immediately after PrivacyToggle in both containers; aria-label names current mode",
+        "actual": "Desktop and mobile both render PrivacyToggle then ThemeToggle; aria-label is 'Theme: Light|Dark|System default'. Visual placement at real widths not run.",
+        "passed": true
+      },
+      {
+        "name": "AC7: Home/About inside bg-slate-900 box with light link text in both themes",
+        "request": "Static read of Header.astro desktop and mobile <ul>",
+        "expected": "bg-slate-900 container, light link text, independent of theme",
+        "actual": "Both <ul> carry bg-slate-900 text-white; linkInactive uses text-gray-200, linkActive uses text-white",
+        "passed": true
+      },
+      {
+        "name": "AC8: header, body and text colours switch with theme",
+        "request": "Static read of Header nav/span/body classes and global.css .dark overrides",
+        "expected": "Header bg, body bg and text switch; no light header on dark page",
+        "actual": "nav dark:bg-slate-900/80; body dark:bg-slate-900 dark:text-slate-100; global.css overrides cover bg-white/gray/slate and text-gray/slate. Coverage of every component surface was not verified in a browser.",
+        "passed": true
+      },
+      {
+        "name": "AC9: theme.js unit tests pass and build completes",
+        "request": "npm test and npm run build (factory-supplied output)",
+        "expected": "Exit 0 for both; theme.test.js cases pass",
+        "actual": "npm test exit 0, 48/48 pass including normalizeTheme, nextTheme, resolveIsDark, storage and applyTheme suites; npm run build exit 0",
+        "passed": true
+      }
+    ],
+    "weakenedVerification": {
+      "detected": false,
+      "evidence": [
+        "The diff only adds tests (ui/src/lib/__tests__/theme.test.js is a new file); no existing test is deleted, skipped, disabled or loosened.",
+        "No .skip, .only, @Disabled or xit/xdescribe added in the diff.",
+        "Existing test files were not modified in the diff."
+      ]
+    },
+    "bugReports": [
+      {
+        "title": "New JS uses const for locals, violating AGENTS.md var convention",
+        "severity": "MINOR",
+        "stepsToReproduce": [
+          "Open ui/src/lib/theme.js, ui/src/components/ThemeToggle.jsx and ui/src/lib/__tests__/theme.test.js",
+          "Observe local variables declared with const (for example, 'const index', 'const prefersDark', 'const mediaQuery', 'const label', 'const Icon')"
+        ],
+        "expected": "AGENTS.md 'Additional Notes': use var for local variable declarations within methods wherever possible.",
+        "actual": "Every local in the new files is const. ForecastUtils.js in the same repo uses var, so the project does follow this rule.",
+        "evidence": "Grep for '\\bvar\\s+\\w+\\s*=' under ui/src matches only Layout.astro and ForecastUtils.js. The diff's new files use const exclusively."
+      },
+      {
+        "title": "ThemeToggle and the inline pre-paint script have no tests",
+        "severity": "MINOR",
+        "stepsToReproduce": [
+          "Search ui/src for test files that import ThemeToggle.jsx or Layout.astro",
+          "Note that only ui/src/lib/__tests__/theme.test.js exists for the theme feature"
+        ],
+        "expected": "Global testing conventions §1.1 and AGENTS.md ('Create comprehensive tests for new classes'): new behaviour ships with tests. The inline script duplicates resolveIsDark logic and could drift from theme.js.",
+        "actual": "The cycle, live listener and inline script (which duplicates theme.js logic) are covered only by manual checks. The acceptance criteria only require theme.js unit tests, so this is not a blocker.",
+        "evidence": "Layout.astro comment: 'Mirrors resolveIsDark in src/lib/theme.js'. No test references the inline script."
+      },
+      {
+        "title": "Dark-mode coverage of existing light-only classes is unverified across modals and cards",
+        "severity": "MINOR",
+        "stepsToReproduce": [
+          "Enable dark mode via the theme button",
+          "Open the create/edit/confirm modals and the investment summary/details components",
+          "Look for surfaces using classes outside global.css overrides, such as bg-blue-100 in CombinedForecastGraphModal.jsx:84"
+        ],
+        "expected": "Body, header and text colours switch with the theme (acceptance criterion 8), with no light surface on a dark page.",
+        "actual": "global.css overrides cover bg-white, gray and slate shades, but not accent shades such as bg-blue-100 or bg-red-50. Those render light-on-dark with no in-browser check. The manual browser checks from the test plan were not run.",
+        "evidence": "Grep for bg/text/border with blue/red/green 50-200 shades found at least one uncovered usage in CombinedForecastGraphModal.jsx:84; the 91 light-utility matches across 24 files were only partly matched by global.css."
+      }
+    ],
+    "recommendation": "In ui/src/lib/theme.js, ui/src/components/ThemeToggle.jsx and ui/src/lib/__tests__/theme.test.js, change local declarations from const to var, as AGENTS.md requires, and keep the existing tests green. Then add a ThemeToggle or inline-script test, or at least a manual browser pass across the modals (CombinedForecastGraphModal.jsx:84 uses bg-blue-100), before merge."
+  }
+}

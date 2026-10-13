@@ -1,0 +1,504 @@
+diff --git a/ui/src/components/Header.astro b/ui/src/components/Header.astro
+index 021380b..e81749c 100644
+--- a/ui/src/components/Header.astro
++++ b/ui/src/components/Header.astro
+@@ -1,34 +1,39 @@
+ ---
+ import PrivacyToggle from "./PrivacyToggle";
++import ThemeToggle from "./ThemeToggle";
+ 
+ const base = import.meta.env.BASE_URL;
+ const currentPath = Astro.url.pathname;
++
++const isHome = currentPath === base || currentPath === base.slice(0, -1);
++const isAbout = currentPath === `${base}about` || currentPath === `${base}about/`;
++
++const linkBase = "block py-2 px-3 rounded";
++const linkActive = "text-white bg-blue-700";
++const linkInactive = "text-gray-200 hover:bg-slate-700 hover:text-white";
+ ---
+ 
+-<nav class="bg-white/80 backdrop-blur-md border-b border-slate-200">
++<nav class="bg-white/80 backdrop-blur-md border-b border-slate-200 dark:bg-slate-900/80 dark:border-slate-700">
+   <div class="max-w-screen-xl flex flex-wrap items-center justify-between mx-auto p-4">
+     <!-- Logo Section -->
+     <div class="flex items-center space-x-3 rtl:space-x-reverse">
+       <a href={base} class="flex items-center space-x-2">
+         <img src={`${base}logo.svg`} class="h-8" />
+-        <span class="self-center text-2xl font-semibold whitespace-nowrap dark:text-white">InvestTrack</span>
++        <span class="self-center text-2xl font-semibold whitespace-nowrap text-slate-900 dark:text-white">InvestTrack</span>
+       </a>
+     </div>
+ 
+-    <!-- Right-aligned Desktop Nav and Privacy Toggle -->
++    <!-- Right-aligned Desktop Nav, Privacy Toggle and Theme Toggle -->
+     <div class="hidden w-full md:flex md:w-auto md:items-center space-x-3 rtl:space-x-reverse">
+-      <PrivacyToggle client:load class="mr-4" /> {/* Eye button left of nav links */}
+-      <ul class="font-medium flex flex-col p-4 md:p-0 mt-4 md:mt-0 md:flex-row md:space-x-8 rtl:space-x-reverse md:border-0 md:bg-white dark:bg-gray-800 md:dark:bg-gray-900 dark:border-gray-700">
++      <PrivacyToggle client:load />
++      <ThemeToggle client:load />
++      <ul class="font-medium flex flex-row space-x-2 rtl:space-x-reverse bg-slate-900 text-white rounded-lg px-3 py-1 dark:ring-1 dark:ring-slate-600">
+         <!-- Home Link -->
+         <li>
+           <a
+             href={base}
+-            class={`block py-2 px-3 rounded-sm md:p-0 ${
+-              currentPath === base || currentPath === base.slice(0, -1)
+-                ? "text-white bg-blue-700 md:bg-transparent md:text-blue-700 dark:text-white md:dark:text-blue-500"
+-                : "text-gray-900 hover:bg-gray-100 md:hover:bg-transparent md:hover:text-blue-700 dark:text-white md:dark:hover:text-blue-500 dark:hover:bg-gray-700 dark:hover:text-white"
+-            }`}
+-            aria-current={currentPath === base || currentPath === base.slice(0, -1) ? "page" : undefined}
++            class={`${linkBase} ${isHome ? linkActive : linkInactive}`}
++            aria-current={isHome ? "page" : undefined}
+           >
+             Home
+           </a>
+@@ -38,12 +43,8 @@ const currentPath = Astro.url.pathname;
+         <li>
+           <a
+             href={`${base}about`}
+-            class={`block py-2 px-3 rounded-sm md:p-0 ${
+-              currentPath === `${base}about` || currentPath === `${base}about/`
+-                ? "text-white bg-blue-700 md:bg-transparent md:text-blue-700 dark:text-white md:dark:text-blue-500"
+-                : "text-gray-900 hover:bg-gray-100 md:hover:bg-transparent md:hover:text-blue-700 dark:text-white md:dark:hover:text-blue-500 dark:hover:bg-gray-700 dark:hover:text-white"
+-            }`}
+-            aria-current={currentPath === `${base}about` || currentPath === `${base}about/` ? "page" : undefined}
++            class={`${linkBase} ${isAbout ? linkActive : linkInactive}`}
++            aria-current={isAbout ? "page" : undefined}
+           >
+             About
+           </a>
+@@ -51,9 +52,10 @@ const currentPath = Astro.url.pathname;
+       </ul>
+     </div>
+ 
+-    <!-- Mobile Menu Button and Mobile Privacy Toggle -->
++    <!-- Mobile Menu Button, Mobile Privacy Toggle and Theme Toggle -->
+     <div class="flex items-center md:hidden space-x-3 rtl:space-x-reverse">
+       <PrivacyToggle client:load />
++      <ThemeToggle client:load />
+       <button
+         data-collapse-toggle="navbar-default"
+         type="button"
+@@ -70,17 +72,13 @@ const currentPath = Astro.url.pathname;
+ 
+     <!-- Mobile Navigation Links (collapsible) -->
+     <div class="hidden w-full md:hidden" id="navbar-default">
+-      <ul class="font-medium flex flex-col p-4 mt-4 border border-gray-100 rounded-lg bg-gray-50 dark:bg-gray-800 dark:border-gray-700">
++      <ul class="font-medium flex flex-col p-2 mt-4 rounded-lg bg-slate-900 text-white dark:ring-1 dark:ring-slate-600">
+         <!-- Home Link -->
+         <li>
+           <a
+             href={base}
+-            class={`block py-2 px-3 rounded-sm md:p-0 ${
+-              currentPath === base || currentPath === base.slice(0, -1)
+-                ? "text-white bg-blue-700 md:bg-transparent md:text-blue-700 dark:text-white md:dark:text-blue-500"
+-                : "text-gray-900 hover:bg-gray-100 md:hover:bg-transparent md:hover:text-blue-700 dark:text-white md:dark:hover:text-blue-500 dark:hover:bg-gray-700 dark:hover:text-white"
+-            }`}
+-            aria-current={currentPath === base || currentPath === base.slice(0, -1) ? "page" : undefined}
++            class={`${linkBase} ${isHome ? linkActive : linkInactive}`}
++            aria-current={isHome ? "page" : undefined}
+           >
+             Home
+           </a>
+@@ -90,12 +88,8 @@ const currentPath = Astro.url.pathname;
+         <li>
+           <a
+             href={`${base}about`}
+-            class={`block py-2 px-3 rounded-sm md:p-0 ${
+-              currentPath === `${base}about` || currentPath === `${base}about/`
+-                ? "text-white bg-blue-700 md:bg-transparent md:text-blue-700 dark:text-white md:dark:text-blue-500"
+-                : "text-gray-900 hover:bg-gray-100 md:hover:bg-transparent md:hover:text-blue-700 dark:text-white md:dark:hover:text-blue-500 dark:hover:bg-gray-700 dark:hover:text-white"
+-            }`}
+-            aria-current={currentPath === `${base}about` || currentPath === `${base}about/` ? "page" : undefined}
++            class={`${linkBase} ${isAbout ? linkActive : linkInactive}`}
++            aria-current={isAbout ? "page" : undefined}
+           >
+             About
+           </a>
+@@ -117,4 +111,4 @@ const currentPath = Astro.url.pathname;
+       });
+     }
+   });
+-</script>
+\ No newline at end of file
++</script>
+diff --git a/ui/src/components/ThemeToggle.jsx b/ui/src/components/ThemeToggle.jsx
+new file mode 100644
+index 0000000..0564c53
+--- /dev/null
++++ b/ui/src/components/ThemeToggle.jsx
+@@ -0,0 +1,58 @@
++import { useState, useEffect } from 'react';
++import { SunIcon, MoonIcon, ComputerDesktopIcon } from '@heroicons/react/24/outline';
++import {
++    THEME_CHANGE_EVENT,
++    DARK_MEDIA_QUERY,
++    getStoredTheme,
++    storeTheme,
++    applyTheme,
++    nextTheme,
++} from '../lib/theme.js';
++
++const LABELS = {
++    light: 'Light',
++    dark: 'Dark',
++    system: 'System default',
++};
++
++export default function ThemeToggle() {
++    const [theme, setTheme] = useState('system');
++
++    useEffect(() => {
++        setTheme(getStoredTheme(window.localStorage));
++    }, []);
++
++    useEffect(() => {
++        if (theme !== 'system') {
++            return undefined;
++        }
++        const mediaQuery = window.matchMedia(DARK_MEDIA_QUERY);
++        const handleChange = () => {
++            applyTheme('system', { root: document.documentElement, matchMedia: window.matchMedia.bind(window) });
++        };
++        mediaQuery.addEventListener('change', handleChange);
++        return () => mediaQuery.removeEventListener('change', handleChange);
++    }, [theme]);
++
++    const cycleTheme = () => {
++        const newTheme = nextTheme(theme);
++        setTheme(newTheme);
++        storeTheme(newTheme, window.localStorage);
++        applyTheme(newTheme, { root: document.documentElement, matchMedia: window.matchMedia.bind(window) });
++        window.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT, { detail: newTheme }));
++    };
++
++    const label = `Theme: ${LABELS[theme]}`;
++    const Icon = theme === 'light' ? SunIcon : theme === 'dark' ? MoonIcon : ComputerDesktopIcon;
++
++    return (
++        <button
++            onClick={cycleTheme}
++            className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white focus:outline-none transition-colors duration-200"
++            title={label}
++            aria-label={label}
++        >
++            <Icon className="w-6 h-6" />
++        </button>
++    );
++}
+diff --git a/ui/src/layouts/Layout.astro b/ui/src/layouts/Layout.astro
+index 4f0bb7f..d72eda5 100644
+--- a/ui/src/layouts/Layout.astro
++++ b/ui/src/layouts/Layout.astro
+@@ -11,8 +11,27 @@ import '../styles/global.css';
+     <link rel="icon" type="image/x-icon" href="/invest-track/favicon.svg" />
+     <meta name="generator" content={Astro.generator} />
+     <title>InvestTrack</title>
++    <script is:inline>
++      // Mirrors resolveIsDark in src/lib/theme.js; inline so it runs before first paint.
++      (function () {
++        var theme = 'system';
++        try {
++          var stored = localStorage.getItem('theme');
++          if (stored === 'light' || stored === 'dark') {
++            theme = stored;
++          }
++        } catch (e) {
++          theme = 'system';
++        }
++        var isDark = theme === 'dark' ||
++          (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
++        var root = document.documentElement;
++        root.classList.toggle('dark', isDark);
++        root.style.colorScheme = isDark ? 'dark' : 'light';
++      })();
++    </script>
+   </head>
+-  <body class="bg-slate-50 text-slate-900">
++  <body class="bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100">
+     <slot />
+   </body>
+ </html>
+diff --git a/ui/src/lib/__tests__/theme.test.js b/ui/src/lib/__tests__/theme.test.js
+new file mode 100644
+index 0000000..aadcbfc
+--- /dev/null
++++ b/ui/src/lib/__tests__/theme.test.js
+@@ -0,0 +1,144 @@
++import { describe, it } from 'node:test';
++import assert from 'node:assert/strict';
++import {
++    THEME_STORAGE_KEY,
++    THEMES,
++    normalizeTheme,
++    nextTheme,
++    resolveIsDark,
++    getStoredTheme,
++    storeTheme,
++    applyTheme,
++} from '../theme.js';
++
++describe('normalizeTheme', () => {
++    it('should return system when value is null', () => {
++        assert.equal(normalizeTheme(null), 'system');
++    });
++
++    it('should return system when value is invalid', () => {
++        assert.equal(normalizeTheme('purple'), 'system');
++    });
++
++    it('should keep valid values', () => {
++        THEMES.forEach((theme) => assert.equal(normalizeTheme(theme), theme));
++    });
++});
++
++describe('nextTheme', () => {
++    it('should cycle light -> dark -> system -> light', () => {
++        assert.equal(nextTheme('light'), 'dark');
++        assert.equal(nextTheme('dark'), 'system');
++        assert.equal(nextTheme('system'), 'light');
++    });
++
++    it('should return light when current is unknown', () => {
++        assert.equal(nextTheme('nope'), 'light');
++    });
++});
++
++describe('resolveIsDark', () => {
++    it('should return true for dark regardless of OS', () => {
++        assert.equal(resolveIsDark('dark', false), true);
++        assert.equal(resolveIsDark('dark', true), true);
++    });
++
++    it('should return false for light regardless of OS', () => {
++        assert.equal(resolveIsDark('light', true), false);
++        assert.equal(resolveIsDark('light', false), false);
++    });
++
++    it('should follow the OS for system', () => {
++        assert.equal(resolveIsDark('system', true), true);
++        assert.equal(resolveIsDark('system', false), false);
++    });
++});
++
++describe('getStoredTheme and storeTheme', () => {
++    it('should round-trip a stored theme', () => {
++        const storage = createFakeStorage();
++
++        const stored = storeTheme('dark', storage);
++
++        assert.equal(stored, true);
++        assert.equal(storage.data.get(THEME_STORAGE_KEY), 'dark');
++        assert.equal(getStoredTheme(storage), 'dark');
++    });
++
++    it('should return system when nothing is stored', () => {
++        assert.equal(getStoredTheme(createFakeStorage()), 'system');
++    });
++
++    it('should tolerate a storage that throws', () => {
++        const storage = {
++            getItem() {
++                throw new Error('blocked');
++            },
++            setItem() {
++                throw new Error('blocked');
++            },
++        };
++
++        assert.equal(getStoredTheme(storage), 'system');
++        assert.equal(storeTheme('dark', storage), false);
++    });
++});
++
++describe('applyTheme', () => {
++    it('should add the dark class and color scheme when theme is dark', () => {
++        const root = createFakeRoot();
++
++        const result = applyTheme('dark', { root, matchMedia: createMatchMedia(false) });
++
++        assert.equal(result, true);
++        assert.equal(root.classes.has('dark'), true);
++        assert.equal(root.style.colorScheme, 'dark');
++    });
++
++    it('should remove the dark class when theme is light and OS is dark', () => {
++        const root = createFakeRoot();
++        root.classes.add('dark');
++
++        const result = applyTheme('light', { root, matchMedia: createMatchMedia(true) });
++
++        assert.equal(result, false);
++        assert.equal(root.classes.has('dark'), false);
++        assert.equal(root.style.colorScheme, 'light');
++    });
++
++    it('should follow the OS when theme is system', () => {
++        const darkRoot = createFakeRoot();
++        const lightRoot = createFakeRoot();
++
++        applyTheme('system', { root: darkRoot, matchMedia: createMatchMedia(true) });
++        applyTheme('system', { root: lightRoot, matchMedia: createMatchMedia(false) });
++
++        assert.equal(darkRoot.classes.has('dark'), true);
++        assert.equal(lightRoot.classes.has('dark'), false);
++    });
++});
++
++function createFakeStorage() {
++    const data = new Map();
++    return {
++        data,
++        getItem: (key) => (data.has(key) ? data.get(key) : null),
++        setItem: (key, value) => data.set(key, value),
++    };
++}
++
++function createFakeRoot() {
++    const classes = new Set();
++    return {
++        classes,
++        style: {},
++        classList: {
++            add: (name) => classes.add(name),
++            remove: (name) => classes.delete(name),
++        },
++    };
++}
++
++function createMatchMedia(matches) {
++    return () => ({ matches });
++}
+diff --git a/ui/src/lib/theme.js b/ui/src/lib/theme.js
+new file mode 100644
+index 0000000..b3d8d74
+--- /dev/null
++++ b/ui/src/lib/theme.js
+@@ -0,0 +1,53 @@
++export const THEME_STORAGE_KEY = 'theme';
++export const THEME_CHANGE_EVENT = 'themeChanged';
++export const THEMES = ['light', 'dark', 'system'];
++export const DARK_MEDIA_QUERY = '(prefers-color-scheme: dark)';
++
++export const normalizeTheme = (value) => (THEMES.includes(value) ? value : 'system');
++
++export const nextTheme = (current) => {
++    const index = THEMES.indexOf(current);
++    if (index === -1) {
++        return THEMES[0];
++    }
++    return THEMES[(index + 1) % THEMES.length];
++};
++
++export const resolveIsDark = (theme, prefersDark) => {
++    if (theme === 'dark') {
++        return true;
++    }
++    if (theme === 'light') {
++        return false;
++    }
++    return Boolean(prefersDark);
++};
++
++export const getStoredTheme = (storage) => {
++    try {
++        return normalizeTheme(storage.getItem(THEME_STORAGE_KEY));
++    } catch {
++        return 'system';
++    }
++};
++
++export const storeTheme = (theme, storage) => {
++    try {
++        storage.setItem(THEME_STORAGE_KEY, normalizeTheme(theme));
++        return true;
++    } catch {
++        return false;
++    }
++};
++
++export const applyTheme = (theme, { root, matchMedia }) => {
++    const prefersDark = typeof matchMedia === 'function' ? matchMedia(DARK_MEDIA_QUERY).matches : false;
++    const isDark = resolveIsDark(normalizeTheme(theme), prefersDark);
++    if (isDark) {
++        root.classList.add('dark');
++    } else {
++        root.classList.remove('dark');
++    }
++    root.style.colorScheme = isDark ? 'dark' : 'light';
++    return isDark;
++};
+diff --git a/ui/src/styles/global.css b/ui/src/styles/global.css
+index b5c61c9..b0ea969 100644
+--- a/ui/src/styles/global.css
++++ b/ui/src/styles/global.css
+@@ -1,3 +1,57 @@
+ @tailwind base;
+ @tailwind components;
+ @tailwind utilities;
++
++/*
++ * Dark-theme surface and text overrides for the light-only utility classes used across
++ * components and modals. Driven by the `dark` class on <html> (see src/lib/theme.js).
++ */
++.dark .bg-white {
++  background-color: rgb(30 41 59); /* slate-800 */
++}
++
++.dark .bg-gray-50,
++.dark .bg-slate-50 {
++  background-color: rgb(51 65 85); /* slate-700 */
++}
++
++.dark .bg-gray-100,
++.dark .bg-gray-200,
++.dark .bg-gray-300 {
++  background-color: rgb(51 65 85); /* slate-700 */
++}
++
++.dark .hover\:bg-slate-100:hover,
++.dark .hover\:bg-gray-200:hover,
++.dark .hover\:bg-gray-300:hover {
++  background-color: rgb(71 85 105); /* slate-600 */
++}
++
++.dark .text-gray-900,
++.dark .text-gray-800,
++.dark .text-gray-700,
++.dark .text-slate-900 {
++  color: rgb(241 245 249); /* slate-100 */
++}
++
++.dark .text-gray-600,
++.dark .text-gray-500,
++.dark .hover\:text-gray-700:hover,
++.dark .hover\:text-gray-800:hover {
++  color: rgb(203 213 225); /* slate-300 */
++}
++
++.dark .text-gray-400 {
++  color: rgb(148 163 184); /* slate-400 */
++}
++
++.dark .border-gray-100,
++.dark .border-gray-200,
++.dark .border-gray-400,
++.dark .border-slate-200 {
++  border-color: rgb(71 85 105); /* slate-600 */
++}
++
++.dark .border-t.border-gray-100 {
++  border-color: rgb(71 85 105);
++}
+diff --git a/ui/tailwind.config.mjs b/ui/tailwind.config.mjs
+index 19f0614..e3d98e3 100644
+--- a/ui/tailwind.config.mjs
++++ b/ui/tailwind.config.mjs
+@@ -1,5 +1,6 @@
+ /** @type {import('tailwindcss').Config} */
+ export default {
++	darkMode: 'class',
+ 	content: ['./src/**/*.{astro,html,js,jsx,md,mdx,svelte,ts,tsx,vue}'],
+ 	theme: {
+ 		extend: {},
