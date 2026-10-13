@@ -37,7 +37,7 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
   const [logs, setLogs] = useState<string[]>([]);
   const [currentAttempt, setCurrentAttempt] = useState(1);
   const [elapsedTime, setElapsedTime] = useState(0);
-  const [logsExpanded, setLogsExpanded] = useState(false);
+  const [logsExpanded, setLogsExpanded] = useState(true); // Start expanded
   const [artifacts, setArtifacts] = useState<RunArtifact[]>([]);
   const [startedAt, setStartedAt] = useState<string | null>(null);
 
@@ -84,12 +84,10 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
   }, [runId, isRunning, loadArtifacts]);
 
   // Build dynamic pipeline from artifacts (each attempt gets its own node)
+  // BUT always show full expected pipeline, even if artifacts don't exist yet
   useEffect(() => {
-    if (artifacts.length === 0) return;
-
-    const nodes: AgentStep[] = [];
     const stepLabels: Record<string, string> = {
-      'pm-architect': 'PM',
+      'pm-architect': 'PM Architect',
       'developer': 'Dev',
       'qa-tester': 'QA',
       'triage': 'Triage',
@@ -114,64 +112,96 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
       byStep[art.step].push(art);
     });
 
-    // PM (single)
-    if (byStep['pm-architect']) {
-      const art = byStep['pm-architect'][0];
-      nodes.push({
-        id: 'pm-architect',
-        name: 'PM Architect',
-        icon: '📋',
-        status: art.status === 'COMPLETED' ? 'completed' : 'failed',
-        attempt: art.attempt,
-      });
-    }
+    const nodes: AgentStep[] = [];
 
-    // Dev/QA/Triage cycles (multiple attempts possible)
-    const maxAttempt = Math.max(...artifacts.map(a => a.attempt || 1), 1);
-    for (let attempt = 1; attempt <= maxAttempt; attempt++) {
-      ['developer', 'qa-tester', 'triage'].forEach(step => {
-        const art = byStep[step]?.find(a => a.attempt === attempt);
-        if (art) {
-          let status: AgentStep['status'] = 'pending';
-          if (step === 'qa-tester') {
-            status = art.status === 'PASS' ? 'completed' : art.status === 'FAIL' ? 'failed' : 'retry';
-          } else if (art.status === 'COMPLETED' || art.status === 'PASS') {
-            status = 'completed';
-          } else if (art.status?.includes('FAIL')) {
-            status = 'failed';
-          } else if (art.status?.includes('RETRY')) {
-            status = 'retry';
-          }
-          nodes.push({
-            id: `${step}-${attempt}`,
-            name: `${stepLabels[step] || step} ${attempt}`,
-            icon: stepIcons[step] || '🤖',
-            status,
-            attempt,
-          });
-        }
-      });
-    }
-
-    // Review, Security, Docs (single)
-    ['reviewer', 'security', 'documentation'].forEach(step => {
-      if (byStep[step]) {
-        const art = byStep[step][0];
-        nodes.push({
-          id: step,
-          name: stepLabels[step] || step,
-          icon: stepIcons[step] || '🤖',
-          status: art.status === 'COMPLETED' || art.status === 'PASS' ? 'completed' : 'failed',
-          attempt: art.attempt,
-        });
-      }
+    // PM (single) - always show, update from artifact if exists
+    const pmArt = byStep['pm-architect']?.[0];
+    nodes.push({
+      id: 'pm-architect',
+      name: 'PM Architect',
+      icon: '📋',
+      status: pmArt ? (pmArt.status === 'COMPLETED' ? 'completed' : 'failed') : 'pending',
+      attempt: pmArt?.attempt || 1,
     });
 
-    // Delivery placeholder
+    // Dev/QA/Triage cycles - show at least attempt 1, more if artifacts exist
+    const maxAttempt = artifacts.length > 0 ? Math.max(...artifacts.map(a => a.attempt || 1), 1) : 1;
+    for (let attempt = 1; attempt <= maxAttempt; attempt++) {
+      // Developer
+      const devArt = byStep['developer']?.find(a => a.attempt === attempt);
+      if (attempt === 1 || devArt) {
+        nodes.push({
+          id: `developer-${attempt}`,
+          name: `Dev ${attempt}`,
+          icon: '💻',
+          status: devArt 
+            ? (devArt.status === 'COMPLETED' || devArt.status === 'PASS' ? 'completed' : 'failed')
+            : 'pending',
+          attempt,
+        });
+      }
+
+      // QA
+      const qaArt = byStep['qa-tester']?.find(a => a.attempt === attempt);
+      if (attempt === 1 || qaArt) {
+        let qaStatus: AgentStep['status'] = 'pending';
+        if (qaArt) {
+          qaStatus = qaArt.status === 'PASS' ? 'completed' : qaArt.status === 'FAIL' ? 'failed' : 'retry';
+        }
+        nodes.push({
+          id: `qa-tester-${attempt}`,
+          name: `QA ${attempt}`,
+          icon: '🧪',
+          status: qaStatus,
+          attempt,
+        });
+      }
+
+      // Triage (only show if artifact exists - doesn't always run)
+      const triageArt = byStep['triage']?.find(a => a.attempt === attempt);
+      if (triageArt) {
+        nodes.push({
+          id: `triage-${attempt}`,
+          name: `Triage ${attempt}`,
+          icon: '🔍',
+          status: triageArt.status === 'COMPLETED' ? 'completed' : 'failed',
+          attempt,
+        });
+      }
+    }
+
+    // Review, Security, Docs (single) - always show
+    ['reviewer', 'security', 'documentation'].forEach(step => {
+      const art = byStep[step]?.[0];
+      let status: AgentStep['status'] = 'pending';
+      
+      if (art) {
+        // Map various success statuses to completed
+        if (art.status === 'COMPLETED' || 
+            art.status === 'PASS' || 
+            art.status === 'APPROVED' ||
+            art.status === 'APPROVED_WITH_SUGGESTIONS' ||
+            art.status === 'SKIPPED') {
+          status = 'completed';
+        } else if (art.status === 'FAIL' || art.status === 'FAILED' || art.status === 'BLOCKED') {
+          status = 'failed';
+        }
+      }
+      
+      nodes.push({
+        id: step,
+        name: stepLabels[step] || step,
+        icon: stepIcons[step] || '🤖',
+        status,
+        attempt: art?.attempt || 1,
+      });
+    });
+
+    // Delivery - always show
     nodes.push({ id: 'delivery', name: 'Delivery', icon: '🚀', status: 'pending' });
 
     setAgents(nodes);
-  }, [artifacts]);
+  }, [artifacts, isRunning]);
 
   // Timer for elapsed time - calculate from actual startedAt timestamp
   useEffect(() => {
