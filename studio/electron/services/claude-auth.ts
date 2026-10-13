@@ -13,10 +13,12 @@ export interface AuthStatus {
  * Check if Claude CLI is installed and authenticated.
  */
 export async function checkClaudeAuth(): Promise<AuthStatus> {
+  console.log('[Claude Auth] Checking auth status...');
+  
   try {
     const result = await new Promise<{ exitCode: number; output: string }>((resolve) => {
       const proc = spawn('claude', ['-p', 'ok', '--output-format', 'json'], {
-        timeout: 10000,
+        timeout: 15000,
       });
 
       let output = '';
@@ -24,36 +26,51 @@ export async function checkClaudeAuth(): Promise<AuthStatus> {
       proc.stderr?.on('data', (data) => (output += data.toString()));
 
       proc.on('close', (code) => {
+        console.log('[Claude Auth] Process exited with code:', code);
         resolve({ exitCode: code ?? 1, output });
       });
 
-      proc.on('error', () => {
+      proc.on('error', (err) => {
+        console.log('[Claude Auth] Process error:', err.message);
         resolve({ exitCode: 1, output: 'not-installed' });
       });
     });
 
+    console.log('[Claude Auth] Output length:', result.output.length);
+
     if (result.output.includes('not-installed') || result.output.includes('command not found')) {
+      console.log('[Claude Auth] Result: not-installed');
       return { type: 'not-installed', message: 'Claude CLI is not installed' };
     }
 
     try {
       const parsed = JSON.parse(result.output);
+      console.log('[Claude Auth] Parsed JSON, is_error:', parsed.is_error);
+      
       if (parsed.is_error) {
         const msg = parsed.result || '';
         if (msg.includes('OAuth session expired')) {
+          console.log('[Claude Auth] Result: auth expired');
           return { type: 'auth', message: 'OAuth session expired' };
         }
+        console.log('[Claude Auth] Result: error -', msg.slice(0, 100));
         return { type: 'error', message: msg };
       }
+      
+      console.log('[Claude Auth] Result: OK - authenticated!');
       return { type: 'ok' };
-    } catch {
+    } catch (parseErr) {
       // Couldn't parse - likely an error
+      console.log('[Claude Auth] JSON parse failed:', parseErr);
+      console.log('[Claude Auth] Raw output:', result.output.slice(0, 200));
+      
       if (result.output.includes('OAuth session expired')) {
         return { type: 'auth', message: 'OAuth session expired' };
       }
       return { type: 'error', message: result.output.slice(0, 200) };
     }
   } catch (error) {
+    console.log('[Claude Auth] Exception:', error);
     return { type: 'error', message: String(error) };
   }
 }
