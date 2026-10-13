@@ -106,13 +106,18 @@ ipcMain.handle('factory:run-task', async (_event, params: {
 
   console.log('[Factory IPC] Running factory with args:', args);
 
-  // Spawn the factory process
+  // Get the factory directory - handle both dev and production paths
+  const factoryDir = path.resolve(__dirname, '../../../factory');
+  console.log('[Factory IPC] Factory directory:', factoryDir);
+
+  // Spawn the factory process using shell to ensure PATH is available
   const proc = spawn('npx', ['tsx', ...args], {
     env: {
       ...process.env,
       FACTORY_NON_INTERACTIVE: 'true',
     },
-    cwd: path.join(__dirname, '../../../factory'),
+    cwd: factoryDir,
+    shell: true, // Use shell to get proper PATH resolution
   });
 
   // Extract runId from output

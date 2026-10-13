@@ -344,9 +344,22 @@ function App() {
                   loading={runLoading}
                 />
 
+                {/* Running Status */}
+                {runLoading && !activeRunId && (
+                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                      <div>
+                        <p className="font-medium text-blue-900 dark:text-blue-100">Starting factory...</p>
+                        <p className="text-sm text-blue-700 dark:text-blue-300">Initializing agents and preparing workspace</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Live Output */}
                 {activeRunId && (
-                  <LiveOutput runId={activeRunId} isRunning={true} />
+                  <LiveOutput runId={activeRunId} isRunning={runLoading} />
                 )}
 
                 {/* Run History */}
