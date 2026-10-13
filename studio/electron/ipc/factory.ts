@@ -122,6 +122,7 @@ ipcMain.handle('factory:run-task', async (_event, params: {
     env: {
       ...process.env,
       FACTORY_NON_INTERACTIVE: 'true',
+      FACTORY_PROVIDER: 'claude-cli', // Use Claude Pro subscription via CLI
     },
     cwd: factoryDir,
   });
