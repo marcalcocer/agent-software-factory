@@ -47,6 +47,7 @@ function App() {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [runningRepo, setRunningRepo] = useState<string | null>(null); // Track which repo is running
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [viewingHistoryRunId, setViewingHistoryRunId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [taskDrafts, setTaskDrafts] = useState<Record<string, string>>({});
   const [theme, setTheme] = useState<ThemeSetting>('system');
@@ -395,6 +396,12 @@ function App() {
                 {/* Task Input or Pipeline View */}
                 {runLoading && activeTab === runningRepo ? (
                   <PipelineView runId={activeRunId} isRunning={runLoading} />
+                ) : viewingHistoryRunId ? (
+                  <PipelineView
+                    runId={viewingHistoryRunId}
+                    isRunning={false}
+                    onClose={() => setViewingHistoryRunId(null)}
+                  />
                 ) : (
                   <>
                     {/* Run History - shown above the task input when there's history */}
@@ -406,7 +413,7 @@ function App() {
                         <RunHistory
                           runs={repoRuns}
                           loading={false}
-                          onSelectRun={(runId) => setSelectedRunId(runId)}
+                          onSelectRun={(runId) => setViewingHistoryRunId(runId)}
                           onResume={handleResumeRun}
                           onRename={handleRenameRun}
                         />

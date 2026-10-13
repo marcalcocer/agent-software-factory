@@ -18,6 +18,7 @@ interface AgentStep {
 interface PipelineViewProps {
   runId: string | null;
   isRunning: boolean;
+  onClose?: () => void;
 }
 
 const INITIAL_AGENTS: AgentStep[] = [
@@ -30,7 +31,7 @@ const INITIAL_AGENTS: AgentStep[] = [
   { id: 'delivery', name: 'Delivery', icon: '🚀', status: 'pending' },
 ];
 
-export function PipelineView({ runId, isRunning }: PipelineViewProps) {
+export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
   const [agents, setAgents] = useState<AgentStep[]>(INITIAL_AGENTS);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -68,37 +69,94 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
     }
   }, [runId, isRunning, loadArtifacts]);
 
-  // Sync agent statuses from the finished step artifacts (more reliable than logs)
+  // Build dynamic pipeline from artifacts (each attempt gets its own node)
   useEffect(() => {
     if (artifacts.length === 0) return;
 
-    setAgents(prev => {
-      const updated = prev.map(a => ({ ...a }));
-      for (const art of artifacts) {
-        const idx = updated.findIndex(a => a.id === art.step);
-        if (idx < 0) continue;
+    const nodes: AgentStep[] = [];
+    const stepLabels: Record<string, string> = {
+      'pm-architect': 'PM',
+      'developer': 'Dev',
+      'qa-tester': 'QA',
+      'triage': 'Triage',
+      'reviewer': 'Review',
+      'security': 'Security',
+      'documentation': 'Docs',
+    };
+    const stepIcons: Record<string, string> = {
+      'pm-architect': '📋',
+      'developer': '💻',
+      'qa-tester': '🧪',
+      'triage': '🔍',
+      'reviewer': '👀',
+      'security': '🔒',
+      'documentation': '📝',
+    };
 
-        let status: AgentStep['status'] = updated[idx].status;
-        if (art.step === 'qa-tester') {
-          status = art.status === 'PASS' ? 'completed' : 'failed';
-        } else if (art.status === 'COMPLETED' || art.status === 'PASS') {
-          status = 'completed';
-        } else if (art.status === 'FAIL') {
-          status = 'failed';
-        } else {
-          status = 'completed';
-        }
-
-        updated[idx] = { ...updated[idx], status, attempt: art.attempt };
-
-        // A retry decision re-opens the developer node
-        if (art.step === 'triage' && String(art.status).toUpperCase().includes('RETRY_DEVELOPER')) {
-          const dev = updated.findIndex(x => x.id === 'developer');
-          if (dev >= 0) updated[dev] = { ...updated[dev], status: 'retry' };
-        }
-      }
-      return updated;
+    // Group artifacts by step
+    const byStep: Record<string, RunArtifact[]> = {};
+    artifacts.forEach(art => {
+      if (!byStep[art.step]) byStep[art.step] = [];
+      byStep[art.step].push(art);
     });
+
+    // PM (single)
+    if (byStep['pm-architect']) {
+      const art = byStep['pm-architect'][0];
+      nodes.push({
+        id: 'pm-architect',
+        name: 'PM Architect',
+        icon: '📋',
+        status: art.status === 'COMPLETED' ? 'completed' : 'failed',
+        attempt: art.attempt,
+      });
+    }
+
+    // Dev/QA/Triage cycles (multiple attempts possible)
+    const maxAttempt = Math.max(...artifacts.map(a => a.attempt || 1), 1);
+    for (let attempt = 1; attempt <= maxAttempt; attempt++) {
+      ['developer', 'qa-tester', 'triage'].forEach(step => {
+        const art = byStep[step]?.find(a => a.attempt === attempt);
+        if (art) {
+          let status: AgentStep['status'] = 'pending';
+          if (step === 'qa-tester') {
+            status = art.status === 'PASS' ? 'completed' : art.status === 'FAIL' ? 'failed' : 'retry';
+          } else if (art.status === 'COMPLETED' || art.status === 'PASS') {
+            status = 'completed';
+          } else if (art.status?.includes('FAIL')) {
+            status = 'failed';
+          } else if (art.status?.includes('RETRY')) {
+            status = 'retry';
+          }
+          nodes.push({
+            id: `${step}-${attempt}`,
+            name: `${stepLabels[step] || step} ${attempt}`,
+            icon: stepIcons[step] || '🤖',
+            status,
+            attempt,
+          });
+        }
+      });
+    }
+
+    // Review, Security, Docs (single)
+    ['reviewer', 'security', 'documentation'].forEach(step => {
+      if (byStep[step]) {
+        const art = byStep[step][0];
+        nodes.push({
+          id: step,
+          name: stepLabels[step] || step,
+          icon: stepIcons[step] || '🤖',
+          status: art.status === 'COMPLETED' || art.status === 'PASS' ? 'completed' : 'failed',
+          attempt: art.attempt,
+        });
+      }
+    });
+
+    // Delivery placeholder
+    nodes.push({ id: 'delivery', name: 'Delivery', icon: '🚀', status: 'pending' });
+
+    setAgents(nodes);
   }, [artifacts]);
 
   // Timer for elapsed time
@@ -370,6 +428,15 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
       <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg p-4 text-white">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
+            {!isRunning && onClose && (
+              <button
+                onClick={onClose}
+                className="p-2 hover:bg-white/10 rounded transition-colors"
+                title="Back to runs"
+              >
+                ← Back
+              </button>
+            )}
             {isRunning && (
               <div className="relative">
                 <div className="w-10 h-10 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>

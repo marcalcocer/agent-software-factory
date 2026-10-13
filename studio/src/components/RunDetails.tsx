@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { formatDuration } from '../lib/format';
 
 interface RunStep {
   step: string;
@@ -252,7 +253,7 @@ export function RunDetails({ runId, onClose, onResume }: RunDetailsProps) {
                             )}
                           </div>
                           <div className="text-sm text-slate-500">
-                            {step.durationMs ? `${(step.durationMs / 1000).toFixed(1)}s` : ''}
+                            {step.durationMs ? formatDuration(step.durationMs) : ''}
                             {step.status && ` • ${step.status}`}
                           </div>
                         </div>

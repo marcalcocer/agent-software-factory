@@ -1,4 +1,5 @@
 import type { RunArtifact } from '../../shared/types';
+import { formatDuration } from '../lib/format';
 
 interface AgentDetailProps {
   step: string;
@@ -74,7 +75,7 @@ export function AgentDetail({ step, artifact }: AgentDetailProps) {
       {artifact.attempt > 1 && <Pill tone="yellow">Attempt {artifact.attempt}</Pill>}
       {artifact.model && <Pill tone="slate">{artifact.model}</Pill>}
       {typeof artifact.durationMs === 'number' && (
-        <Pill tone="slate">{(artifact.durationMs / 1000).toFixed(1)}s</Pill>
+        <Pill tone="slate">{formatDuration(artifact.durationMs)}</Pill>
       )}
     </div>
   );
