@@ -230,9 +230,25 @@ async function commandRun(flags: Record<string, FlagValue>): Promise<number> {
   heading(`Factory run ${runId}`);
   printJson('Input', { ...inputData, dryRun: config.dryRun });
 
+  const startedAt = new Date().toISOString();
   const workflow = mastra.getWorkflow('softwareFactoryWorkflow');
   const run = await workflow.createRun({ runId });
-  const result = await run.start({ inputData });
+
+  let result: Awaited<ReturnType<typeof run.start>>;
+  try {
+    result = await run.start({ inputData });
+  } catch (error) {
+    await writeFailureSummary(runId, {
+      task,
+      repository: repoPath,
+      startedAt,
+      error,
+      dryRun: config.dryRun,
+    });
+    heading(`Run ${runId} FAILED`);
+    process.stderr.write(`${(error as Error)?.message ?? String(error)}\n`);
+    return 1;
+  }
 
   if (result.status === 'success') {
     heading(`Run ${runId}: ${result.result.status}`);
@@ -259,12 +275,66 @@ async function commandRun(flags: Record<string, FlagValue>): Promise<number> {
 
   heading(`Run ${runId} FAILED`);
   if (result.status === 'failed') {
+    await writeFailureSummary(runId, {
+      task,
+      repository: repoPath,
+      startedAt,
+      error: result.error,
+      dryRun: config.dryRun,
+    });
     process.stderr.write(`${result.error?.message ?? String(result.error)}\n`);
     if (result.error?.stack) process.stderr.write(`${result.error.stack}\n`);
   } else {
     printJson('Result', result);
   }
   return 1;
+}
+
+/**
+ * Write a minimal `summary.json` for runs that fail before the workflow reaches
+ * its finalize step (e.g. prepare-run rejects a dirty working tree). Without this
+ * the run has no trace dir, so the CLI/studio cannot show *why* it failed.
+ * Never overwrites an existing summary.
+ */
+async function writeFailureSummary(
+  runId: string,
+  meta: {
+    task: string;
+    repository: string;
+    startedAt: string;
+    error: unknown;
+    dryRun: boolean;
+  },
+): Promise<void> {
+  const { traceDirFor, writeSummary } = await import('../tools/logger-tools.ts');
+  const summaryPath = path.join(traceDirFor(runId), 'summary.json');
+  if (fs.existsSync(summaryPath)) return;
+
+  const error = meta.error as { message?: string; stack?: string } | undefined;
+  const finishedAt = new Date().toISOString();
+  writeSummary(runId, {
+    runId,
+    status: 'FAILED',
+    task: meta.task,
+    repository: meta.repository,
+    branch: null,
+    startedAt: meta.startedAt,
+    finishedAt,
+    durationMs: new Date(finishedAt).getTime() - new Date(meta.startedAt).getTime(),
+    attempts: 0,
+    pullRequestUrl: null,
+    error: error?.message ?? String(meta.error),
+    errorStack: error?.stack ?? null,
+    tokens: { total: 0, input: 0, output: 0 },
+    agentCalls: 0,
+    toolCalls: 0,
+    modelsUsed: [],
+    steps: [],
+    artifacts: [],
+    gates: { qa: null, codeReview: null, security: null, documentation: null },
+    history: [],
+    dryRun: meta.dryRun,
+  });
 }
 
 async function commandResume(flags: Record<string, FlagValue>): Promise<number> {

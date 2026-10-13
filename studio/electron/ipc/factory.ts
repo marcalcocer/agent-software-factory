@@ -429,6 +429,7 @@ ipcMain.handle('factory:list', async (_event, repoPath?: string): Promise<Factor
         finishedAt: summary.finishedAt,
         tokens: summary.tokens,
         gates: summary.gates,
+        error: summary.error,
       });
     } catch {
       // Skip invalid summary files
@@ -467,6 +468,7 @@ ipcMain.handle('factory:get', async (_event, runId: string): Promise<FactoryRun 
       tokens: summary.tokens,
       gates: summary.gates,
       steps: summary.steps || [],
+      error: summary.error,
     };
   } catch {
     return null;
