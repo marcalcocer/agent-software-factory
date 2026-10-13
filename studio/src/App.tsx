@@ -79,6 +79,7 @@ function App() {
       );
       if (activeRunId === runId) {
         setActiveRunId(null);
+        setRunLoading(false); // Stop showing pipeline when run completes
       }
     });
 
@@ -91,6 +92,10 @@ function App() {
             : run
         )
       );
+      if (activeRunId === runId) {
+        setActiveRunId(null);
+        setRunLoading(false); // Stop showing pipeline on error
+      }
     });
 
     return () => {
@@ -179,11 +184,13 @@ function App() {
 
       setRuns([newRun, ...runs]);
       setActiveRunId(result.runId); // Track active run for live output
+      
+      // Clear task draft after successful submission
+      setTaskDrafts({ ...taskDrafts, [activeTab]: '' });
     } catch (err) {
       console.error('Failed to run task:', err);
       setError(`Task execution failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setRunLoading(false);
+      setRunLoading(false); // Only stop loading on error during submission
     }
   };
 

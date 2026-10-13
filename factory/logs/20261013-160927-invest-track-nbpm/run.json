@@ -1,0 +1,19 @@
+{
+  "runId": "20261013-160927-invest-track-nbpm",
+  "task": "On Investrack, I see the top level header, the text home and about in black and all the rest of the page in white. Can we create to solve that home and about it's in a box whose color is black? Can we create there in the near to the eye button that we have that hides the money I have? Can we do something similar to create a white mode and dark mode? And it should be nice to have white mode, dark mode, and use system default or something like this like other applications have.",
+  "repoPath": "/home/magmarc9/workspace/invest-track",
+  "repoName": "invest-track",
+  "branch": "factory/on-investrack-i-see-the-top-leve-nbpm",
+  "baseBranch": "master",
+  "models": {
+    "pm-architect": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "developer": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "qa-tester": "claude-cli/haiku -> claude-cli/sonnet",
+    "triage": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "security": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "reviewer": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "documentation": "claude-cli/haiku -> claude-cli/sonnet"
+  },
+  "dryRun": false,
+  "startedAt": "2026-10-13T16:09:27.342Z"
+}
