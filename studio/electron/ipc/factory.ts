@@ -113,10 +113,11 @@ ipcMain.handle('factory:run-task', async (_event, params: {
   console.log('[Factory IPC] Factory directory:', factoryDir);
 
   // Use system node (not Electron's) to run the factory via tsx
-  // tsx is a local binary in factory/node_modules/.bin/
-  const tsxPath = path.join(factoryDir, 'node_modules/.bin/tsx');
+  // tsx is in the monorepo root's node_modules (workspace structure)
+  const rootDir = path.resolve(__dirname, '../..');
+  const tsxPath = path.join(rootDir, 'node_modules/.bin/tsx');
   
-  // Build the command: node ./node_modules/.bin/tsx factory.ts run --repo ... --task ...
+  // Build the command: node ../node_modules/.bin/tsx factory.ts run --repo ... --task ...
   const proc = spawn('node', [tsxPath, ...args], {
     env: {
       ...process.env,

@@ -1,0 +1,17 @@
+{
+  "step": "security",
+  "attempt": 1,
+  "status": "PASS/NONE",
+  "model": "dry-run-stub",
+  "durationMs": 1,
+  "writtenAt": "2026-10-13T08:57:14.800Z",
+  "data": {
+    "status": "PASS",
+    "riskLevel": "NONE",
+    "summary": "[dry-run] No security regression introduced by this diff.",
+    "findings": [],
+    "secretsDetected": [],
+    "dependencyRisks": [],
+    "mustFixBeforeMerge": []
+  }
+}
