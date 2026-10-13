@@ -511,32 +511,57 @@ ipcMain.handle('factory:list', async (_event, repoPath?: string): Promise<Factor
  */
 ipcMain.handle('factory:get', async (_event, runId: string): Promise<FactoryRun | null> => {
   // Factory logs are in factory/logs, from dist-electron that's ../../factory/logs
-  const summaryPath = path.join(__dirname, '../../factory/logs', runId, 'summary.json');
-  console.log('[Factory IPC] Loading summary from:', summaryPath);
+  const runDir = path.join(__dirname, '../../factory/logs', runId);
+  const summaryPath = path.join(runDir, 'summary.json');
+  const runJsonPath = path.join(runDir, 'run.json');
   
-  if (!fs.existsSync(summaryPath)) {
-    return null;
+  // Try summary.json first (completed runs)
+  if (fs.existsSync(summaryPath)) {
+    try {
+      const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+      return {
+        runId: summary.runId,
+        repoId: path.basename(summary.repository),
+        task: summary.task || '',
+        status: summary.status,
+        attempts: summary.attempts || 0,
+        branch: summary.branch,
+        startedAt: summary.startedAt,
+        finishedAt: summary.finishedAt,
+        tokens: summary.tokens,
+        gates: summary.gates,
+        steps: summary.steps || [],
+        error: summary.error,
+      };
+    } catch {
+      // Fall through to try run.json
+    }
+  }
+  
+  // Fall back to run.json (running/incomplete runs)
+  if (fs.existsSync(runJsonPath)) {
+    try {
+      const runData = JSON.parse(fs.readFileSync(runJsonPath, 'utf8'));
+      return {
+        runId: runData.runId,
+        repoId: path.basename(runData.repoPath || runData.repository || ''),
+        task: runData.task || '',
+        status: 'RUNNING',
+        attempts: 0,
+        branch: runData.branch,
+        startedAt: runData.startedAt,
+        finishedAt: undefined,
+        tokens: undefined,
+        gates: undefined,
+        steps: [],
+        error: undefined,
+      };
+    } catch {
+      return null;
+    }
   }
 
-  try {
-    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
-    return {
-      runId: summary.runId,
-      repoId: path.basename(summary.repository),
-      task: summary.task || '',
-      status: summary.status,
-      attempts: summary.attempts || 0,
-      branch: summary.branch,
-      startedAt: summary.startedAt,
-      finishedAt: summary.finishedAt,
-      tokens: summary.tokens,
-      gates: summary.gates,
-      steps: summary.steps || [],
-      error: summary.error,
-    };
-  } catch {
-    return null;
-  }
+  return null;
 });
 
 /**

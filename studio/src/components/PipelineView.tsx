@@ -37,7 +37,6 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
   const [logs, setLogs] = useState<string[]>([]);
   const [currentAttempt, setCurrentAttempt] = useState(1);
   const [elapsedTime, setElapsedTime] = useState(0);
-  const [logsExpanded, setLogsExpanded] = useState(true); // Start expanded
   const [artifacts, setArtifacts] = useState<RunArtifact[]>([]);
   const [startedAt, setStartedAt] = useState<string | null>(null);
 
@@ -231,6 +230,16 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
       // Don't reset elapsedTime - it's calculated from startedAt
     }
   }, [runId, isRunning]);
+
+  // Auto-select the currently running agent (or the first completed one if none running)
+  useEffect(() => {
+    if (!isRunning) return;
+    
+    const runningAgent = agents.find(a => a.status === 'running');
+    if (runningAgent && selectedAgent !== runningAgent.id) {
+      setSelectedAgent(runningAgent.id);
+    }
+  }, [agents, isRunning, selectedAgent]);
 
   // Update agent state based on the log line
   const updateAgentFromLog = useCallback((line: string) => {
@@ -650,67 +659,37 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
             </button>
           </div>
           <div className="p-4">
-            <AgentDetail step={selectedAgentData.id} artifact={selectedArtifact} />
+            <AgentDetail 
+              step={selectedAgentData.id} 
+              artifact={selectedArtifact}
+              logs={agentLogs}
+              isRunning={isRunning && selectedAgentData.status === 'running'}
+            />
           </div>
         </div>
       )}
 
-      {/* Technical Logs (collapsible) */}
-      <div className="bg-slate-900 rounded-lg overflow-hidden">
-        <div className="w-full px-4 py-2 bg-slate-800 border-b border-slate-700 flex items-center justify-between">
-          <button
-            onClick={() => setLogsExpanded(!logsExpanded)}
-            className="flex items-center gap-2 flex-1 text-left"
-          >
-            <span className="text-slate-400">{logsExpanded ? '▼' : '▶'}</span>
-            {selectedAgentData ? (
-              <>
-                <span className="text-xl">{selectedAgentData.icon}</span>
-                <span className="text-sm font-medium text-slate-200">{selectedAgentData.name} Technical Logs</span>
-              </>
-            ) : (
-              <span className="text-sm font-medium text-slate-200">Technical Logs</span>
-            )}
-            {isRunning && (
+      {/* Technical Logs - only show when no agent is selected (general overview) */}
+      {!selectedAgent && isRunning && logs.length > 0 && (
+        <div className="bg-slate-900 rounded-lg overflow-hidden">
+          <div className="w-full px-4 py-2 bg-slate-800 border-b border-slate-700 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-slate-200">Live Output</span>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-600 text-white">
                 <span className="w-2 h-2 bg-white rounded-full animate-pulse"></span>
                 Live
               </span>
-            )}
-          </button>
-          <div className="flex items-center gap-3">
-            {selectedAgent && (
-              <button
-                onClick={() => setSelectedAgent(null)}
-                className="text-xs text-slate-400 hover:text-white"
-              >
-                Show All
-              </button>
-            )}
-            <button
-              onClick={() => setLogsExpanded(!logsExpanded)}
-              className="text-xs text-slate-500 hover:text-slate-300"
-            >
-              {logsExpanded ? 'Click to collapse' : 'Click to expand'}
-            </button>
+            </div>
+          </div>
+          <div className="p-4 max-h-48 overflow-y-auto font-mono text-xs text-slate-300 space-y-1">
+            {logs.slice(-30).map((log, index) => (
+              <div key={index} className="hover:bg-slate-800 px-1 rounded">
+                {log}
+              </div>
+            ))}
           </div>
         </div>
-        {logsExpanded && (
-          <div className="p-4 h-48 overflow-y-auto font-mono text-xs text-slate-300 space-y-1">
-            {agentLogs.length === 0 ? (
-              <span className="text-slate-500">
-                {isRunning ? 'Waiting for output...' : 'No logs available'}
-              </span>
-            ) : (
-              agentLogs.slice(-50).map((log, index) => (
-                <div key={index} className="hover:bg-slate-800 px-1 rounded">
-                  {log}
-                </div>
-              ))
-            )}
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }

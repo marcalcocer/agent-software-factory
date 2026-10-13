@@ -4,6 +4,8 @@ import { formatDuration } from '../lib/format';
 interface AgentDetailProps {
   step: string;
   artifact?: RunArtifact;
+  logs?: string[]; // Streaming logs when artifact not yet available
+  isRunning?: boolean;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -52,11 +54,38 @@ function FileList({ files }: { files: any[] }) {
   );
 }
 
-export function AgentDetail({ step, artifact }: AgentDetailProps) {
+export function AgentDetail({ step, artifact, logs, isRunning }: AgentDetailProps) {
   if (!artifact) {
+    // Show streaming logs if available, otherwise show waiting message
+    if (logs && logs.length > 0) {
+      return (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-sm">
+            {isRunning && (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 text-xs">
+                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse"></span>
+                Working...
+              </span>
+            )}
+          </div>
+          <div className="bg-slate-800/50 rounded-lg p-3 max-h-64 overflow-y-auto">
+            <pre className="font-mono text-xs text-slate-300 whitespace-pre-wrap break-words">
+              {logs.slice(-30).join('\n')}
+            </pre>
+          </div>
+        </div>
+      );
+    }
+    
     return (
-      <div className="text-sm text-slate-400 italic">
-        No detailed report yet for this step. It will appear once the agent finishes.
+      <div className="text-sm text-slate-400 italic flex items-center gap-2">
+        {isRunning && (
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 text-xs">
+            <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse"></span>
+            Working...
+          </span>
+        )}
+        <span>Waiting for output...</span>
       </div>
     );
   }
