@@ -9,6 +9,7 @@ interface Settings {
   theme: 'dark' | 'light' | 'system';
   workspaceRoot: string;
   defaultMaxAttempts: number;
+  dryRunByDefault: boolean;
   allowPush: boolean;
   allowPR: boolean;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
@@ -20,6 +21,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
     theme: 'system',
     workspaceRoot: '',
     defaultMaxAttempts: 3,
+    dryRunByDefault: false,
     allowPush: false,
     allowPR: false,
     logLevel: 'info',
@@ -117,7 +119,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               {/* Default Max Attempts */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Default Max Iterations
+                  Max Iterations (Safety Limit)
                 </label>
                 <input
                   type="number"
@@ -127,10 +129,30 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                   max={10}
                   className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-900"
                 />
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  Maximum dev/QA/review cycles before escalation (prevents runaway costs)
+                </p>
               </div>
 
               {/* Toggles */}
               <div className="space-y-3">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.dryRunByDefault}
+                    onChange={(e) => setSettings({ ...settings, dryRunByDefault: e.target.checked })}
+                    className="rounded border-slate-300 dark:border-slate-600"
+                  />
+                  <div className="flex-1">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300 block">
+                      Dry Run Mode
+                    </span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      Test without API calls or git writes (no cost)
+                    </span>
+                  </div>
+                </label>
+
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input
                     type="checkbox"

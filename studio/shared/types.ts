@@ -70,6 +70,7 @@ export interface GlobalSettings {
   theme: 'dark' | 'light' | 'system';
   workspaceRoot: string;
   defaultMaxAttempts: number;
+  dryRunByDefault: boolean; // Run in dry-run mode (no API calls, no git writes)
   allowPush: boolean;
   allowPR: boolean;
   logLevel: 'debug' | 'info' | 'warn' | 'error';

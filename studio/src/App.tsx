@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AuthProvider } from '@shared/types';
 import { Sidebar } from './components/Sidebar';
 import { RepoTabs } from './components/RepoTabs';
-import { TaskInput, type TaskOptions } from './components/TaskInput';
+import { TaskInput } from './components/TaskInput';
 import { RunHistory } from './components/RunHistory';
 import { LiveOutput } from './components/LiveOutput';
 import { RunDetails } from './components/RunDetails';
@@ -151,17 +151,21 @@ function App() {
     }
   };
 
-  const handleRunTask = async (task: string, options: TaskOptions) => {
+  const handleRunTask = async (task: string) => {
     if (!activeTab) return;
 
     setRunLoading(true);
     setError(null);
 
     try {
+      // Load settings to get maxAttempts and dryRun
+      const settings = await window.api.invoke('settings:get');
+      
       const result = await window.api.invoke('factory:run-task', {
         repo: activeTab,
         task,
-        ...options,
+        maxAttempts: settings.global.defaultMaxAttempts,
+        dryRun: settings.global.dryRunByDefault,
       });
 
       // Add to run history

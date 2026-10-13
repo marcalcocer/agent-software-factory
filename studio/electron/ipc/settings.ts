@@ -25,6 +25,7 @@ export function loadSettings(): Settings {
       theme: 'system',
       workspaceRoot: path.join(app.getPath('home'), 'workspace'),
       defaultMaxAttempts: 3,
+      dryRunByDefault: false,
       allowPush: false,
       allowPR: false,
       logLevel: 'info',
