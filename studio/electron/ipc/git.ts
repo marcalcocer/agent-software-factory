@@ -1,11 +1,12 @@
 /**
  * IPC handlers for git/repository operations.
  */
-import { ipcMain } from 'electron';
+import { ipcMain, dialog } from 'electron';
 import type { Repository } from '../../shared/types';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { mainWindow } from '../main.js';
 
 // In-memory repo list (TODO: persist to settings)
 const repositories = new Map<string, Repository>();
@@ -14,6 +15,46 @@ ipcMain.handle('repo:list', async (): Promise<Repository[]> => {
   return Array.from(repositories.values()).sort((a, b) => 
     (b.lastAccessed || '').localeCompare(a.lastAccessed || '')
   );
+});
+
+/**
+ * Open native folder picker dialog to select a repository
+ */
+ipcMain.handle('repo:browse', async (): Promise<Repository | null> => {
+  if (!mainWindow) return null;
+
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select Repository Folder',
+    properties: ['openDirectory'],
+    buttonLabel: 'Select Repository',
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+
+  const selectedPath = result.filePaths[0];
+  const name = path.basename(selectedPath);
+
+  // Verify it's a git repository
+  const isGitRepo = fs.existsSync(path.join(selectedPath, '.git'));
+  
+  const repo: Repository = {
+    id: name,
+    name,
+    path: selectedPath,
+    lastAccessed: new Date().toISOString(),
+  };
+
+  // Store it
+  repositories.set(name, repo);
+
+  // Return with a note if it's not a git repo
+  if (!isGitRepo) {
+    console.log(`[Git] Warning: ${selectedPath} is not a git repository`);
+  }
+
+  return repo;
 });
 
 ipcMain.handle('repo:add', async (_event, repoPath: string): Promise<Repository> => {

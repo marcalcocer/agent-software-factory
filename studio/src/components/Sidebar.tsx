@@ -1,5 +1,3 @@
-import { useState } from 'react';
-
 // Sidebar component for repository navigation
 
 interface Repository {
@@ -12,64 +10,27 @@ interface SidebarProps {
   repos: Repository[];
   activeRepo: string | null;
   onSelectRepo: (repo: Repository) => void;
-  onAddRepo: (path: string) => void;
+  onBrowseRepo: () => void;
   onOpenSettings: () => void;
   loading: boolean;
 }
 
-export function Sidebar({ repos, activeRepo, onSelectRepo, onAddRepo, onOpenSettings, loading }: SidebarProps) {
-  const [showAddRepo, setShowAddRepo] = useState(false);
-  const [newRepoPath, setNewRepoPath] = useState('');
-
-  const handleAddRepo = () => {
-    if (newRepoPath.trim()) {
-      onAddRepo(newRepoPath.trim());
-      setNewRepoPath('');
-      setShowAddRepo(false);
-    }
-  };
-
+export function Sidebar({ repos, activeRepo, onSelectRepo, onBrowseRepo, onOpenSettings, loading }: SidebarProps) {
   return (
     <aside className="w-64 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col">
       {/* Header */}
       <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Repositories</h2>
         <button
-          onClick={() => setShowAddRepo(!showAddRepo)}
-          className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 text-lg font-bold"
+          onClick={onBrowseRepo}
+          className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
           title="Add repository"
         >
-          +
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
         </button>
       </div>
-
-      {/* Add Repo Form */}
-      {showAddRepo && (
-        <div className="p-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
-          <input
-            type="text"
-            value={newRepoPath}
-            onChange={(e) => setNewRepoPath(e.target.value)}
-            placeholder="Repository name or path..."
-            className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400"
-            onKeyDown={(e) => e.key === 'Enter' && handleAddRepo()}
-          />
-          <div className="flex gap-2 mt-2">
-            <button
-              onClick={handleAddRepo}
-              className="flex-1 px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded"
-            >
-              Add
-            </button>
-            <button
-              onClick={() => setShowAddRepo(false)}
-              className="flex-1 px-2 py-1 text-xs bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Repo List */}
       <div className="flex-1 overflow-y-auto">

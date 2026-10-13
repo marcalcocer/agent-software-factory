@@ -118,24 +118,30 @@ function App() {
     setActiveTab(repo.name);
   };
 
-  const handleAddRepo = (pathOrName: string) => {
-    // Extract repo name from path if it's a full path
-    const name = pathOrName.includes('/') ? pathOrName.split('/').pop() || pathOrName : pathOrName;
-    
-    // Create a new repo entry
-    const newRepo: Repository = {
-      name,
-      path: pathOrName,
-      recentRuns: 0,
-    };
+  const handleBrowseRepo = async () => {
+    try {
+      const repo = await window.api.invoke('repo:browse');
+      
+      if (repo) {
+        // Convert to our Repository format
+        const newRepo: Repository = {
+          name: repo.name,
+          path: repo.path,
+          recentRuns: 0,
+        };
 
-    // Add to repos list if not already there
-    if (!repos.some((r) => r.name === name)) {
-      setRepos([...repos, newRepo]);
+        // Add to repos list if not already there
+        if (!repos.some((r) => r.name === newRepo.name)) {
+          setRepos([...repos, newRepo]);
+        }
+
+        // Open it
+        handleSelectRepo(newRepo);
+      }
+    } catch (error) {
+      console.error('Failed to browse for repository:', error);
+      setError(`Failed to add repository: ${error instanceof Error ? error.message : String(error)}`);
     }
-
-    // Open it
-    handleSelectRepo(newRepo);
   };
 
   const handleCloseTab = (repoName: string) => {
@@ -301,7 +307,7 @@ function App() {
           repos={repos}
           activeRepo={activeTab}
           onSelectRepo={handleSelectRepo}
-          onAddRepo={handleAddRepo}
+          onBrowseRepo={handleBrowseRepo}
           onOpenSettings={() => setSettingsOpen(true)}
           loading={reposLoading}
         />

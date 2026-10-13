@@ -8,6 +8,7 @@ export interface IPCChannels {
   // Repository management
   'repo:list': () => Promise<Repository[]>;
   'repo:add': (path: string) => Promise<Repository>;
+  'repo:browse': () => Promise<Repository | null>;
   'repo:remove': (id: string) => Promise<void>;
   'repo:select': (path: string) => Promise<void>;
 
