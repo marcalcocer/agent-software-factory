@@ -7,6 +7,7 @@ import { RunHistory } from './components/RunHistory';
 import { LiveOutput } from './components/LiveOutput';
 import { RunDetails } from './components/RunDetails';
 import { SettingsPanel } from './components/SettingsPanel';
+import { AgentTimeline } from './components/AgentTimeline';
 
 interface Repository {
   name: string;
@@ -338,19 +339,9 @@ function App() {
                   </div>
                 )}
 
-                {/* Task Input or Running Status */}
+                {/* Task Input or Agent Timeline */}
                 {runLoading ? (
-                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
-                    <div className="flex items-center gap-3">
-                      <div className="w-6 h-6 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                      <div>
-                        <p className="font-medium text-lg text-blue-900 dark:text-blue-100">Factory is running...</p>
-                        <p className="text-sm text-blue-700 dark:text-blue-300">
-                          {activeRunId ? 'Agents are executing your task' : 'Initializing agents and preparing workspace'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
+                  <AgentTimeline runId={activeRunId} isRunning={runLoading} />
                 ) : (
                   <TaskInput
                     repoName={activeTab}
