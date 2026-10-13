@@ -332,6 +332,7 @@ function App() {
             activeTab={activeTab || ''}
             onSelectTab={setActiveTab}
             onCloseTab={handleCloseTab}
+            disabled={runLoading}
           />
 
           {/* Main Panel */}
@@ -349,21 +350,23 @@ function App() {
                 {runLoading ? (
                   <PipelineView runId={activeRunId} isRunning={runLoading} />
                 ) : (
-                  <TaskInput
-                    repoName={activeTab}
-                    value={taskDrafts[activeTab] || ''}
-                    onChange={(value) => setTaskDrafts({ ...taskDrafts, [activeTab]: value })}
-                    onSubmit={handleRunTask}
-                    loading={false}
-                  />
-                )}
+                  <>
+                    <TaskInput
+                      repoName={activeTab}
+                      value={taskDrafts[activeTab] || ''}
+                      onChange={(value) => setTaskDrafts({ ...taskDrafts, [activeTab]: value })}
+                      onSubmit={handleRunTask}
+                      loading={false}
+                    />
 
-                {/* Run History */}
-                <RunHistory
-                  runs={runs}
-                  loading={false}
-                  onSelectRun={(runId) => setSelectedRunId(runId)}
-                />
+                    {/* Run History - only show when not running */}
+                    <RunHistory
+                      runs={runs}
+                      loading={false}
+                      onSelectRun={(runId) => setSelectedRunId(runId)}
+                    />
+                  </>
+                )}
               </div>
             ) : (
               <div className="flex items-center justify-center h-full text-slate-500">

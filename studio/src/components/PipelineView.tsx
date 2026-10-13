@@ -7,7 +7,10 @@ interface AgentStep {
   status: 'pending' | 'running' | 'completed' | 'failed' | 'retry';
   attempt?: number;
   duration?: number;
-  details?: string[];
+  activity?: string; // What the agent is currently doing
+  filesChanged?: number;
+  testsPassed?: number;
+  findings?: number;
 }
 
 interface PipelineViewProps {
@@ -31,6 +34,7 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
   const [logs, setLogs] = useState<string[]>([]);
   const [currentAttempt, setCurrentAttempt] = useState(1);
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [logsExpanded, setLogsExpanded] = useState(false);
 
   // Timer for elapsed time
   useEffect(() => {
@@ -72,7 +76,7 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
       if (lowerLine.includes('pm-architect') || lowerLine.includes('run prepared')) {
         const idx = updated.findIndex(a => a.id === 'pm-architect');
         if (idx >= 0 && updated[idx].status === 'pending') {
-          updated[idx] = { ...updated[idx], status: 'running' };
+          updated[idx] = { ...updated[idx], status: 'running', activity: 'Analyzing requirements and creating implementation plan...' };
         }
       }
       
@@ -85,7 +89,7 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
         // Mark PM as complete if developer starts
         const pmIdx = updated.findIndex(a => a.id === 'pm-architect');
         if (pmIdx >= 0 && updated[pmIdx].status === 'running') {
-          updated[pmIdx] = { ...updated[pmIdx], status: 'completed' };
+          updated[pmIdx] = { ...updated[pmIdx], status: 'completed', activity: 'Implementation plan created' };
         }
       }
       
@@ -93,7 +97,23 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
       if (lowerLine.includes('developer step finished') || lowerLine.includes('developer') && lowerLine.includes('completed')) {
         const idx = updated.findIndex(a => a.id === 'developer');
         if (idx >= 0) {
-          updated[idx] = { ...updated[idx], status: 'completed' };
+          // Extract files changed
+          const filesMatch = line.match(/changedFiles[:\s]+(\d+)/i);
+          const filesChanged = filesMatch ? parseInt(filesMatch[1], 10) : undefined;
+          updated[idx] = { 
+            ...updated[idx], 
+            status: 'completed',
+            activity: filesChanged ? `Modified ${filesChanged} file${filesChanged > 1 ? 's' : ''}` : 'Completed',
+            filesChanged
+          };
+        }
+      }
+      
+      // Developer activity hints
+      if (lowerLine.includes('developer') && updated.findIndex(a => a.id === 'developer' && a.status === 'running') >= 0) {
+        const idx = updated.findIndex(a => a.id === 'developer');
+        if (idx >= 0 && !updated[idx].activity) {
+          updated[idx] = { ...updated[idx], activity: 'Writing code and implementing changes...' };
         }
       }
       
@@ -101,13 +121,18 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
       if (lowerLine.includes('qa') && !lowerLine.includes('finished')) {
         const idx = updated.findIndex(a => a.id === 'qa-tester');
         if (idx >= 0 && updated[idx].status === 'pending') {
-          updated[idx] = { ...updated[idx], status: 'running' };
+          updated[idx] = { ...updated[idx], status: 'running', activity: 'Running tests and checking functionality...' };
         }
       }
       if (lowerLine.includes('qa step finished') || lowerLine.includes('qa') && lowerLine.includes('pass')) {
         const idx = updated.findIndex(a => a.id === 'qa-tester');
         if (idx >= 0) {
-          updated[idx] = { ...updated[idx], status: 'completed' };
+          const verdict = line.match(/verdict[:\s]+"?(\w+)"?/i);
+          updated[idx] = { 
+            ...updated[idx], 
+            status: 'completed',
+            activity: verdict && verdict[1] === 'PASS' ? 'All tests passed ✓' : 'Tests completed'
+          };
         }
       }
       
@@ -375,17 +400,60 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
         </div>
       </div>
 
-      {/* Agent details / Logs panel */}
+      {/* Current Agent Activity Card */}
+      {(() => {
+        const runningAgent = agents.find(a => a.status === 'running');
+        if (!runningAgent) return null;
+        
+        return (
+          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg p-4 text-white">
+            <div className="flex items-center gap-3">
+              <div className="text-4xl animate-pulse">{runningAgent.icon}</div>
+              <div className="flex-1">
+                <h4 className="font-bold text-lg">{runningAgent.name}</h4>
+                <p className="text-sm text-white/80">
+                  {runningAgent.activity || 'Processing...'}
+                </p>
+                {(runningAgent.filesChanged || runningAgent.testsPassed || runningAgent.findings) && (
+                  <div className="flex gap-4 mt-2 text-xs">
+                    {runningAgent.filesChanged && (
+                      <span className="bg-white/20 px-2 py-1 rounded">
+                        📄 {runningAgent.filesChanged} file{runningAgent.filesChanged > 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {runningAgent.testsPassed !== undefined && (
+                      <span className="bg-white/20 px-2 py-1 rounded">
+                        ✓ {runningAgent.testsPassed} tests
+                      </span>
+                    )}
+                    {runningAgent.findings && (
+                      <span className="bg-white/20 px-2 py-1 rounded">
+                        🔍 {runningAgent.findings} finding{runningAgent.findings > 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Technical Logs (collapsible) */}
       <div className="bg-slate-900 rounded-lg overflow-hidden">
-        <div className="px-4 py-2 bg-slate-800 border-b border-slate-700 flex items-center justify-between">
+        <button
+          onClick={() => setLogsExpanded(!logsExpanded)}
+          className="w-full px-4 py-2 bg-slate-800 border-b border-slate-700 flex items-center justify-between hover:bg-slate-750 transition-colors"
+        >
           <div className="flex items-center gap-2">
+            <span className="text-slate-400">{logsExpanded ? '▼' : '▶'}</span>
             {selectedAgentData ? (
               <>
                 <span className="text-xl">{selectedAgentData.icon}</span>
-                <span className="text-sm font-medium text-slate-200">{selectedAgentData.name} Logs</span>
+                <span className="text-sm font-medium text-slate-200">{selectedAgentData.name} Technical Logs</span>
               </>
             ) : (
-              <span className="text-sm font-medium text-slate-200">All Output</span>
+              <span className="text-sm font-medium text-slate-200">Technical Logs</span>
             )}
             {isRunning && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-600 text-white">
@@ -394,28 +462,38 @@ export function PipelineView({ runId, isRunning }: PipelineViewProps) {
               </span>
             )}
           </div>
-          {selectedAgent && (
-            <button
-              onClick={() => setSelectedAgent(null)}
-              className="text-xs text-slate-400 hover:text-white"
-            >
-              Show All
-            </button>
-          )}
-        </div>
-        <div className="p-4 h-48 overflow-y-auto font-mono text-xs text-slate-300 space-y-1">
-          {agentLogs.length === 0 ? (
-            <span className="text-slate-500">
-              {isRunning ? 'Waiting for output...' : 'No logs available'}
+          <div className="flex items-center gap-2">
+            {selectedAgent && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedAgent(null);
+                }}
+                className="text-xs text-slate-400 hover:text-white"
+              >
+                Show All
+              </button>
+            )}
+            <span className="text-xs text-slate-500">
+              {logsExpanded ? 'Click to collapse' : 'Click to expand'}
             </span>
-          ) : (
-            agentLogs.slice(-50).map((log, index) => (
-              <div key={index} className="hover:bg-slate-800 px-1 rounded">
-                {log}
-              </div>
-            ))
-          )}
-        </div>
+          </div>
+        </button>
+        {logsExpanded && (
+          <div className="p-4 h-48 overflow-y-auto font-mono text-xs text-slate-300 space-y-1">
+            {agentLogs.length === 0 ? (
+              <span className="text-slate-500">
+                {isRunning ? 'Waiting for output...' : 'No logs available'}
+              </span>
+            ) : (
+              agentLogs.slice(-50).map((log, index) => (
+                <div key={index} className="hover:bg-slate-800 px-1 rounded">
+                  {log}
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
