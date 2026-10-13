@@ -58,6 +58,16 @@ function App() {
     return watchSystemTheme(() => applyTheme(theme));
   }, [theme]);
 
+  // Load runs when active tab changes
+  useEffect(() => {
+    if (activeTab) {
+      const repo = repos.find(r => r.name === activeTab);
+      if (repo) {
+        loadRunsForRepo(repo.path);
+      }
+    }
+  }, [activeTab, repos]);
+
   useEffect(() => {
     // Test if window.api exists
     if (!window.api) {
@@ -134,12 +144,48 @@ function App() {
     }
   };
 
+  const loadRunsForRepo = async (repoPath: string) => {
+    try {
+      const factoryRuns = await window.api.invoke('factory:list', repoPath);
+      
+      // Transform FactoryRun[] to Run[] and merge with existing runs
+      const newRuns: Run[] = factoryRuns.map((fr: any) => ({
+        id: fr.runId,
+        title: 'Untitled run', // Will be overridden by local state if exists
+        task: fr.task,
+        status: fr.status === 'RUNNING' ? 'running' :
+                fr.status === 'FAILED' ? 'failed' :
+                fr.status === 'ESCALATED_TO_HUMAN' ? 'escalated' :
+                'completed',
+        startTime: new Date(fr.startedAt),
+        endTime: fr.finishedAt ? new Date(fr.finishedAt) : undefined,
+        summary: fr.tokens ? {
+          durationMs: fr.finishedAt ? 
+            new Date(fr.finishedAt).getTime() - new Date(fr.startedAt).getTime() : 0,
+          tokensUsed: fr.tokens.total,
+          stepsCompleted: fr.steps?.length || 0,
+        } : undefined,
+      }));
+
+      // Merge with existing runs, keeping titles from current state
+      setRuns((prev) => {
+        const existing = new Map(prev.map(r => [r.id, r]));
+        return newRuns.map(nr => existing.get(nr.id) ? { ...nr, title: existing.get(nr.id)!.title } : nr);
+      });
+    } catch (err) {
+      console.error('Failed to load runs for repo:', err);
+    }
+  };
+
   const handleSelectRepo = (repo: Repository) => {
     // Add to open tabs if not already open
     if (!openTabs.includes(repo.name)) {
       setOpenTabs([...openTabs, repo.name]);
     }
     setActiveTab(repo.name);
+    
+    // Load runs for this repo
+    loadRunsForRepo(repo.path);
   };
 
   const handleBrowseRepo = async () => {
