@@ -46,8 +46,21 @@ ipcMain.handle('repo:browse', async (): Promise<Repository | null> => {
     lastAccessed: new Date().toISOString(),
   };
 
-  // Store it
+  // Store it in memory
   repositories.set(name, repo);
+
+  // Persist to settings
+  const { loadSettings, saveSettings } = await import('./settings.js');
+  const settings = loadSettings();
+  if (!settings.global.savedRepositories) {
+    settings.global.savedRepositories = [];
+  }
+  
+  // Add if not already saved
+  if (!settings.global.savedRepositories.some((r: any) => r.path === selectedPath)) {
+    settings.global.savedRepositories.push({ name, path: selectedPath });
+    saveSettings(settings);
+  }
 
   // Return with a note if it's not a git repo
   if (!isGitRepo) {

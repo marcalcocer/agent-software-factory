@@ -74,6 +74,7 @@ export interface GlobalSettings {
   allowPR: boolean;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   activeProvider: 'claude-cli' | 'api';
+  savedRepositories?: Array<{ name: string; path: string }>; // Manually added repos
 }
 
 export interface RepoSettings {

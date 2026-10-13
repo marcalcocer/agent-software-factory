@@ -10,7 +10,7 @@ import { app } from 'electron';
 // Settings stored in user data directory
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 
-function loadSettings(): Settings {
+export function loadSettings(): Settings {
   try {
     if (fs.existsSync(settingsPath)) {
       return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
@@ -34,7 +34,7 @@ function loadSettings(): Settings {
   };
 }
 
-function saveSettings(settings: Settings): void {
+export function saveSettings(settings: Settings): void {
   try {
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
   } catch (error) {

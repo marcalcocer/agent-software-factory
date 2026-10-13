@@ -27,7 +27,21 @@ ipcMain.handle('factory:list-repos', async (): Promise<Array<{ name: string; pat
   
   const repos: Map<string, { name: string; path: string; recentRuns: number }> = new Map();
 
-  // Scan logs directory for recent runs to get repo names
+  // Load saved repositories from settings
+  const { loadSettings } = await import('./settings.js');
+  const settings = loadSettings();
+  
+  if (settings.global.savedRepositories) {
+    for (const savedRepo of settings.global.savedRepositories) {
+      repos.set(savedRepo.name, {
+        name: savedRepo.name,
+        path: savedRepo.path,
+        recentRuns: 0,
+      });
+    }
+  }
+
+  // Scan logs directory for recent runs to get repo names and run counts
   if (fs.existsSync(logsDir)) {
     const entries = fs.readdirSync(logsDir, { withFileTypes: true });
     
