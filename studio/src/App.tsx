@@ -397,6 +397,7 @@ function App() {
                           runs={repoRuns}
                           loading={false}
                           onSelectRun={(runId) => setSelectedRunId(runId)}
+                          onResume={handleResumeRun}
                         />
                       );
                     })()}

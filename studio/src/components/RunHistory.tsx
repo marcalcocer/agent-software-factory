@@ -15,9 +15,10 @@ interface RunHistoryProps {
   runs: Run[];
   loading: boolean;
   onSelectRun?: (runId: string) => void;
+  onResume?: (runId: string) => void;
 }
 
-export function RunHistory({ runs, loading, onSelectRun }: RunHistoryProps) {
+export function RunHistory({ runs, loading, onSelectRun, onResume }: RunHistoryProps) {
   if (loading) {
     return (
       <div className="bg-white dark:bg-slate-800 rounded-lg p-6 shadow-sm">
@@ -81,6 +82,17 @@ export function RunHistory({ runs, loading, onSelectRun }: RunHistoryProps) {
                 <div className="text-sm text-slate-500 dark:text-slate-400">
                   {run.id}
                 </div>
+                {run.status === 'failed' && onResume && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onResume(run.id);
+                    }}
+                    className="mt-2 px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors"
+                  >
+                    ▶ Resume
+                  </button>
+                )}
               </div>
 
               <div className="text-right text-sm text-slate-500 dark:text-slate-400 flex-shrink-0">
