@@ -4,9 +4,10 @@ interface TaskInputProps {
   onChange: (value: string) => void;
   onSubmit: (task: string) => void;
   loading: boolean;
+  hasHistory: boolean; // Whether this repo has previous runs
 }
 
-export function TaskInput({ repoName, value, onChange, onSubmit, loading }: TaskInputProps) {
+export function TaskInput({ repoName, value, onChange, onSubmit, loading, hasHistory }: TaskInputProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!value.trim()) return;
@@ -17,6 +18,32 @@ export function TaskInput({ repoName, value, onChange, onSubmit, loading }: Task
     onChange('');
   };
 
+  // Compact view for repos with history (like ChatGPT)
+  if (hasHistory) {
+    return (
+      <form onSubmit={handleSubmit} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm">
+        <div className="flex gap-3 p-4">
+          <textarea
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="Describe your next task..."
+            disabled={loading}
+            rows={2}
+            className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-900 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed resize-none"
+          />
+          <button
+            type="submit"
+            disabled={loading || !value.trim()}
+            className="px-6 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-medium rounded-md transition-colors disabled:cursor-not-allowed self-end"
+          >
+            Run
+          </button>
+        </div>
+      </form>
+    );
+  }
+
+  // Full welcome view for first-time (like ChatGPT welcome screen)
   return (
     <form onSubmit={handleSubmit} className="bg-white dark:bg-slate-800 rounded-lg p-6 shadow-sm space-y-4">
       <div className="flex items-center justify-between mb-2">

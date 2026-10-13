@@ -361,14 +361,22 @@ function App() {
                       onChange={(value) => setTaskDrafts({ ...taskDrafts, [activeTab]: value })}
                       onSubmit={handleRunTask}
                       loading={false}
+                      hasHistory={runs.some(run => run.id.includes(activeTab))}
                     />
 
-                    {/* Run History - only show when not running on this repo */}
-                    <RunHistory
-                      runs={runs}
-                      loading={false}
-                      onSelectRun={(runId) => setSelectedRunId(runId)}
-                    />
+                    {/* Run History - only show when there's history for this repo */}
+                    {(() => {
+                      const repoRuns = runs.filter(run => run.id.includes(activeTab));
+                      if (repoRuns.length === 0) return null;
+                      
+                      return (
+                        <RunHistory
+                          runs={repoRuns}
+                          loading={false}
+                          onSelectRun={(runId) => setSelectedRunId(runId)}
+                        />
+                      );
+                    })()}
                   </>
                 )}
               </div>
