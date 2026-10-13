@@ -118,6 +118,26 @@ function App() {
     setActiveTab(repo.name);
   };
 
+  const handleAddRepo = (pathOrName: string) => {
+    // Extract repo name from path if it's a full path
+    const name = pathOrName.includes('/') ? pathOrName.split('/').pop() || pathOrName : pathOrName;
+    
+    // Create a new repo entry
+    const newRepo: Repository = {
+      name,
+      path: pathOrName,
+      recentRuns: 0,
+    };
+
+    // Add to repos list if not already there
+    if (!repos.some((r) => r.name === name)) {
+      setRepos([...repos, newRepo]);
+    }
+
+    // Open it
+    handleSelectRepo(newRepo);
+  };
+
   const handleCloseTab = (repoName: string) => {
     setOpenTabs(openTabs.filter((name) => name !== repoName));
     if (activeTab === repoName) {
@@ -281,6 +301,7 @@ function App() {
           repos={repos}
           activeRepo={activeTab}
           onSelectRepo={handleSelectRepo}
+          onAddRepo={handleAddRepo}
           onOpenSettings={() => setSettingsOpen(true)}
           loading={reposLoading}
         />
