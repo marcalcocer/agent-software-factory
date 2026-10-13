@@ -22,6 +22,7 @@ interface PipelineViewProps {
 }
 
 const INITIAL_AGENTS: AgentStep[] = [
+  { id: 'prepare-run', name: 'Prepare', icon: '⚙️', status: 'pending' },
   { id: 'pm-architect', name: 'PM Architect', icon: '📋', status: 'pending' },
   { id: 'developer', name: 'Developer', icon: '💻', status: 'pending' },
   { id: 'qa-tester', name: 'QA', icon: '🧪', status: 'pending' },
@@ -86,6 +87,7 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
   // BUT always show full expected pipeline, even if artifacts don't exist yet
   useEffect(() => {
     const stepLabels: Record<string, string> = {
+      'prepare-run': 'Prepare',
       'pm-architect': 'PM Architect',
       'developer': 'Dev',
       'qa-tester': 'QA',
@@ -95,6 +97,7 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
       'documentation': 'Docs',
     };
     const stepIcons: Record<string, string> = {
+      'prepare-run': '⚙️',
       'pm-architect': '📋',
       'developer': '💻',
       'qa-tester': '🧪',
@@ -112,6 +115,17 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
     });
 
     const nodes: AgentStep[] = [];
+
+    // Prepare (no artifact, check via events/logs) - always show
+    // We'll update its status via log detection in updateAgentFromLog
+    const prepareStatus = agents.find(a => a.id === 'prepare-run')?.status || 'pending';
+    nodes.push({
+      id: 'prepare-run',
+      name: 'Prepare',
+      icon: '⚙️',
+      status: prepareStatus,
+      attempt: 1,
+    });
 
     // PM (single) - always show, update from artifact if exists
     const pmArt = byStep['pm-architect']?.[0];
@@ -258,11 +272,24 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
     setAgents(prev => {
       const updated = [...prev];
       
-      // PM Architect
-      if (lowerLine.includes('pm-architect') || lowerLine.includes('run prepared')) {
+      // Prepare step completes when we see "run prepared"
+      if (lowerLine.includes('run prepared')) {
+        const prepIdx = updated.findIndex(a => a.id === 'prepare-run');
+        if (prepIdx >= 0) {
+          updated[prepIdx] = { ...updated[prepIdx], status: 'completed', activity: 'Repository ready' };
+        }
+        // Start PM Architect after prepare completes
+        const pmIdx = updated.findIndex(a => a.id === 'pm-architect');
+        if (pmIdx >= 0 && updated[pmIdx].status === 'pending') {
+          updated[pmIdx] = { ...updated[pmIdx], status: 'running', activity: 'Analyzing requirements...' };
+        }
+      }
+      
+      // PM Architect starts
+      if (lowerLine.includes('pm-architect') && !lowerLine.includes('finished')) {
         const idx = updated.findIndex(a => a.id === 'pm-architect');
         if (idx >= 0 && updated[idx].status === 'pending') {
-          updated[idx] = { ...updated[idx], status: 'running', activity: 'Analyzing requirements and creating implementation plan...' };
+          updated[idx] = { ...updated[idx], status: 'running', activity: 'Creating implementation plan...' };
         }
       }
       
@@ -481,6 +508,7 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
     if (!selectedAgent) return true;
     const lower = log.toLowerCase();
     return lower.includes(selectedAgent) || 
+           (selectedAgent === 'prepare-run' && (lower.includes('prepare') || lower.includes('run prepared'))) ||
            (selectedAgent === 'qa-tester' && lower.includes('qa')) ||
            (selectedAgent === 'reviewer' && lower.includes('review'));
   });
