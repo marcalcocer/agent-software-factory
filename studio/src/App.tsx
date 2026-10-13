@@ -162,26 +162,14 @@ function App() {
     try {
       console.log('Checking Claude Code auth status...');
       
-      // First try a quick refresh
-      const isAuth = await window.api.invoke('auth:refresh');
+      // Just check current status - no polling!
+      const updated = await window.api.invoke('auth:status');
+      setProviders(updated);
+      
+      const isAuth = updated.some((p) => p.status === 'authenticated');
       
       if (isAuth) {
-        console.log('Already authenticated!');
-        const updated = await window.api.invoke('auth:status');
-        setProviders(updated);
-        setError(null);
-        return;
-      }
-      
-      // Not authenticated yet - start polling
-      console.log('Not authenticated, starting polling...');
-      const success = await window.api.invoke('auth:login', 'claude-cli');
-      console.log('Login result:', success);
-      
-      if (success) {
-        // Refresh provider status
-        const updated = await window.api.invoke('auth:status');
-        setProviders(updated);
+        console.log('Authenticated!');
         setError(null);
       } else {
         setError('Not authenticated yet. Please complete the login in your terminal, then click "Check Auth Status" again.');
