@@ -160,6 +160,7 @@ ipcMain.handle('factory:run-task', async (_event, params: {
   task: string;
   maxAttempts?: number;
   dryRun?: boolean;
+  pipeline?: { qa?: boolean; review?: boolean; security?: boolean; documentation?: boolean };
 }): Promise<{ runId: string }> => {
   // Ensure auth first
   const authenticated = await ensureClaudeAuth();
@@ -180,6 +181,14 @@ ipcMain.handle('factory:run-task', async (_event, params: {
   }
   if (params.dryRun) {
     args.push('--dry-run');
+  }
+  
+  // Pipeline configuration flags
+  if (params.pipeline) {
+    if (params.pipeline.qa === false) args.push('--no-qa');
+    if (params.pipeline.review === false) args.push('--no-review');
+    if (params.pipeline.security === false) args.push('--no-security');
+    if (params.pipeline.documentation === false) args.push('--no-docs');
   }
 
   console.log('[Factory IPC] Running factory with args:', args);
@@ -292,6 +301,45 @@ ipcMain.handle('factory:run-task', async (_event, params: {
       }
     }, 100);
   });
+
+  return { runId };
+});
+
+/**
+ * Run PR feedback triage
+ */
+ipcMain.handle('factory:pr-feedback', async (_event, params: {
+  repoPath: string;
+  prNumber: number;
+  postReplies?: boolean;
+  autoRerun?: boolean;
+}): Promise<{ runId: string }> => {
+  // Ensure auth first
+  const authenticated = await ensureClaudeAuth();
+  if (!authenticated) {
+    throw new Error('Authentication required. Please log in to Claude CLI.');
+  }
+
+  // Build CLI args for pr-feedback command
+  const args = [
+    factoryCLI,
+    'pr-feedback',
+    '--repo', params.repoPath,
+    '--pr', String(params.prNumber),
+  ];
+
+  if (params.postReplies) {
+    args.push('--post-replies');
+  }
+  if (params.autoRerun) {
+    args.push('--auto-rerun');
+  }
+
+  console.log('[Factory IPC] Running pr-feedback with args:', args);
+
+  // Use the shared streaming spawn helper
+  const runId = `pr-feedback-${params.prNumber}-${Date.now()}`;
+  spawnFactoryStreaming(runId, args);
 
   return { runId };
 });

@@ -1,18 +1,23 @@
+import type { PipelineConfig } from '../../shared/types';
+import { PipelineSelector } from './PipelineSelector';
+
 interface TaskInputProps {
   repoName: string;
   value: string;
   onChange: (value: string) => void;
-  onSubmit: (task: string) => void;
+  onSubmit: (task: string, pipeline?: PipelineConfig) => void;
   loading: boolean;
   hasHistory: boolean; // Whether this repo has previous runs
+  pipeline: PipelineConfig;
+  onPipelineChange: (config: PipelineConfig) => void;
 }
 
-export function TaskInput({ repoName, value, onChange, onSubmit, loading, hasHistory }: TaskInputProps) {
+export function TaskInput({ repoName, value, onChange, onSubmit, loading, hasHistory, pipeline, onPipelineChange }: TaskInputProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!value.trim()) return;
 
-    onSubmit(value);
+    onSubmit(value, pipeline);
 
     // Clear the draft after submission
     onChange('');
@@ -67,6 +72,8 @@ export function TaskInput({ repoName, value, onChange, onSubmit, loading, hasHis
           The factory will plan, implement, test, review, and document your request.
         </p>
       </div>
+
+      <PipelineSelector value={pipeline} onChange={onPipelineChange} />
 
       <button
         type="submit"

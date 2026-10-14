@@ -25,6 +25,13 @@ export interface IPCChannels {
     task: string;
     maxAttempts?: number;
     dryRun?: boolean;
+    pipeline?: { qa?: boolean; review?: boolean; security?: boolean; documentation?: boolean };
+  }) => Promise<{ runId: string }>;
+  'factory:pr-feedback': (params: {
+    repoPath: string;
+    prNumber: number;
+    postReplies?: boolean;
+    autoRerun?: boolean;
   }) => Promise<{ runId: string }>;
   'factory:resume': (params: {
     runId: string;

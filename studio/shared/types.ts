@@ -69,6 +69,17 @@ export interface RunArtifact {
   data: any;
 }
 
+/**
+ * Per-task pipeline configuration: which optional quality gates should run.
+ * Mandatory stages (prepare, pm-architect, developer, delivery) always run.
+ */
+export interface PipelineConfig {
+  qa: boolean;
+  review: boolean;
+  security: boolean;
+  documentation: boolean;
+}
+
 /** The three human-in-the-loop gates the workflow can pause on. */
 export type PendingInputReason =
   | 'CLARIFICATION_REQUIRED'

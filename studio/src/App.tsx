@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AuthProvider } from '@shared/types';
+import type { AuthProvider, PipelineConfig } from '@shared/types';
 import { Sidebar } from './components/Sidebar';
 import { RepoTabs } from './components/RepoTabs';
 import { TaskInput } from './components/TaskInput';
@@ -8,6 +8,7 @@ import { RunDetails } from './components/RunDetails';
 import { SettingsPanel } from './components/SettingsPanel';
 import { PipelineView } from './components/PipelineView';
 import { ConfirmModal } from './components/ConfirmModal';
+import { PrFeedbackPanel } from './components/PrFeedbackPanel';
 import { applyTheme, watchSystemTheme, type ThemeSetting } from './theme';
 
 interface Repository {
@@ -54,6 +55,17 @@ function App() {
   const [theme, setTheme] = useState<ThemeSetting>('system');
   const [deleteConfirmRunId, setDeleteConfirmRunId] = useState<string | null>(null);
   const [removeConfirmRepoName, setRemoveConfirmRepoName] = useState<string | null>(null);
+  
+  // Pipeline configuration state (per-task)
+  const [pipelineConfig, setPipelineConfig] = useState<PipelineConfig>({
+    qa: true,
+    review: true,
+    security: true,
+    documentation: true,
+  });
+  
+  // PR feedback loading state
+  const [prFeedbackLoading, setPrFeedbackLoading] = useState(false);
 
   // Apply the theme to the document root and follow OS changes while in "system" mode.
   useEffect(() => {
@@ -226,7 +238,7 @@ function App() {
     }
   };
 
-  const handleRunTask = async (task: string) => {
+  const handleRunTask = async (task: string, pipeline?: PipelineConfig) => {
     if (!activeTab) return;
 
     setRunLoading(true);
@@ -242,6 +254,7 @@ function App() {
         task,
         maxAttempts: settings.global.defaultMaxAttempts,
         dryRun: settings.global.dryRunByDefault,
+        pipeline: pipeline || pipelineConfig,
       });
 
       // Add to run history
@@ -287,6 +300,42 @@ function App() {
       console.error('Failed to delete run:', err);
       setError(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
       setDeleteConfirmRunId(null);
+    }
+  };
+
+  const handlePrFeedback = async (prNumber: number, postReplies: boolean, autoRerun: boolean) => {
+    if (!activeTab) return;
+
+    setPrFeedbackLoading(true);
+    setRunningRepo(activeTab);
+    setError(null);
+
+    try {
+      const repo = repos.find(r => r.name === activeTab);
+      if (!repo) throw new Error('Repository not found');
+
+      const result = await window.api.invoke('factory:pr-feedback', {
+        repoPath: repo.path,
+        prNumber,
+        postReplies,
+        autoRerun,
+      });
+
+      // Add to run history
+      const newRun: Run = {
+        id: result.runId,
+        title: `PR Feedback #${prNumber}`,
+        task: `Triage PR #${prNumber} feedback`,
+        status: 'running',
+        startTime: new Date(),
+      };
+
+      setRuns([newRun, ...runs]);
+      setActiveRunId(result.runId);
+    } catch (err) {
+      console.error('Failed to triage PR feedback:', err);
+      setError(`PR feedback triage failed: ${err instanceof Error ? err.message : String(err)}`);
+      setPrFeedbackLoading(false);
     }
   };
 
@@ -520,14 +569,24 @@ function App() {
                       );
                     })()}
 
-                    <TaskInput
-                      repoName={activeTab}
-                      value={taskDrafts[activeTab] || ''}
-                      onChange={(value) => setTaskDrafts({ ...taskDrafts, [activeTab]: value })}
-                      onSubmit={handleRunTask}
-                      loading={false}
-                      hasHistory={runs.some(run => run.id.includes(activeTab))}
-                    />
+                    <div className="space-y-4">
+                      <PrFeedbackPanel
+                        repoName={activeTab}
+                        onSubmit={handlePrFeedback}
+                        loading={prFeedbackLoading}
+                      />
+                      
+                      <TaskInput
+                        repoName={activeTab}
+                        value={taskDrafts[activeTab] || ''}
+                        onChange={(value) => setTaskDrafts({ ...taskDrafts, [activeTab]: value })}
+                        onSubmit={handleRunTask}
+                        loading={false}
+                        hasHistory={runs.some(run => run.id.includes(activeTab))}
+                        pipeline={pipelineConfig}
+                        onPipelineChange={setPipelineConfig}
+                      />
+                    </div>
                   </>
                 )}
               </div>
