@@ -7,10 +7,13 @@
 # triage agent: it classifies every comment, routes it to the agent that owns the work, posts
 # the replies, and (optionally) starts the follow-up run.
 #
-# Requirements on the runner:
-#   - `gh` CLI (pre-installed on GitHub-hosted runners) authenticated via GITHUB_TOKEN
-#   - a Claude credential: either ANTHROPIC_API_KEY, or a self-hosted runner already logged in
-#     with `claude auth login` (subscription mode)
+# Requirements on the self-hosted runner:
+#   - Node.js 22+
+#   - `git`, `gh` CLI authenticated with a PAT
+#   - `claude` CLI authenticated via `claude auth login` (uses your Pro subscription)
+#   - Factory repository cloned and dependencies installed
+#
+# See SELF-HOSTED-RUNNER.md for setup instructions.
 #
 # Safety: the loop only reacts to PRs created by the factory (branches prefixed `factory/`)
 # and ignores its own replies, so it cannot talk to itself.
@@ -54,7 +57,7 @@ jobs:
         github.actor != 'github-actions[bot]' &&
         (github.event.issue.pull_request != null || github.event.pull_request != null)
       )
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: write        # the follow-up run needs to push the work branch
       pull-requests: write   # post replies and open follow-up PRs
@@ -108,9 +111,8 @@ jobs:
         working-directory: .factory
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Use the API backend in CI: there is no interactive `claude` session on a runner.
-          FACTORY_PROVIDER: ${{ vars.FACTORY_PROVIDER || 'api' }}
+          # Use claude CLI on self-hosted runner (logged in via `claude auth login`)
+          FACTORY_PROVIDER: 'claude-cli'
           FACTORY_NON_INTERACTIVE: 'true'
           FACTORY_ALLOW_PUSH: 'true'
           FACTORY_ALLOW_PR: 'true'

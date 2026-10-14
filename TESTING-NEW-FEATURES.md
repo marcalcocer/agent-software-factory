@@ -205,45 +205,44 @@ Example of blocker escalation:
 
 ---
 
-## GitHub Actions Integration
+## GitHub Actions Integration (Self-Hosted Runner)
 
 A template workflow is available at:
 ```
 factory/templates/github-actions/factory-pr-feedback.yml
 ```
 
-**⚠️ Important**: This workflow is **untested** and requires decisions:
+This workflow uses a **self-hosted runner** with your Claude Pro subscription (no per-run API costs).
 
-### Option A: API Key (Costs per run)
-```yaml
-env:
-  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-```
-- Store API key in repo secrets
-- Each triage run costs ~$0.10-0.50 depending on comment volume
-- No infrastructure needed
+### Quick Start
 
-### Option B: Self-Hosted Runner (Infrastructure cost)
-```yaml
-runs-on: self-hosted
-```
-- Set up a runner with `claude auth login` (uses your Pro subscription)
-- No per-run cost, but requires maintaining the runner
-- Runner needs Node.js, git, gh CLI, and factory repo checked out
+1. **Set up the runner**: Follow `SELF-HOSTED-RUNNER.md` for complete setup instructions
+2. **Copy the workflow**: Place `factory-pr-feedback.yml` in your target repo at `.github/workflows/`
+3. **Create a test PR**: Push a branch starting with `factory/` to trigger the workflow
+4. **Add a review comment**: The runner will triage it and post a reply
 
-### Trigger Configuration
+### How It Works
 
-The template triggers on:
+The workflow triggers on:
 ```yaml
 on:
-  pull_request_review:
-  issue_comment:
-    types: [created]
+  pull_request_review:          # Review summary (approve/request changes)
+  pull_request_review_comment:  # Inline code comments
+  issue_comment:                # Conversation comments on the PR
 ```
 
 It only runs on:
-- PRs with branches matching `factory/*`
+- PRs with branches matching `factory/*` (factory-created branches)
 - Comments not authored by bots (to prevent self-trigger loops)
+- When the runner is online and idle
+
+### Cost
+
+- **Runner**: $5-6/month (VPS) or free (local machine)
+- **Claude usage**: Counts against your Pro subscription (~2-10k tokens per triage)
+- **Total**: No per-run cost, just the $20/month Pro subscription you already have
+
+See `SELF-HOSTED-RUNNER.md` for full cost analysis and setup guide.
 
 ---
 
