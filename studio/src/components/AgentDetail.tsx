@@ -98,14 +98,33 @@ export function AgentDetail({ step, artifact, logs, isRunning }: AgentDetailProp
       ? 'red'
       : 'yellow';
 
+  const isFailed = artifact.status === 'FAIL' || artifact.status === 'FAILED' || data.verdict === 'FAIL' || data.verdict === 'BLOCKED';
+
   const header = (
-    <div className="flex flex-wrap items-center gap-2 mb-3">
-      <Pill tone={statusTone as any}>{artifact.status}</Pill>
-      {artifact.attempt > 1 && <Pill tone="yellow">Attempt {artifact.attempt}</Pill>}
-      {artifact.model && <Pill tone="slate">{artifact.model}</Pill>}
-      {typeof artifact.durationMs === 'number' && (
-        <Pill tone="slate">{formatDuration(artifact.durationMs)}</Pill>
+    <div className="space-y-2">
+      {isFailed && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+          <div className="flex items-start gap-2">
+            <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+            </svg>
+            <div className="flex-1">
+              <div className="text-sm font-semibold text-red-300 mb-1">Step Failed</div>
+              {data.summary && (
+                <p className="text-xs text-red-200/90 leading-relaxed">{data.summary}</p>
+              )}
+            </div>
+          </div>
+        </div>
       )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Pill tone={statusTone as any}>{artifact.status}</Pill>
+        {artifact.attempt > 1 && <Pill tone="yellow">Attempt {artifact.attempt}</Pill>}
+        {artifact.model && <Pill tone="slate">{artifact.model}</Pill>}
+        {typeof artifact.durationMs === 'number' && (
+          <Pill tone="slate">{formatDuration(artifact.durationMs)}</Pill>
+        )}
+      </div>
     </div>
   );
 
@@ -204,6 +223,7 @@ export function AgentDetail({ step, artifact, logs, isRunning }: AgentDetailProp
   if (step === 'qa-tester') {
     const totals = data.totals || {};
     const bugs = Array.isArray(data.bugReports) ? data.bugReports : [];
+    const failures = Array.isArray(data.failures) ? data.failures : [];
     const severityTone: Record<string, string> = {
       CRITICAL: 'red',
       MAJOR: 'red',
@@ -219,6 +239,7 @@ export function AgentDetail({ step, artifact, logs, isRunning }: AgentDetailProp
               {totals.passed}/{totals.tests} tests passed
             </Pill>
           )}
+          {failures.length > 0 && <Pill tone="red">{failures.length} test failure{failures.length > 1 ? 's' : ''}</Pill>}
           {bugs.length > 0 && <Pill tone="red">{bugs.length} bug{bugs.length > 1 ? 's' : ''}</Pill>}
         </div>
         {data.summary && (
@@ -235,6 +256,44 @@ export function AgentDetail({ step, artifact, logs, isRunning }: AgentDetailProp
                     exit {c.exitCode}
                   </span>
                   <span className="text-slate-300 break-all">{c.command}</span>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
+        {failures.length > 0 && (
+          <Section title="Test Failures">
+            <ul className="space-y-3">
+              {failures.map((f: any, i: number) => (
+                <li key={i} className="border border-red-500/30 bg-red-500/5 rounded p-3">
+                  <div className="flex items-start gap-2 mb-2">
+                    <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                    </svg>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-mono text-sm text-red-300 font-medium break-all mb-1">{f.testId}</div>
+                      <div className="text-xs text-red-200/90 leading-relaxed mb-2">{f.message}</div>
+                      {f.suspectedRootCause && (
+                        <div className="text-xs text-slate-300 bg-slate-800/50 rounded p-2 mb-2">
+                          <span className="font-semibold">Root cause: </span>
+                          {f.suspectedRootCause}
+                        </div>
+                      )}
+                      {f.file && (
+                        <div className="text-xs text-slate-400 font-mono">
+                          {f.file}{f.line ? `:${f.line}` : ''}
+                        </div>
+                      )}
+                      {f.stackExcerpt && (
+                        <details className="mt-2">
+                          <summary className="text-xs text-slate-400 cursor-pointer hover:text-slate-300">Stack trace</summary>
+                          <pre className="mt-1 text-xs text-slate-400 font-mono bg-slate-900/50 rounded p-2 overflow-x-auto">
+                            {f.stackExcerpt}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  </div>
                 </li>
               ))}
             </ul>
