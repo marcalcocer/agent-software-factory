@@ -11,8 +11,42 @@ import { z } from 'zod';
 /* Workflow input                                                              */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Which optional stages run for a task.
+ *
+ * `prepare-run`, `pm-architect`, `developer` and `delivery` are mandatory: without them there
+ * is no plan, no change and no reviewable result. Everything else can be switched off per task,
+ * which is what makes a docs-only or spike run cheap.
+ *
+ * A disabled gate counts as satisfied, never as failed - skipping review must not block
+ * delivery. Disabling `qa` also disables the triage retry loop, because triage exists to
+ * explain QA failures and there are none to explain.
+ */
+export const pipelineConfigSchema = z.object({
+  qa: z.boolean().describe('Run the QA agent and the build/test suite (default: true).'),
+  review: z.boolean().describe('Run the code review agent (default: true).'),
+  security: z.boolean().describe('Run the security audit agent (default: true).'),
+  documentation: z.boolean().describe('Run the documentation agent (default: true).'),
+});
+export type PipelineConfig = z.infer<typeof pipelineConfigSchema>;
+
+/** Every optional stage on: the behaviour of the factory before stages were configurable. */
+export const DEFAULT_PIPELINE: PipelineConfig = {
+  qa: true,
+  review: true,
+  security: true,
+  documentation: true,
+};
+
+/** Stages that always run, surfaced so the UI can render them as locked. */
+export const MANDATORY_STAGES = ['prepare-run', 'pm-architect', 'developer', 'delivery'] as const;
+
 export const factoryTaskSchema = z.object({
   task: z.string().min(10).describe('The requirement to implement, in English.'),
+  pipeline: pipelineConfigSchema
+    .partial()
+    .optional()
+    .describe('Per-task stage selection. Omitted stages keep their default (enabled).'),
   repo: z
     .string()
     .describe('Target repository: a folder name inside the workspace root or an absolute path.'),
@@ -72,6 +106,8 @@ export const runContextSchema = z.object({
   interactive: z.boolean(),
   dryRun: z.boolean(),
   startedAt: z.string(),
+  /** Resolved stage selection for this run (defaults merged with the task override). */
+  pipeline: pipelineConfigSchema,
 });
 export type RunContext = z.infer<typeof runContextSchema>;
 
@@ -534,3 +570,55 @@ export const factoryResultSchema = z.object({
   escalation: outcomeSchema.shape.escalation,
 });
 export type FactoryResult = z.infer<typeof factoryResultSchema>;
+
+/* -------------------------------------------------------------------------- */
+/* 10 - Pull-request feedback triage                                           */
+/* -------------------------------------------------------------------------- */
+
+export const feedbackCategoryValues = [
+  'CODE_CHANGE_REQUEST',
+  'TEST_CHANGE_REQUEST',
+  'SCOPE_CHANGE',
+  'QUESTION',
+  'PRAISE_OR_NOTE',
+  'BLOCKER_DISAGREEMENT',
+] as const;
+
+export const feedbackAssigneeValues = [
+  'developer',
+  'qa-tester',
+  'pm-architect',
+  'none',
+  'human',
+] as const;
+
+export const feedbackActionValues = [
+  'RERUN_IMPLEMENTATION',
+  'RERUN_PLANNING',
+  'REPLY_ONLY',
+  'ESCALATE_HUMAN',
+] as const;
+
+/** One reviewer comment, classified and routed. */
+export const feedbackItemSchema = z.object({
+  commentId: z.string().describe('Id of the comment this classification refers to.'),
+  author: z.string(),
+  excerpt: z.string().describe('Short quote of the comment, for the report.'),
+  category: z.enum(feedbackCategoryValues),
+  assignTo: z.enum(feedbackAssigneeValues),
+  reasoning: z.string().describe('Why this category and assignee, grounded in the code.'),
+  reply: z.string().describe('The reply to post back to the reviewer.'),
+  filesInvolved: z.array(z.string()),
+});
+
+export const feedbackTriageReportSchema = z.object({
+  overallAction: z.enum(feedbackActionValues),
+  summary: z.string(),
+  items: z.array(feedbackItemSchema),
+  taskForNextRun: z
+    .string()
+    .describe('Self-contained requirement for the follow-up run. Empty for REPLY_ONLY.'),
+  blockers: z.array(z.string()).describe('Reasons a human must decide before the factory acts.'),
+});
+export type FeedbackTriageReport = z.infer<typeof feedbackTriageReportSchema>;
+export type FeedbackItem = z.infer<typeof feedbackItemSchema>;

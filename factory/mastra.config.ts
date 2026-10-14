@@ -2,7 +2,7 @@
  * Mastra configuration for the agent software factory.
  *
  * Wires together:
- *   - the 7 agents and the end-to-end workflow,
+ *   - the 8 agents, the end-to-end workflow and the pull-request feedback workflow,
  *   - LibSQL storage (workflow snapshots for suspend/resume, observability persistence),
  *   - the Pino logger with a file transport targeting `./logs/`,
  *   - OpenTelemetry-compatible tracing (always on through the Mastra storage exporter, plus
@@ -25,6 +25,7 @@ import type { ObservabilityExporter } from '@mastra/core/observability';
 import { factoryAgents } from './src/agents/index.ts';
 import { getFactoryConfig, PROJECT_ROOT } from './src/utils/factory-config.ts';
 import { factoryWorkflows } from './src/workflows/software-factory.workflow.ts';
+import { prFeedbackWorkflow } from './src/workflows/pr-feedback.workflow.ts';
 
 const config = getFactoryConfig();
 
@@ -111,7 +112,7 @@ export const observability = new Observability({
 
 export const factoryMastraConfig = {
   agents: factoryAgents,
-  workflows: factoryWorkflows,
+  workflows: { ...factoryWorkflows, prFeedbackWorkflow },
   storage,
   logger,
   observability,

@@ -177,6 +177,9 @@ const ROLE_TOOL_POLICY: Record<AgentRole, ClaudeCliToolPolicy> = {
   // Claude Code's own tools cannot be narrowed to docs-only the way the factory's
   // documentation tool is; the gated delivery step and the reviewed diff remain the control.
   documentation: 'read-write',
+  // Reads the PR diff and the repository to classify reviewer feedback; it routes work to
+  // other agents rather than editing anything itself.
+  'feedback-triage': 'read-only',
 };
 
 /**

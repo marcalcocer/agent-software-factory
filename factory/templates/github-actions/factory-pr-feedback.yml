@@ -1,0 +1,136 @@
+# Pull-request feedback loop for agent-software-factory.
+#
+# Copy this file into the *target* repository as
+# `.github/workflows/factory-pr-feedback.yml`.
+#
+# When a human reviews a pull request the factory opened, this workflow runs the feedback
+# triage agent: it classifies every comment, routes it to the agent that owns the work, posts
+# the replies, and (optionally) starts the follow-up run.
+#
+# Requirements on the runner:
+#   - `gh` CLI (pre-installed on GitHub-hosted runners) authenticated via GITHUB_TOKEN
+#   - a Claude credential: either ANTHROPIC_API_KEY, or a self-hosted runner already logged in
+#     with `claude auth login` (subscription mode)
+#
+# Safety: the loop only reacts to PRs created by the factory (branches prefixed `factory/`)
+# and ignores its own replies, so it cannot talk to itself.
+
+name: Factory PR feedback
+
+on:
+  # Conversation comments on the pull request.
+  issue_comment:
+    types: [created]
+  # Inline review comments anchored to a file and line.
+  pull_request_review_comment:
+    types: [created]
+  # The summary a reviewer submits when approving or requesting changes.
+  pull_request_review:
+    types: [submitted]
+  # Manual trigger, useful for backfilling an existing PR.
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Pull-request number to triage
+        required: true
+        type: number
+      auto_rerun:
+        description: Start the follow-up factory run automatically
+        required: false
+        default: false
+        type: boolean
+
+# One triage per pull request at a time: concurrent runs would double-post replies.
+concurrency:
+  group: factory-pr-feedback-${{ github.event.issue.number || github.event.pull_request.number || inputs.pull_request }}
+  cancel-in-progress: false
+
+jobs:
+  triage-feedback:
+    # Only react to comments on a pull request (not plain issues), and never to bot comments.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.actor != 'github-actions[bot]' &&
+        (github.event.issue.pull_request != null || github.event.pull_request != null)
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # the follow-up run needs to push the work branch
+      pull-requests: write   # post replies and open follow-up PRs
+    steps:
+      - name: Resolve pull-request number
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NUMBER="${{ github.event.issue.number || github.event.pull_request.number || inputs.pull_request }}"
+          echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+
+          # Guard: only pull requests produced by the factory take part in the loop.
+          BRANCH=$(gh pr view "$NUMBER" --repo "${{ github.repository }}" --json headRefName --jq .headRefName)
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          if [[ "$BRANCH" == factory/* ]]; then
+            echo "is_factory=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_factory=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Branch '$BRANCH' was not created by the factory; skipping."
+          fi
+
+      - name: Check out the target repository
+        if: steps.pr.outputs.is_factory == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.branch }}
+          fetch-depth: 0   # the triage agent diffs the branch against its base
+
+      - name: Check out the factory
+        if: steps.pr.outputs.is_factory == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.FACTORY_REPOSITORY || 'marcalcocer/agent-software-factory' }}
+          path: .factory
+          ref: ${{ vars.FACTORY_REF || 'master' }}
+
+      - name: Set up Node
+        if: steps.pr.outputs.is_factory == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install factory dependencies
+        if: steps.pr.outputs.is_factory == 'true'
+        working-directory: .factory
+        run: npm ci --ignore-scripts
+
+      - name: Triage the review feedback
+        if: steps.pr.outputs.is_factory == 'true'
+        working-directory: .factory
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Use the API backend in CI: there is no interactive `claude` session on a runner.
+          FACTORY_PROVIDER: ${{ vars.FACTORY_PROVIDER || 'api' }}
+          FACTORY_NON_INTERACTIVE: 'true'
+          FACTORY_ALLOW_PUSH: 'true'
+          FACTORY_ALLOW_PR: 'true'
+        run: |
+          ARGS=(
+            run factory -- pr-feedback
+            --repo "$GITHUB_WORKSPACE"
+            --pr "${{ steps.pr.outputs.number }}"
+            --post-replies
+          )
+          if [[ "${{ inputs.auto_rerun || vars.FACTORY_AUTO_RERUN }}" == "true" ]]; then
+            ARGS+=(--auto-rerun)
+          fi
+          npm "${ARGS[@]}"
+
+      - name: Upload the run trace
+        if: steps.pr.outputs.is_factory == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: factory-pr-feedback-${{ steps.pr.outputs.number }}
+          path: .factory/factory/logs/
+          retention-days: 14
+          if-no-files-found: ignore

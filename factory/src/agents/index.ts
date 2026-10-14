@@ -10,6 +10,7 @@ export { triageAgent } from './triage.agent.ts';
 export { securityAgent } from './security.agent.ts';
 export { reviewerAgent } from './reviewer.agent.ts';
 export { documentationAgent } from './documentation.agent.ts';
+export { feedbackTriageAgent } from './feedback-triage.agent.ts';
 
 import { pmArchitectAgent } from './pm-architect.agent.ts';
 import { developerAgent } from './developer.agent.ts';
@@ -18,6 +19,7 @@ import { triageAgent } from './triage.agent.ts';
 import { securityAgent } from './security.agent.ts';
 import { reviewerAgent } from './reviewer.agent.ts';
 import { documentationAgent } from './documentation.agent.ts';
+import { feedbackTriageAgent } from './feedback-triage.agent.ts';
 
 export const factoryAgents = {
   pmArchitectAgent,
@@ -27,4 +29,5 @@ export const factoryAgents = {
   securityAgent,
   reviewerAgent,
   documentationAgent,
+  feedbackTriageAgent,
 };

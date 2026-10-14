@@ -79,6 +79,7 @@ Usage:
 Commands:
   run         Execute the factory against a target repository
   resume      Resume a suspended run, or restart a failed one from its last step
+  pr-feedback Triage human review comments on a pull request and route them back into the factory
   list        List recent runs and their status
   show        Print the summary.json of a run
   doctor      Check configuration, credentials and external tooling
@@ -107,6 +108,13 @@ resume flags:
   --guidance "<text>"       Guidance recorded with the decision
   --approve-push <true|false>     Delivery gate: push the work branch to the remote
   --approve-pr <true|false>       Delivery gate: open the draft pull request after pushing
+
+pr-feedback flags:
+  --repo <name|path>        Target repository (required)
+  --pr <number>             Pull-request number to triage (required)
+  --post-replies            Post the drafted replies back to the pull request
+  --include-resolved        Also triage comments in already-resolved threads
+  --auto-rerun              Immediately start the follow-up run when code changes are needed
   --step <stepId>           Explicit step to re-enter (optional; failed runs restart
                             from their failed step automatically)
 
@@ -604,6 +612,82 @@ async function commandDoctor(flags: Record<string, FlagValue>): Promise<number> 
 }
 
 /* -------------------------------------------------------------------------- */
+/* pr-feedback                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Triages human review comments on a pull request the factory opened.
+ *
+ * Prints the routing decision and, when the feedback requires code changes, the requirement
+ * for the follow-up run. Pass `--auto-rerun` to start that run immediately; otherwise the task
+ * text is printed so a human (or a CI job) can decide.
+ */
+async function commandPrFeedback(flags: Record<string, FlagValue>): Promise<number> {
+  const repo = asString(flags.repo);
+  const prFlag = asString(flags.pr) ?? asString(flags['pull-request']);
+
+  if (!repo || !prFlag) {
+    process.stderr.write('Both --repo and --pr are required.\n\n');
+    process.stdout.write(HELP);
+    return 2;
+  }
+
+  const pullRequest = Number.parseInt(prFlag, 10);
+  if (!Number.isInteger(pullRequest) || pullRequest <= 0) {
+    process.stderr.write(`--pr must be a positive integer (got "${prFlag}").\n`);
+    return 2;
+  }
+
+  const { mastra } = await import('../mastra/index.ts');
+  const inputData = {
+    repo,
+    pullRequest,
+    postReplies: flags['post-replies'] === true || asString(flags['post-replies']) === 'true',
+    includeResolved: flags['include-resolved'] === true,
+  };
+
+  heading(`Pull-request feedback triage #${pullRequest}`);
+  printJson('Input', inputData);
+
+  const workflow = mastra.getWorkflow('prFeedbackWorkflow');
+  const run = await workflow.createRun();
+  const result = await run.start({ inputData });
+
+  if (result.status !== 'success') {
+    heading(`Feedback triage FAILED`);
+    printJson('Result', result);
+    return 1;
+  }
+
+  const output = result.result;
+  heading(`Feedback triage: ${output.action}`);
+  printJson('Result', output);
+
+  if (output.blockers.length > 0) {
+    process.stdout.write('\nBlockers requiring a human decision:\n');
+    for (const blocker of output.blockers) process.stdout.write(`  - ${blocker}\n`);
+  }
+
+  if (output.followUpTask === '') {
+    process.stdout.write('\nNo follow-up run needed.\n');
+    return 0;
+  }
+
+  process.stdout.write(`\nFollow-up task:\n${output.followUpTask}\n`);
+
+  if (flags['auto-rerun'] !== true) {
+    process.stdout.write(
+      `\nStart it with:\n  npm run factory -- run --repo ${repo} --task "<the task above>"\n`,
+    );
+    return 0;
+  }
+
+  // Chain straight into a normal factory run so CI can close the loop unattended.
+  process.stdout.write('\n--auto-rerun: starting the follow-up factory run.\n');
+  return await commandRun({ ...flags, task: output.followUpTask });
+}
+
+/* -------------------------------------------------------------------------- */
 /* Entry point                                                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -616,6 +700,8 @@ async function main(): Promise<number> {
       return await commandRun(flags);
     case 'resume':
       return await commandResume(flags);
+    case 'pr-feedback':
+      return await commandPrFeedback(flags);
     case 'list':
       return await commandList(flags);
     case 'show':

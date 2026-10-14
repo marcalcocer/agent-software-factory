@@ -64,6 +64,12 @@ import {
   writeSummary,
 } from '../tools/logger-tools.ts';
 import { detectProjectStack, runSuite } from '../tools/test-runner-tools.ts';
+import {
+  skippedDocumentationReport,
+  skippedQaReport,
+  skippedReviewReport,
+  skippedSecurityReport,
+} from '../utils/stage-skip.ts';
 import { composePrompt, invokeAgent, promptSection } from '../utils/agent-runner.ts';
 import { getConventionSources } from '../utils/context-loader.ts';
 import { getFactoryConfig, resolveInsideRepo, resolveRepoPath } from '../utils/factory-config.ts';
@@ -85,6 +91,7 @@ import {
   documentationReportSchema,
   executionPlanSchema,
   factoryResultSchema,
+  DEFAULT_PIPELINE,
   factoryTaskSchema,
   outcomeSchema,
   qaReportSchema,
@@ -238,6 +245,8 @@ const prepareRunStep = createStep({
       interactive: (inputData.interactive ?? true) && !config.nonInteractive,
       dryRun: config.dryRun,
       startedAt: new Date().toISOString(),
+      // Stage selection is resolved once, here, so every later step reads one source of truth.
+      pipeline: { ...DEFAULT_PIPELINE, ...(inputData.pipeline ?? {}) },
     };
 
     const { traceDir } = createRunTrace({
@@ -585,6 +594,23 @@ const qaTesterStep = createStep({
     const state = inputData;
     const { run, plan, attempt } = state;
     const logger = mastra?.getLogger?.();
+
+    // Stage disabled for this task: record a passing, explicitly-skipped report and move on.
+    if (!run.pipeline.qa) {
+      const report = skippedQaReport();
+      writeArtifact({
+        runId: run.runId,
+        step: 'qa-tester',
+        attempt,
+        status: 'SKIPPED',
+        data: report,
+      });
+      logger?.info?.('[factory] QA stage skipped (disabled for this task)', {
+        runId: run.runId,
+        attempt,
+      });
+      return { ...state, qaReport: report };
+    }
 
     // The implementation is blocked: do not spend tokens re-validating nothing.
     if (state.developerReport?.status === 'BLOCKED') {
@@ -957,6 +983,23 @@ const codeReviewStep = createStep({
     const { run, attempt } = state;
     const logger = mastra?.getLogger?.();
 
+    // Stage disabled for this task: approve without reviewing, and say so in the artifact.
+    if (!run.pipeline.review) {
+      const report = skippedReviewReport();
+      writeArtifact({
+        runId: run.runId,
+        step: 'code-review',
+        attempt,
+        status: 'SKIPPED',
+        data: report,
+      });
+      logger?.info?.('[factory] review stage skipped (disabled for this task)', {
+        runId: run.runId,
+        attempt,
+      });
+      return { ...state, reviewReport: report };
+    }
+
     const diff = run.dryRun ? { diff: '', files: [] } : await getDiff(run.repoPath);
     if (!run.dryRun) {
       writeContextBlock(run.runId, `diff-attempt-${attempt}.patch`, diff.diff);
@@ -1039,6 +1082,23 @@ const securityStep = createStep({
     const logger = mastra?.getLogger?.();
 
     const diff = run.dryRun ? { diff: '', files: [] } : await getDiff(run.repoPath);
+
+    // Stage disabled for this task: pass without auditing, and say so in the artifact.
+    if (!run.pipeline.security) {
+      const report = skippedSecurityReport();
+      writeArtifact({
+        runId: run.runId,
+        step: 'security',
+        attempt,
+        status: 'SKIPPED',
+        data: report,
+      });
+      logger?.info?.('[factory] security stage skipped (disabled for this task)', {
+        runId: run.runId,
+        attempt,
+      });
+      return { ...state, securityReport: report };
+    }
 
     const prompt = composePrompt(
       '# Security audit',
@@ -1246,6 +1306,22 @@ const documentationStep = createStep({
     const logger = mastra?.getLogger?.();
 
     const diff = run.dryRun ? { diff: '', files: [] } : await getDiff(run.repoPath);
+
+    // Stage disabled for this task: no docs work, and a plain PR description instead of an
+    // agent-written one, so the delivery step still has a title and body to use.
+    if (!run.pipeline.documentation) {
+      const report = skippedDocumentationReport(run.task, run.workBranch);
+      writeArtifact({
+        runId: run.runId,
+        step: 'documentation',
+        status: 'SKIPPED',
+        data: report,
+      });
+      logger?.info?.('[factory] documentation stage skipped (disabled for this task)', {
+        runId: run.runId,
+      });
+      return { cycle: state, documentation: report };
+    }
 
     const prompt = composePrompt(
       '# Documentation and pull request',

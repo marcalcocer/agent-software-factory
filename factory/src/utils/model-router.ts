@@ -24,7 +24,8 @@ export type AgentRole =
   | 'triage'
   | 'security'
   | 'reviewer'
-  | 'documentation';
+  | 'documentation'
+  | 'feedback-triage';
 
 export const AGENT_ROLES: AgentRole[] = [
   'pm-architect',
@@ -34,6 +35,7 @@ export const AGENT_ROLES: AgentRole[] = [
   'security',
   'reviewer',
   'documentation',
+  'feedback-triage',
 ];
 
 /** Capability tier requested by a role, independent of the concrete model id. */
@@ -47,6 +49,7 @@ const ROLE_TIERS: Record<AgentRole, ModelTier> = {
   security: 'reasoning',
   reviewer: 'reasoning',
   documentation: 'fast',
+  'feedback-triage': 'reasoning',
 };
 
 interface GenerationModels {
@@ -102,6 +105,7 @@ const CLI_ROLE_ENV_KEYS: Record<AgentRole, string> = {
   security: 'FACTORY_CLI_MODEL_SECURITY',
   reviewer: 'FACTORY_CLI_MODEL_REVIEWER',
   documentation: 'FACTORY_CLI_MODEL_DOCUMENTATION',
+  'feedback-triage': 'FACTORY_CLI_MODEL_FEEDBACK_TRIAGE',
 };
 
 /**
@@ -138,6 +142,7 @@ const ROLE_ENV_KEYS: Record<AgentRole, string> = {
   security: 'FACTORY_MODEL_SECURITY',
   reviewer: 'FACTORY_MODEL_REVIEWER',
   documentation: 'FACTORY_MODEL_DOCUMENTATION',
+  'feedback-triage': 'FACTORY_MODEL_FEEDBACK_TRIAGE',
 };
 
 /** Retry budget per position in the chain: primary gets the most, last resort the least. */

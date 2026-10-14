@@ -37,6 +37,9 @@ export const ARTIFACT_PREFIXES = {
   documentation: '07-documentation',
   delivery: '08-pull-request',
   escalation: '09-escalation',
+  // Pull-request feedback runs: a separate trace directory, numbered after the main pipeline.
+  'feedback-triage': '10-feedback-triage',
+  'feedback-delivery': '11-feedback-delivery',
 } as const;
 
 export type ArtifactStep = keyof typeof ARTIFACT_PREFIXES;
