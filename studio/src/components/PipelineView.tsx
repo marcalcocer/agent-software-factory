@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import type { PendingInput, RunArtifact } from '../../shared/types';
 import { AgentDetail } from './AgentDetail';
 import { HumanInputPanel } from './HumanInputPanel';
@@ -36,13 +36,14 @@ const INITIAL_AGENTS: AgentStep[] = [
 export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
   const [agents, setAgents] = useState<AgentStep[]>(INITIAL_AGENTS);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<Array<{ text: string; agent?: string }>>([]);
   const [currentAttempt, setCurrentAttempt] = useState(1);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [artifacts, setArtifacts] = useState<RunArtifact[]>([]);
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const [pendingInput, setPendingInput] = useState<PendingInput | null>(null);
   const [submittingInput, setSubmittingInput] = useState(false);
+  const currentRunningAgentRef = useRef<string | null>(null); // Track which agent is currently executing
 
   // Load run metadata and artifacts
   const loadRunData = useCallback(async () => {
@@ -300,8 +301,29 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
   const updateAgentFromLog = useCallback((line: string) => {
     const lowerLine = line.toLowerCase();
     
-    // Add to logs
-    setLogs(prev => [...prev.slice(-100), line]); // Keep last 100 lines
+    // Detect which agent is currently running from "Agent X started" messages
+    const agentStartMatch = line.match(/Agent "([^"]+)" started/i);
+    
+    if (agentStartMatch) {
+      const agentRole = agentStartMatch[1];
+      // Map role names to step IDs
+      const roleToStep: Record<string, string> = {
+        'pm-architect': 'pm-architect',
+        'developer': 'developer',
+        'qa-tester': 'qa-tester',
+        'triage': 'triage',
+        'reviewer': 'reviewer',
+        'security': 'security',
+        'documentation': 'documentation',
+      };
+      const stepId = roleToStep[agentRole];
+      if (stepId) {
+        currentRunningAgentRef.current = stepId;
+      }
+    }
+    
+    // Add to logs with agent context - all logs from now until the next agent starts belong to this agent
+    setLogs(prev => [...prev.slice(-100), { text: line, agent: currentRunningAgentRef.current || undefined }]); // Keep last 100 lines
     
     // Detect attempt number
     const attemptMatch = line.match(/attempt[:\s]+(\d+)/i);
@@ -545,14 +567,14 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
         .filter(a => a.step === selectedAgent)
         .sort((a, b) => (b.attempt || 0) - (a.attempt || 0))[0]
     : undefined;
-  const agentLogs = logs.filter(log => {
-    if (!selectedAgent) return true;
-    const lower = log.toLowerCase();
-    return lower.includes(selectedAgent) || 
-           (selectedAgent === 'prepare-run' && (lower.includes('prepare') || lower.includes('run prepared'))) ||
-           (selectedAgent === 'qa-tester' && lower.includes('qa')) ||
-           (selectedAgent === 'reviewer' && lower.includes('review'));
-  });
+  const agentLogs = logs
+    .filter(log => {
+      if (!selectedAgent) return true;
+      // Show logs that belong to the selected agent, or logs that mention "run prepared" for the prepare step
+      return log.agent === selectedAgent || 
+             (selectedAgent === 'prepare-run' && log.text.toLowerCase().includes('run prepared'));
+    })
+    .map(log => log.text); // Convert back to string array for AgentDetail
 
   return (
     <div className="space-y-4">
@@ -762,7 +784,7 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
           <div className="p-4 max-h-48 overflow-y-auto font-mono text-xs text-slate-300 space-y-1">
             {logs.slice(-30).map((log, index) => (
               <div key={index} className="hover:bg-slate-800 px-1 rounded">
-                {log}
+                {log.text}
               </div>
             ))}
           </div>
