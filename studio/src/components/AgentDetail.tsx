@@ -58,13 +58,49 @@ export function AgentDetail({ step, artifact, logs, isRunning }: AgentDetailProp
   if (!artifact) {
     // Show streaming logs if available, otherwise show waiting message
     if (logs && logs.length > 0) {
+      // Check if logs contain errors
+      const hasError = logs.some(log => 
+        log.toLowerCase().includes('error') || 
+        log.toLowerCase().includes('failed') ||
+        log.toLowerCase().includes('uncommitted changes')
+      );
+      
+      // Extract the main error message
+      const errorLine = logs.find(log => 
+        log.includes('Error:') || 
+        log.includes('Target repository') ||
+        log.toLowerCase().includes('failed')
+      );
+      
       return (
         <div className="space-y-3">
+          {hasError && errorLine && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+              <div className="flex items-start gap-2">
+                <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+                <div className="flex-1">
+                  <div className="text-sm font-semibold text-red-300 mb-1">Step Failed</div>
+                  <p className="text-xs text-red-200/90 leading-relaxed font-mono break-words">
+                    {errorLine.replace(/ERROR \[.*?\] \(.*?\): /, '').replace(/^Error: /, '')}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+          
           <div className="flex items-center gap-2 text-sm">
             {isRunning && (
               <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 text-xs">
                 <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse"></span>
                 Working...
+              </span>
+            )}
+            {!isRunning && hasError && (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-red-500/20 text-red-300 text-xs">
+                <span className="w-1.5 h-1.5 bg-red-400 rounded-full"></span>
+                Error
               </span>
             )}
           </div>

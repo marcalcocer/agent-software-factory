@@ -301,6 +301,12 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
   const updateAgentFromLog = useCallback((line: string) => {
     const lowerLine = line.toLowerCase();
     
+    // Detect errors in prepare step (before any agent starts)
+    const prepareErrorMatch = line.match(/Error executing step workflow\.software-factory\.step\.prepare-run/i);
+    if (prepareErrorMatch) {
+      currentRunningAgentRef.current = 'prepare-run';
+    }
+    
     // Detect which agent is currently running from "Agent X started" messages
     const agentStartMatch = line.match(/Agent "([^"]+)" started/i);
     
@@ -334,6 +340,14 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
     // Detect agent activity
     setAgents(prev => {
       const updated = [...prev];
+      
+      // Prepare step fails when we see an error
+      if (lowerLine.includes('error executing step') && lowerLine.includes('prepare-run')) {
+        const prepIdx = updated.findIndex(a => a.id === 'prepare-run');
+        if (prepIdx >= 0) {
+          updated[prepIdx] = { ...updated[prepIdx], status: 'failed', activity: 'Setup failed' };
+        }
+      }
       
       // Prepare step completes when we see "run prepared"
       if (lowerLine.includes('run prepared')) {
