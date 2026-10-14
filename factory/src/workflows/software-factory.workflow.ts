@@ -54,11 +54,13 @@ import {
 import {
   appendEvent,
   aggregateRunMetrics,
+  clearPendingInput,
   createRunTrace,
   generateRunId,
   listArtifacts,
   writeArtifact,
   writeContextBlock,
+  writePendingInput,
   writeSummary,
 } from '../tools/logger-tools.ts';
 import { detectProjectStack, runSuite } from '../tools/test-runner-tools.ts';
@@ -357,12 +359,14 @@ const planStep = createStep({
           reason: 'CLARIFICATION_REQUIRED',
           questions: plan.clarificationQuestions,
         });
-        return await suspend({
-          reason: 'CLARIFICATION_REQUIRED',
+        const clarificationPayload = {
+          reason: 'CLARIFICATION_REQUIRED' as const,
           questions: plan.clarificationQuestions,
           planSummary: plan.summary,
           runId: run.runId,
-        });
+        };
+        writePendingInput(run.runId, { ...clarificationPayload, step: 'plan' });
+        return await suspend(clarificationPayload);
       }
       logger?.warn?.('[factory] blocking ambiguity in non-interactive mode: proceeding on assumptions', {
         runId: run.runId,
@@ -1329,7 +1333,26 @@ const pullRequestStep = createStep({
     documentation: documentationReportSchema,
   }),
   outputSchema: outcomeSchema,
-  execute: async ({ inputData, mastra }) => {
+  suspendSchema: z.object({
+    reason: z.literal('DELIVERY_APPROVAL_REQUIRED'),
+    runId: z.string(),
+    branch: z.string(),
+    baseBranch: z.string(),
+    commitSha: z.string().nullable(),
+    commitMessage: z.string(),
+    pullRequestTitle: z.string(),
+    pullRequestBody: z.string(),
+    filesChanged: z.number().int(),
+  }),
+  resumeSchema: z.object({
+    approvePush: z
+      .boolean()
+      .describe('true: push the work branch to the remote. false: leave it local.'),
+    approvePullRequest: z
+      .boolean()
+      .describe('true: open the draft pull request after pushing. Ignored when approvePush is false.'),
+  }),
+  execute: async ({ inputData, resumeData, suspend, mastra }) => {
     const { cycle, documentation } = inputData;
     const run = cycle.run;
     const logger = mastra?.getLogger?.();
@@ -1355,14 +1378,56 @@ const pullRequestStep = createStep({
         pendingActions.push('Commit the working tree (autoCommit was disabled).');
       }
 
-      if (committed && run.createPullRequest) {
+      // Human in the loop: the commit is local and reviewable, so the irreversible part
+      // (publishing the branch and opening a PR) waits for an explicit decision.
+      if (committed && run.interactive && resumeData === undefined) {
+        logger?.info?.('[factory] delivery awaiting human approval, suspending run', {
+          runId: run.runId,
+          branch: run.workBranch,
+          commitSha,
+        });
+        appendEvent(run.runId, {
+          type: 'run_suspended',
+          step: 'pull-request',
+          reason: 'DELIVERY_APPROVAL_REQUIRED',
+        });
+        const deliveryPayload = {
+          reason: 'DELIVERY_APPROVAL_REQUIRED' as const,
+          runId: run.runId,
+          branch: run.workBranch,
+          baseBranch: run.baseBranch,
+          commitSha,
+          commitMessage,
+          pullRequestTitle: documentation.pullRequest.title,
+          pullRequestBody: documentation.pullRequest.body,
+          filesChanged: cycle.developerReport?.changedFiles?.length ?? 0,
+        };
+        writePendingInput(run.runId, { ...deliveryPayload, step: 'pull-request' });
+        return await suspend(deliveryPayload);
+      }
+
+      // A resumed run follows the human decision; a non-interactive run keeps the old flags.
+      const approvePush = resumeData ? resumeData.approvePush : run.createPullRequest;
+      const approvePullRequest = resumeData
+        ? resumeData.approvePush && resumeData.approvePullRequest
+        : run.createPullRequest;
+
+      if (committed && !approvePush) {
+        pendingActions.push(
+          resumeData
+            ? 'Push declined by the human: the commit is local only.'
+            : 'Pull-request creation was disabled for this run.',
+        );
+      }
+
+      if (committed && approvePush) {
         const push = await pushBranch(run.repoPath, run.workBranch);
         pushed = push.pushed;
         if (!push.pushed && push.reason) {
           pendingActions.push(`Push manually: ${push.reason}`);
         }
 
-        if (pushed) {
+        if (pushed && approvePullRequest) {
           const pullRequest = await createDraftPullRequest(run.repoPath, {
             title: documentation.pullRequest.title,
             body: documentation.pullRequest.body,
@@ -1374,9 +1439,9 @@ const pullRequestStep = createStep({
           if (!pullRequest.created && pullRequest.reason) {
             pendingActions.push(`Open the pull request manually: ${pullRequest.reason}`);
           }
+        } else if (pushed && !approvePullRequest) {
+          pendingActions.push('Pull request declined by the human: the branch is pushed only.');
         }
-      } else if (!run.createPullRequest) {
-        pendingActions.push('Pull-request creation was disabled for this run.');
       }
     }
 
@@ -1503,7 +1568,7 @@ const escalationStep = createStep({
           resumeCommand,
         },
       });
-      return await suspend({
+      const escalationPayload = {
         reason,
         question,
         attempt: state.attempt,
@@ -1512,7 +1577,14 @@ const escalationStep = createStep({
         history: state.history,
         traceDir: run.traceDir,
         resumeCommand,
+      };
+      writePendingInput(run.runId, {
+        ...escalationPayload,
+        reason: 'ESCALATION_REQUIRED',
+        escalationReason: reason,
+        step: 'escalation',
       });
+      return await suspend(escalationPayload);
     }
 
     const decision = resumeData?.decision ?? 'ACKNOWLEDGE';

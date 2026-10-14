@@ -105,6 +105,8 @@ resume flags:
   --clarifications "<text>" Answers for a plan clarification request
   --decision <ABORT|ACKNOWLEDGE>  Decision for a human escalation
   --guidance "<text>"       Guidance recorded with the decision
+  --approve-push <true|false>     Delivery gate: push the work branch to the remote
+  --approve-pr <true|false>       Delivery gate: open the draft pull request after pushing
   --step <stepId>           Explicit step to re-enter (optional; failed runs restart
                             from their failed step automatically)
 
@@ -428,16 +430,30 @@ async function commandResume(flags: Record<string, FlagValue>): Promise<number> 
   const clarifications = asString(flags.clarifications);
   const decision = asString(flags.decision)?.toUpperCase();
   const guidance = asString(flags.guidance);
+  const approvePush = asString(flags['approve-push']);
+  const approvePullRequest = asString(flags['approve-pr']);
 
-  const resumeData = clarifications
-    ? { clarifications }
-    : {
-        decision: decision === 'ABORT' ? 'ABORT' : 'ACKNOWLEDGE',
-        ...(guidance ? { guidance } : {}),
-      };
+  // Three distinct human-in-the-loop gates, each with its own resume payload.
+  let resumeData: Record<string, unknown>;
+  if (approvePush !== undefined || approvePullRequest !== undefined) {
+    resumeData = {
+      approvePush: approvePush !== 'false',
+      approvePullRequest: approvePullRequest !== 'false',
+    };
+  } else if (clarifications) {
+    resumeData = { clarifications };
+  } else {
+    resumeData = {
+      decision: decision === 'ABORT' ? 'ABORT' : 'ACKNOWLEDGE',
+      ...(guidance ? { guidance } : {}),
+    };
+  }
 
   heading(`Resuming run ${runId}`);
   printJson('Resume data', resumeData);
+  // The gate has been answered: drop the request so the UI stops showing the input form.
+  const { clearPendingInput } = await import('../tools/logger-tools.ts');
+  clearPendingInput(runId);
 
   const result = await run.resume({
     resumeData: resumeData as never,

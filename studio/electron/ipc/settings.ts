@@ -26,8 +26,7 @@ export function loadSettings(): Settings {
       workspaceRoot: path.join(app.getPath('home'), 'workspace'),
       defaultMaxAttempts: 3,
       dryRunByDefault: false,
-      allowPush: false,
-      allowPR: false,
+
       logLevel: 'info',
       activeProvider: 'claude-cli',
     },

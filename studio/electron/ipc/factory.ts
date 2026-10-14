@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
-import type { FactoryRun, RunArtifact } from '../../shared/types';
+import type { FactoryRun, PendingInput, RunArtifact } from '../../shared/types';
 import { ensureClaudeAuth } from '../services/claude-auth.js';
 import { mainWindow } from '../main.js';
 
@@ -18,6 +18,68 @@ const factoryCLI = path.join(__dirname, '../../factory/src/cli/factory.ts');
 
 // Active run processes
 const activeRuns = new Map<string, ReturnType<typeof spawn>>();
+
+/** Strips ANSI colour codes so the renderer receives plain text. */
+function stripAnsi(str: string): string {
+  return str.replace(/\x1B\[[0-9;]*[A-Za-z]/g, '').replace(/\[([0-9;]+)m/g, '');
+}
+
+/**
+ * Spawns the factory CLI and streams its output to the renderer as `factory:output` events.
+ *
+ * Must use the system `node` with the tsx loader (not Electron's bundled node) and no shell,
+ * otherwise the CLI cannot resolve its TypeScript entrypoint.
+ */
+function spawnFactoryStreaming(runId: string, args: string[]): void {
+  const factoryDir = path.resolve(__dirname, '../../factory');
+  const rootDir = path.resolve(__dirname, '../..');
+  const tsxPath = path.join(rootDir, 'node_modules/.bin/tsx');
+
+  const proc = spawn('node', [tsxPath, ...args], {
+    env: {
+      ...process.env,
+      FACTORY_NON_INTERACTIVE: 'true',
+      FACTORY_PROVIDER: 'claude-cli',
+    },
+    cwd: factoryDir,
+  });
+
+  activeRuns.set(runId, proc);
+
+  // stdout arrives in arbitrary chunks; buffer until a newline so the UI gets whole lines.
+  let stdoutBuffer = '';
+  let stderrBuffer = '';
+
+  proc.stdout?.on('data', (data) => {
+    stdoutBuffer += data.toString();
+    const lines = stdoutBuffer.split('\n');
+    stdoutBuffer = lines.pop() || '';
+    for (const line of lines) {
+      const clean = stripAnsi(line).trim();
+      if (clean) mainWindow?.webContents.send('factory:output', runId, clean);
+    }
+  });
+
+  proc.stderr?.on('data', (data) => {
+    stderrBuffer += data.toString();
+    const lines = stderrBuffer.split('\n');
+    stderrBuffer = lines.pop() || '';
+    for (const line of lines) {
+      const clean = stripAnsi(line).trim();
+      if (clean) mainWindow?.webContents.send('factory:output', runId, `ERROR: ${clean}`);
+    }
+  });
+
+  proc.on('error', (error) => {
+    activeRuns.delete(runId);
+    mainWindow?.webContents.send('factory:error', runId, error.message);
+  });
+
+  proc.on('close', (code) => {
+    activeRuns.delete(runId);
+    mainWindow?.webContents.send('factory:completed', runId, code ?? 1);
+  });
+}
 
 /**
  * List available repositories in the workspace
@@ -604,6 +666,48 @@ ipcMain.handle('factory:get-artifacts', async (_event, runId: string): Promise<R
   }
 
   return artifacts;
+});
+
+/**
+ * Read the open human-in-the-loop request for a run, if any.
+ * The workflow mirrors its suspend payload to `pending-input.json` while it waits.
+ */
+ipcMain.handle('factory:get-pending-input', async (_event, runId: string): Promise<PendingInput | null> => {
+  const filePath = path.join(__dirname, '../../factory/logs', runId, 'pending-input.json');
+
+  if (!fs.existsSync(filePath)) return null;
+
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as PendingInput;
+  } catch {
+    return null;
+  }
+});
+
+/**
+ * Answer a human-in-the-loop gate: resumes the run with the collected decision.
+ */
+ipcMain.handle('factory:submit-input', async (_event, params: {
+  runId: string;
+  clarifications?: string;
+  decision?: 'ACKNOWLEDGE' | 'ABORT';
+  guidance?: string;
+  approvePush?: boolean;
+  approvePullRequest?: boolean;
+}): Promise<void> => {
+  const args = [factoryCLI, 'resume', '--run-id', params.runId];
+
+  if (params.clarifications !== undefined) {
+    args.push('--clarifications', params.clarifications);
+  } else if (params.approvePush !== undefined) {
+    args.push('--approve-push', String(params.approvePush));
+    args.push('--approve-pr', String(params.approvePullRequest ?? false));
+  } else if (params.decision !== undefined) {
+    args.push('--decision', params.decision);
+    if (params.guidance) args.push('--guidance', params.guidance);
+  }
+
+  await spawnFactoryStreaming(params.runId, args);
 });
 
 /**

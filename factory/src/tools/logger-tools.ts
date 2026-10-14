@@ -314,6 +314,26 @@ export function writeSummary(runId: string, summary: unknown): string {
   return filePath;
 }
 
+/**
+ * Writes `pending-input.json`: the open human-in-the-loop request for a suspended run.
+ *
+ * The workflow snapshot lives inside Mastra's store, which the UI cannot read directly, so the
+ * suspend payload is mirrored to the trace directory. The UI polls for this file to decide
+ * whether to render an input gate, and the file is removed once the run is resumed.
+ */
+export function writePendingInput(runId: string, payload: unknown): string {
+  const traceDir = ensureRunTrace(runId);
+  const filePath = path.join(traceDir, 'pending-input.json');
+  fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  return filePath;
+}
+
+/** Removes `pending-input.json` once the human answered and the run resumed. */
+export function clearPendingInput(runId: string): void {
+  const filePath = path.join(traceDirFor(runId), 'pending-input.json');
+  if (fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
+}
+
 /** Lists known run ids, newest first. */
 export function listRuns(): string[] {
   const { logDir } = getFactoryConfig();

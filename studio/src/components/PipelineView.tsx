@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
-import type { RunArtifact } from '../../shared/types';
+import type { PendingInput, RunArtifact } from '../../shared/types';
 import { AgentDetail } from './AgentDetail';
+import { HumanInputPanel } from './HumanInputPanel';
 
 interface AgentStep {
   id: string;
@@ -40,6 +41,8 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [artifacts, setArtifacts] = useState<RunArtifact[]>([]);
   const [startedAt, setStartedAt] = useState<string | null>(null);
+  const [pendingInput, setPendingInput] = useState<PendingInput | null>(null);
+  const [submittingInput, setSubmittingInput] = useState(false);
 
   // Load run metadata and artifacts
   const loadRunData = useCallback(async () => {
@@ -64,17 +67,55 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
     }
   }, [runId]);
 
+  // Poll for an open human-in-the-loop gate. The workflow writes `pending-input.json`
+  // when it suspends and removes it on resume, so this drives the input form.
+  const loadPendingInput = useCallback(async () => {
+    if (!runId) return;
+    try {
+      const result = await window.api.invoke('factory:get-pending-input', runId);
+      setPendingInput(result);
+      if (result) setSubmittingInput(false);
+    } catch {
+      // Ignore polling errors
+    }
+  }, [runId]);
+
+  const handleSubmitInput = useCallback(
+    async (answer: {
+      clarifications?: string;
+      decision?: 'ACKNOWLEDGE' | 'ABORT';
+      guidance?: string;
+      approvePush?: boolean;
+      approvePullRequest?: boolean;
+    }) => {
+      if (!runId) return;
+      setSubmittingInput(true);
+      try {
+        await window.api.invoke('factory:submit-input', { runId, ...answer });
+        setPendingInput(null);
+      } catch (error) {
+        console.error('Failed to submit input:', error);
+        setSubmittingInput(false);
+      }
+    },
+    [runId],
+  );
+
   useEffect(() => {
     if (!runId) return;
     loadRunData();
     loadArtifacts();
+    loadPendingInput();
 
-    // While running, poll for new artifacts as agents finish
+    // While running, poll for new artifacts and for an input gate opening.
     if (isRunning) {
-      const interval = setInterval(loadArtifacts, 3000);
+      const interval = setInterval(() => {
+        loadArtifacts();
+        loadPendingInput();
+      }, 3000);
       return () => clearInterval(interval);
     }
-  }, [runId, isRunning, loadRunData, loadArtifacts]);
+  }, [runId, isRunning, loadRunData, loadArtifacts, loadPendingInput]);
 
   // Also refresh artifacts right after the run completes
   useEffect(() => {
@@ -551,6 +592,15 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
           </div>
         </div>
       </div>
+
+      {/* Human-in-the-loop gate: the pipeline is paused until this is answered */}
+      {pendingInput && (
+        <HumanInputPanel
+          input={pendingInput}
+          onSubmit={handleSubmitInput}
+          submitting={submittingInput}
+        />
+      )}
 
       {/* Pipeline visualization */}
       <div className="bg-white dark:bg-slate-800 rounded-lg p-6 overflow-x-auto">

@@ -69,6 +69,42 @@ export interface RunArtifact {
   data: any;
 }
 
+/** The three human-in-the-loop gates the workflow can pause on. */
+export type PendingInputReason =
+  | 'CLARIFICATION_REQUIRED'
+  | 'DELIVERY_APPROVAL_REQUIRED'
+  | 'ESCALATION_REQUIRED';
+
+/**
+ * An open input request from a suspended run, mirrored from the workflow's suspend payload
+ * to `pending-input.json` so the renderer can render the matching form.
+ */
+export interface PendingInput {
+  reason: PendingInputReason;
+  runId: string;
+  step: string;
+
+  // CLARIFICATION_REQUIRED
+  questions?: string[];
+  planSummary?: string;
+
+  // DELIVERY_APPROVAL_REQUIRED
+  branch?: string;
+  baseBranch?: string;
+  commitSha?: string | null;
+  commitMessage?: string;
+  pullRequestTitle?: string;
+  pullRequestBody?: string;
+  filesChanged?: number;
+
+  // ESCALATION_REQUIRED
+  escalationReason?: string;
+  question?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  rootCause?: string;
+}
+
 export interface AgentEvent {
   type: 'agent_call' | 'tool_use' | 'step_completed' | 'suite_executed' | 'build_executed' | 'gate_result';
   runId: string;
@@ -90,8 +126,7 @@ export interface GlobalSettings {
   workspaceRoot: string;
   defaultMaxAttempts: number;
   dryRunByDefault: boolean; // Run in dry-run mode (no API calls, no git writes)
-  allowPush: boolean;
-  allowPR: boolean;
+
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   activeProvider: 'claude-cli' | 'api';
   savedRepositories?: Array<{ name: string; path: string }>; // Manually added repos

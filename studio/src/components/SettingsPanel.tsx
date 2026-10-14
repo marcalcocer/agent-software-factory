@@ -12,8 +12,6 @@ interface Settings {
   workspaceRoot: string;
   defaultMaxAttempts: number;
   dryRunByDefault: boolean;
-  allowPush: boolean;
-  allowPR: boolean;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   activeProvider: 'claude-cli' | 'api';
 }
@@ -24,8 +22,6 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange }: SettingsPanelP
     workspaceRoot: '',
     defaultMaxAttempts: 3,
     dryRunByDefault: false,
-    allowPush: false,
-    allowPR: false,
     logLevel: 'info',
     activeProvider: 'claude-cli',
   });
@@ -159,29 +155,10 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange }: SettingsPanelP
                   </div>
                 </label>
 
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={settings.allowPush}
-                    onChange={(e) => setSettings({ ...settings, allowPush: e.target.checked })}
-                    className="rounded border-slate-300 dark:border-slate-600"
-                  />
-                  <span className="text-sm text-slate-700 dark:text-slate-300">
-                    Allow Git Push
-                  </span>
-                </label>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={settings.allowPR}
-                    onChange={(e) => setSettings({ ...settings, allowPR: e.target.checked })}
-                    className="rounded border-slate-300 dark:border-slate-600"
-                  />
-                  <span className="text-sm text-slate-700 dark:text-slate-300">
-                    Allow Pull Request Creation
-                  </span>
-                </label>
+                <div className="text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/50 rounded p-2">
+                  Push and pull-request creation are decided per run: the pipeline pauses at the
+                  delivery step and asks you.
+                </div>
               </div>
 
               {/* Log Level */}
