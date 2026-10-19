@@ -12,8 +12,12 @@
     "dev:studio": "npm run dev --workspace=studio",
     "build:factory": "npm run build --workspace=factory",
     "build:studio": "npm run electron:build --workspace=studio",
+    "build": "npm run bundle --workspace=studio",
     "install:all": "npm install && npm install --workspace=factory && npm install --workspace=studio",
-    "typecheck": "npm run typecheck --workspace=factory && npm run typecheck --workspace=studio"
+    "typecheck": "npm run typecheck --workspace=factory && npm run typecheck --workspace=studio",
+    "test": "npm run test --workspaces --if-present",
+    "smoke": "npm run smoke --workspace=factory",
+    "check": "npm run typecheck && npm run test && npm run smoke"
   },
   "engines": {
     "node": ">=20.0.0"

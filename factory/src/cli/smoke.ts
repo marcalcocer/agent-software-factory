@@ -9,11 +9,26 @@
  *
  *   npm run smoke
  *   npm run smoke -- --scenario retry
+ *
+ * The traces and the workflow database go to a throwaway directory, never to the real `logs/`:
+ * a smoke run in the real one lands in the Studio's run history and in the database that holds
+ * real suspended runs. Set `FACTORY_LOG_DIR` to keep them (CI does, to upload them on failure).
+ * A failed run keeps its directory and prints where it is.
  */
 import 'dotenv/config';
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+
+const isolatedLogDir =
+  process.env.FACTORY_LOG_DIR === undefined || process.env.FACTORY_LOG_DIR.trim() === ''
+    ? fs.mkdtempSync(path.join(os.tmpdir(), 'factory-smoke-'))
+    : undefined;
+if (isolatedLogDir) {
+  process.env.FACTORY_LOG_DIR = isolatedLogDir;
+  process.env.FACTORY_STORAGE_URL = `file:${path.join(isolatedLogDir, 'factory.db')}`;
+}
 
 process.env.FACTORY_DRY_RUN = 'true';
 process.env.FACTORY_ALLOW_PUSH = process.env.FACTORY_ALLOW_PUSH ?? 'false';
@@ -372,6 +387,14 @@ process.stdout.write(
 );
 if (failed.length > 0) {
   process.stdout.write(`\nFailed checks:\n${failed.map((entry) => `  - ${entry.name}: ${entry.detail}`).join('\n')}\n`);
+}
+
+if (isolatedLogDir) {
+  if (failed.length === 0) {
+    fs.rmSync(isolatedLogDir, { recursive: true, force: true });
+  } else {
+    process.stdout.write(`\nTraces of this run were kept in ${isolatedLogDir}\n`);
+  }
 }
 
 process.exit(failed.length === 0 ? 0 : 1);
