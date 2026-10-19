@@ -89,8 +89,25 @@ export const revisionSchema = z.object({
   comments: z.array(revisionCommentSchema),
   /** Answer the reviewer on GitHub once the change is pushed. */
   replyOnGitHub: z.boolean().optional(),
+  /** What this round is about, as the triage named it. Without it the round is "<task title> · round N". */
+  title: z.string().optional(),
 });
 export type Revision = z.infer<typeof revisionSchema>;
+
+/** Conventional Commit types a task can be filed under; also the first word after the id in its branch. */
+export const branchTypeValues = ['feat', 'fix', 'refactor', 'perf', 'docs', 'test', 'chore', 'build', 'ci'] as const;
+
+/** What the run namer returns. Cleaned further by `normalizeRunName`. */
+export const runNameSchema = z.object({
+  title: z
+    .string()
+    .describe('What the task is, as a short phrase for a card: "Dark mode for every screen". Under 60 characters, no final full stop.'),
+  slug: z
+    .string()
+    .describe('The same in lowercase ascii words joined by hyphens, for a branch name: "dark-mode-every-screen". Three to five words.'),
+  type: z.enum(branchTypeValues).describe('The kind of change: feat, fix, refactor, perf, docs, test, chore, build or ci.'),
+});
+export type RunNameOutput = z.infer<typeof runNameSchema>;
 
 export const factoryTaskSchema = z.object({
   task: z.string().min(10).describe('The requirement to implement, in English.'),
@@ -164,6 +181,10 @@ export const runContextSchema = z.object({
   pipeline: pipelineConfigSchema,
   /** Present when this run is a further round on an existing pull request. */
   revision: revisionSchema.optional(),
+  /** `f0042`: ties the branch, the commits and every round of the task together. Absent on older runs. */
+  taskId: z.string().optional(),
+  /** What the task is called in the run history. */
+  title: z.string().optional(),
 });
 export type RunContext = z.infer<typeof runContextSchema>;
 
@@ -732,6 +753,10 @@ export const feedbackTriageReportSchema = z.object({
   taskForNextRun: z
     .string()
     .describe('Self-contained requirement for the follow-up run. Empty for REPLY_ONLY.'),
+  roundTitle: z
+    .string()
+    .optional()
+    .describe('What the follow-up run is about, as a short phrase under 60 characters: "Finish dark mode on the investment pages". Omit for REPLY_ONLY.'),
   blockers: z.array(z.string()).describe('Reasons a human must decide before the factory acts.'),
 });
 export type FeedbackTriageReport = z.infer<typeof feedbackTriageReportSchema>;

@@ -117,6 +117,7 @@ role justifies.
 
 | # | Agent | Model tier (primary → fallback) | Responsibility | Write access |
 | --- | --- | --- | --- | --- |
+| 00 | **run-namer** | Haiku-class → GPT-4o-mini | **Mandatory, and the cheapest call in the factory.** Names the task from the words of the request: a title for the run history, a slug and a type for the branch. No tools, 45-second limit, two attempts at most; if it cannot answer the task is named from its own first sentence. | none |
 | 01 | **pm-architect** | Sonnet-class → GPT-4o | Parses the task, scans the codebase, loads global rules + `AGENTS.md`, produces `executionPlan` (tasks, acceptance criteria, test strategy, risks). Triggers a clarification state when the requirement is blocking-ambiguous. | none |
 | 02 | **developer** | Sonnet-class → GPT-4o | Implements production code **and** tests in the target repository. Preserves context across fix iterations and must report how each triage hint was applied. | code + tests |
 | 03 | **qa-tester** | Haiku-class → GPT-4o-mini | Runs build/test commands (`mvn test`, `npm test`, `pytest`, …), validates acceptance criteria with local HTTP probes, classifies every failure and emits structured bug reports. | none |
@@ -145,6 +146,7 @@ The factory needs **one credential**. Failover is cross-tier inside Anthropic
 
 | # | Step | Role | Tier | `claude-cli` model | `api` model |
 | --- | --- | --- | --- | --- | --- |
+| 00 | Name the task (**mandatory**) | `run-namer` | **fast** | **`haiku`** | **`claude-haiku-4-5`** |
 | 01 | Plan the change | `pm-architect` | reasoning | `sonnet` | `claude-sonnet-4-6` |
 | 02 | Implement + write tests | `developer` | reasoning | `sonnet` | `claude-sonnet-4-6` |
 | 03 | Verify against acceptance criteria | `qa-tester` | **fast** | **`haiku`** | **`claude-haiku-4-5`** |
@@ -420,9 +422,11 @@ Each execution owns `logs/<runId>/`:
 
 ```
 logs/20251008-234512-invest-track-a1b2/
-├── run.json                      # task, repository, branch, model routing, dry-run flag
+├── run.json                      # task, task id, title, repository, branch, model routing, dry-run flag
+│                                 # (written by the CLI the moment the run starts, completed by prepare-run)
 ├── events.ndjson                 # append-only: agent calls, tokens, tool calls, suite runs,
 │                                 # triage guardrails, suspensions, escalations
+├── 00-run-namer.json             # the title, slug and type chosen for the task (COMPLETED | FALLBACK)
 ├── 01-pm-architect.json          # executionPlan + clarifications used
 ├── 02-developer.json             # developer report (attempt 1)
 ├── 03-qa-tester.json             # QA verdict, failures, bug reports
@@ -573,6 +577,26 @@ npm run factory -- run --repo invest-track --task "Fix the typo in the README" \
 A skipped stage still writes a `SKIPPED` artifact (and counts as satisfied, never as failed), and
 the stages a run used are recorded in its `run.json` under `pipeline`. `summary.json` reports a stage that
 did not run as `SKIPPED` under `gates` - never as the passing verdict its placeholder report carries.
+
+#### How a task is named
+
+Every task gets an **id** and a **name** before any work starts, so everything it leaves behind can be
+found again and read at a glance:
+
+| What | Example | Where it shows |
+|---|---|---|
+| Task id | `f0042` | handed out in order (`logs/task-sequence.json`), shared by all rounds of the task |
+| Title | `Dark mode for every screen` | the run history; the user can rename it (their name always wins) |
+| Branch | `factory/f0042/feat-dark-mode-every-screen` | `factory/<id>/<type>-<slug>`; `--branch` overrides it |
+| Commit trailer | `Factory-Task: f0042` | the last line of every commit the factory makes |
+
+The `run-namer` agent chooses the title, the slug and the type (`feat`, `fix`, `refactor`, `perf`,
+`docs`, `test`, `chore`, `build`, `ci`) from the request. It runs right after the repository is
+prepared and before the architect, because the branch is named after it. If it cannot answer, the task is
+named from the request's first sentence (`fallbackRunName`) - "Untitled run" no longer exists.
+
+A **round** on a pull request keeps the id, the branch and the task's title; its own title is what the
+feedback triage says the round is about (`roundTitle`), or `<task title> · round N`.
 
 #### The commit message and the pull-request text
 

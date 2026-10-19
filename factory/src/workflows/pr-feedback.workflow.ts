@@ -374,6 +374,8 @@ const postRepliesStep = createStep({
       commentsTriaged: report.items.length,
       repliesPosted,
       followUpTask: result.followUpTask,
+      // What the round is about, for the run history. Absent for a triage that needs no round.
+      ...(needsRerun && report.roundTitle?.trim() ? { roundTitle: report.roundTitle.trim() } : {}),
       blockers: report.blockers,
       items: report.items,
       // The comments themselves, with how each was classified: everything a round (or a later

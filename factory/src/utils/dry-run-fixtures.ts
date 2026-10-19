@@ -16,6 +16,7 @@ import type {
   ProjectStack,
   QaReport,
   ReviewReport,
+  RunNameOutput,
   SecurityReport,
   TriageReport,
 } from './schemas.ts';
@@ -427,4 +428,9 @@ export function stubPrWriterOutput(task: string, branch: string): PrWriterAgentO
       breakingChanges: false,
     },
   };
+}
+
+/** What the run namer answers in a dry run: fixed, so the branch of a smoke run is predictable. */
+export function stubRunName(): RunNameOutput {
+  return { title: '[dry-run] Exercise the factory graph', slug: 'dry-run-exercise-graph', type: 'chore' };
 }

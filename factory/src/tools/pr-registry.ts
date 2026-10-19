@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { getFactoryConfig } from '../utils/factory-config.ts';
+import { withFileLock } from '../utils/file-lock.ts';
 
 export type PullRequestState = 'OPEN' | 'MERGED' | 'CLOSED';
 
@@ -81,41 +82,8 @@ export function loadRegistry(): RegistryFile {
   return emptyRegistry();
 }
 
-const LOCK_STALE_MS = 30_000;
-const LOCK_WAIT_MS = 3_000;
-
-/** Runs `fn` while holding the registry lock. `mkdir` is atomic, which is all a lock needs. */
-async function withLock<T>(fn: () => T): Promise<T> {
-  const lock = `${registryFile()}.lock`;
-  fs.mkdirSync(path.dirname(lock), { recursive: true });
-  const startedWaiting = Date.now();
-
-  for (;;) {
-    try {
-      fs.mkdirSync(lock);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      try {
-        // A crashed writer must not block everyone forever.
-        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) fs.rmSync(lock, { recursive: true });
-      } catch {
-        // Someone else released it in the meantime.
-      }
-      if (Date.now() - startedWaiting > LOCK_WAIT_MS) {
-        // Proceeding unlocked beats failing a delivery over bookkeeping.
-        return fn();
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-  }
-
-  try {
-    return fn();
-  } finally {
-    fs.rmSync(lock, { recursive: true, force: true });
-  }
-}
+/** Runs `fn` while holding the registry lock (see `withFileLock`). */
+const withLock = <T>(fn: () => T): Promise<T> => withFileLock(`${registryFile()}.lock`, fn);
 
 function saveRegistry(registry: RegistryFile): void {
   const file = registryFile();

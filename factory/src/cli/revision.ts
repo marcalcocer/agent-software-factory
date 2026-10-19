@@ -20,6 +20,8 @@ export interface TriageSummary {
   status: string;
   summary: string;
   followUpTask: string;
+  /** What the round is about, as the triage named it. */
+  roundTitle?: string;
   blockers: string[];
   branch: string;
   baseBranch?: string;
@@ -47,6 +49,7 @@ export function readTriageSummary(runId: string): TriageSummary | null {
     status: String(summary.status ?? ''),
     summary: String(summary.summary ?? ''),
     followUpTask: String(summary.followUpTask ?? ''),
+    ...(typeof summary.roundTitle === 'string' && summary.roundTitle.trim() ? { roundTitle: summary.roundTitle.trim() } : {}),
     blockers: Array.isArray(summary.blockers) ? summary.blockers.map(String) : [],
     branch: String(summary.branch ?? ''),
     ...(typeof summary.baseBranch === 'string' ? { baseBranch: summary.baseBranch } : {}),
@@ -77,6 +80,8 @@ export function lookupPullRequest(repoPath: string, number: number): RegisteredP
 /** What a run's `run.json` says about it (the parts the revision logic needs). */
 export interface RunMeta {
   task?: string;
+  taskId?: string;
+  title?: string;
   pipeline?: Partial<PipelineConfig>;
   kind?: string;
   rootRunId?: string;
@@ -179,6 +184,7 @@ export function composeRevision(input: ComposeInput): ComposeResult {
       },
       comments,
       ...(input.replyOnGitHub ? { replyOnGitHub: true } : {}),
+      ...(triage.roundTitle ? { title: triage.roundTitle } : {}),
     },
   };
 }

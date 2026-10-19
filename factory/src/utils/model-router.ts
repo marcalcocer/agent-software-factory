@@ -27,7 +27,8 @@ export type AgentRole =
   | 'documentation'
   | 'feedback-triage'
   | 'merge-summary'
-  | 'pr-writer';
+  | 'pr-writer'
+  | 'run-namer';
 
 export const AGENT_ROLES: AgentRole[] = [
   'pm-architect',
@@ -40,6 +41,7 @@ export const AGENT_ROLES: AgentRole[] = [
   'feedback-triage',
   'merge-summary',
   'pr-writer',
+  'run-namer',
 ];
 
 /** Capability tier requested by a role, independent of the concrete model id. */
@@ -59,6 +61,8 @@ const ROLE_TIERS: Record<AgentRole, ModelTier> = {
   // Writes the commit message and pull-request text from reports and a diff it is handed in full.
   // The documentation agent wrote this text before and was on this tier too.
   'pr-writer': 'fast',
+  // Names a task from its text: a title, a slug, a type. The cheapest call in the factory.
+  'run-namer': 'fast',
 };
 
 interface GenerationModels {
@@ -117,6 +121,7 @@ const CLI_ROLE_ENV_KEYS: Record<AgentRole, string> = {
   'feedback-triage': 'FACTORY_CLI_MODEL_FEEDBACK_TRIAGE',
   'merge-summary': 'FACTORY_CLI_MODEL_MERGE_SUMMARY',
   'pr-writer': 'FACTORY_CLI_MODEL_PR_WRITER',
+  'run-namer': 'FACTORY_CLI_MODEL_RUN_NAMER',
 };
 
 /**
@@ -156,6 +161,7 @@ const ROLE_ENV_KEYS: Record<AgentRole, string> = {
   'feedback-triage': 'FACTORY_MODEL_FEEDBACK_TRIAGE',
   'merge-summary': 'FACTORY_MODEL_MERGE_SUMMARY',
   'pr-writer': 'FACTORY_MODEL_PR_WRITER',
+  'run-namer': 'FACTORY_MODEL_RUN_NAMER',
 };
 
 /** Retry budget per position in the chain: primary gets the most, last resort the least. */

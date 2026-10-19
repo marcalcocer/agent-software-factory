@@ -28,6 +28,8 @@ import { getFactoryConfig } from '../utils/factory-config.ts';
 /* -------------------------------------------------------------------------- */
 
 export const ARTIFACT_PREFIXES = {
+  // The name of the task, decided before anything else. Numbered 00: it comes first, and sorts first.
+  'run-namer': '00-run-namer',
   'pm-architect': '01-pm-architect',
   developer: '02-developer',
   'qa-tester': '03-qa-tester',
@@ -90,6 +92,12 @@ export interface RunTraceMeta {
    * whatever the task form currently has selected.
    */
   pipeline?: Record<string, boolean>;
+  /** `f0042`: one id for the task and all of its rounds (see `utils/task-ids.ts`). */
+  taskId?: string;
+  /** What the task is called in the run history. Editable by the user. */
+  title?: string;
+  /** Who chose the title: the namer agent, the plain stand-in, a round's triage, or the user. */
+  titleSource?: 'agent' | 'fallback' | 'round' | 'user';
   /**
    * How this run relates to others. Every run is round 1 of its own chain unless it is a
    * revision of a pull request, in which case it points at the run it continues. Persisted so a
@@ -111,6 +119,34 @@ export function createRunTrace(meta: RunTraceMeta): { runId: string; traceDir: s
   fs.writeFileSync(path.join(traceDir, 'run.json'), `${JSON.stringify(meta, null, 2)}\n`, 'utf8');
   appendEvent(meta.runId, { type: 'run_started', runId: meta.runId, repo: meta.repoPath });
   return { runId: meta.runId, traceDir };
+}
+
+/**
+ * Opens the trace of a run that may already have a record.
+ *
+ * The CLI writes `run.json` the moment it starts a run, before the workflow's first step: a UI that
+ * is told the run's id must find the run, and the first step used to be the only place that wrote it
+ * (a round started in the background was missing from the history for a minute). The first step then
+ * completes that record instead of replacing it - the run began when the CLI started it, and the
+ * `run_started` event is already in the log.
+ */
+export function openRunTrace(meta: RunTraceMeta): { runId: string; traceDir: string; startedAt: string } {
+  const file = path.join(traceDirFor(meta.runId), 'run.json');
+  let existing: Partial<RunTraceMeta> | null = null;
+  try {
+    existing = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<RunTraceMeta>;
+  } catch {
+    // No record yet: this is the first writer.
+  }
+  if (!existing) {
+    createRunTrace(meta);
+    return { runId: meta.runId, traceDir: traceDirFor(meta.runId), startedAt: meta.startedAt };
+  }
+
+  const startedAt = existing.startedAt ?? meta.startedAt;
+  const traceDir = ensureRunTrace(meta.runId);
+  fs.writeFileSync(file, `${JSON.stringify({ ...existing, ...meta, startedAt }, null, 2)}\n`, 'utf8');
+  return { runId: meta.runId, traceDir, startedAt };
 }
 
 /** Ensures the trace directory exists (idempotent). */

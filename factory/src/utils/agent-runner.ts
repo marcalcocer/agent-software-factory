@@ -49,6 +49,14 @@ export interface InvokeAgentOptions<TSchema extends z.ZodType> {
   tracingContext?: TracingContext;
   /** Result returned verbatim when `FACTORY_DRY_RUN=true`. */
   dryRunResult: z.infer<TSchema>;
+  /** Gives up on one call after this long (CLI backend). Default: `FACTORY_CLAUDE_CLI_TIMEOUT_MS`. */
+  timeoutMs?: number;
+  /**
+   * How many of the steps of the schema-repair ladder may be used (see `invokeViaClaudeCli`).
+   * A call that must stay cheap uses 2: the role's own model, then the same model told what it broke -
+   * never the pricier model the ladder ends with.
+   */
+  maxRungs?: number;
 }
 
 export interface InvokeAgentResult<TOutput> {
@@ -196,6 +204,8 @@ const ROLE_TOOL_POLICY: Record<AgentRole, ClaudeCliToolPolicy> = {
   'merge-summary': 'none',
   // Everything it needs (reports, the diff) is in its prompt; it writes text and touches nothing.
   'pr-writer': 'none',
+  // Names a task from the words of the request alone.
+  'run-namer': 'none',
 };
 
 /**
@@ -284,7 +294,7 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
     { model, repair: false },
     { model, repair: true },
     ...(model === escalationModel ? [] : [{ model: escalationModel, repair: true }]),
-  ];
+  ].slice(0, options.maxRungs ?? Number.POSITIVE_INFINITY);
 
   let lastError = '';
 
@@ -305,6 +315,7 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
       cwd: options.repoPath,
       toolPolicy,
       readDirs: traceReadDirs(options.runId),
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     });
 
     const durationMs = Date.now() - startedAt;

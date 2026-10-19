@@ -37,6 +37,7 @@ import { z } from 'zod';
 
 import { documentationAgent } from '../agents/documentation.agent.ts';
 import { prWriterAgent } from '../agents/pr-writer.agent.ts';
+import { runNamerAgent } from '../agents/run-namer.agent.ts';
 import { developerAgent } from '../agents/developer.agent.ts';
 import { pmArchitectAgent } from '../agents/pm-architect.agent.ts';
 import { qaTesterAgent } from '../agents/qa-tester.agent.ts';
@@ -63,14 +64,15 @@ import {
 import { describeCoverage, isTestFile, viewDiff, type DiffCoverage, type DiffView } from '../tools/diff-view.ts';
 import { condenseDiff, explainAgentFailure } from '../tools/pr-merge-rules.ts';
 import { fallbackPrText, normalizePrWriterOutput, type PrTextContext } from '../tools/pr-text.ts';
+import { branchNameFor, fallbackRunName, normalizeRunName, roundTitle, withTaskTrailer, type RunName } from '../tools/run-naming.ts';
 import {
   appendEvent,
   aggregateRunMetrics,
   clearPendingInput,
-  createRunTrace,
   generateRunId,
   artifactFileName,
   listArtifacts,
+  openRunTrace,
   readArtifact,
   readEvents,
   traceDirFor,
@@ -103,6 +105,7 @@ import {
 } from '../utils/delivery-edits.ts';
 import { getConventionSources } from '../utils/context-loader.ts';
 import { getFactoryConfig, resolveInsideRepo, resolveRepoPath } from '../utils/factory-config.ts';
+import { allocateTaskId } from '../utils/task-ids.ts';
 import { AGENT_ROLES, describeModelChain } from '../utils/model-router.ts';
 import {
   blockedQaReport,
@@ -112,6 +115,7 @@ import {
   stubPrWriterOutput,
   stubQaReport,
   stubReviewReport,
+  stubRunName,
   stubSecurityReport,
   stubTriageReport,
 } from '../utils/dry-run-fixtures.ts';
@@ -131,6 +135,7 @@ import {
   qaReportSchema,
   reviewReportSchema,
   runContextSchema,
+  runNameSchema,
   securityReportSchema,
   triageReportSchema,
   type AttemptHistory,
@@ -158,16 +163,6 @@ const MAX_STEPS = {
   security: 20,
   documentation: 25,
 } as const;
-
-function slugify(value: string, maxLength = 40): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, maxLength) || 'task'
-  );
-}
 
 /** Stable fingerprint of a QA failure, used by triage for loop detection. */
 function qaFailureSignature(report: QaReport): string | null {
@@ -431,6 +426,78 @@ export function diffCoverageNotes(runId: string): Partial<Record<DiffAudience, s
 }
 
 /* ========================================================================== */
+/* Naming the task                                                             */
+/* ========================================================================== */
+
+/** The namer is the cheapest call in the factory; it must never be the slowest. */
+const NAMER_TIMEOUT_MS = 45_000;
+/** Enough of any request to name it; the rest only costs tokens. */
+const NAMER_MAX_REQUEST_CHARS = 4_000;
+
+/**
+ * Names the task with the run-namer agent: the title for the run history and the words of the branch.
+ *
+ * Never fails and never waits long: if the agent cannot answer (signed out, usage limit, 45 seconds
+ * gone), the task is named from its own first sentence and the run goes on. Which one happened is in
+ * the artifact, and the Studio can say so.
+ */
+async function nameTask(
+  run: { runId: string; repoPath: string; repoName: string },
+  task: string,
+  logger: { warn?: (...args: any[]) => void } | undefined,
+): Promise<{ name: RunName; source: 'agent' | 'fallback' }> {
+  appendEvent(run.runId, { type: 'run_naming', phase: 'started' });
+  const started = Date.now();
+  try {
+    const result = await invokeAgent({
+      agent: runNamerAgent,
+      role: 'run-namer',
+      step: 'run-namer',
+      runId: run.runId,
+      repoPath: run.repoPath,
+      repoName: run.repoName,
+      prompt: composePrompt(
+        '# Request to name',
+        '',
+        task.length > NAMER_MAX_REQUEST_CHARS ? `${task.slice(0, NAMER_MAX_REQUEST_CHARS)}\n[... the request goes on ...]` : task,
+        '',
+        'Name this task: a title, a slug and a type.',
+      ),
+      schema: runNameSchema,
+      dryRunResult: stubRunName(),
+      timeoutMs: NAMER_TIMEOUT_MS,
+      // Its own model, then the same one told what it broke. Never the pricier model the ladder ends with.
+      maxRungs: 2,
+    });
+    const name = normalizeRunName(result.object, task);
+    writeArtifact({
+      runId: run.runId,
+      step: 'run-namer',
+      status: 'COMPLETED',
+      durationMs: Date.now() - started,
+      model: result.servedByModel,
+      data: name,
+    });
+    return { name, source: 'agent' };
+  } catch (error) {
+    const message = (error as Error).message ?? String(error);
+    const name = fallbackRunName(task);
+    writeArtifact({
+      runId: run.runId,
+      step: 'run-namer',
+      status: 'FALLBACK',
+      durationMs: Date.now() - started,
+      data: { ...name, error: message },
+    });
+    appendEvent(run.runId, { type: 'run_namer_fallback', error: message });
+    logger?.warn?.(`[factory] the run namer could not answer; named from the request instead: ${message}`, {
+      runId: run.runId,
+    });
+    return { name, source: 'fallback' };
+  }
+}
+
+/* ========================================================================== */
 /* Step 0 - prepare run                                                        */
 /* ========================================================================== */
 
@@ -456,8 +523,6 @@ const prepareRunStep = createStep({
     const baseChoice: { base: string; note?: string } =
       inputData.baseBranch !== undefined ? { base: inputData.baseBranch } : await chooseBaseBranch(repoPath);
     const baseBranch = baseChoice.base;
-    const workBranch =
-      inputData.branchName ?? `factory/${slugify(inputData.task, 32)}-${effectiveRunId.slice(-4)}`;
 
     if (!config.dryRun && !(await isWorkingTreeClean(repoPath))) {
       throw new Error(
@@ -469,6 +534,20 @@ const prepareRunStep = createStep({
     const conventions = getConventionSources(repoPath);
     const models = Object.fromEntries(AGENT_ROLES.map((role) => [role, describeModelChain(role)]));
 
+    // Who this task is. A new task gets the next id; a round keeps the id and the name of its task.
+    // The CLI may have recorded the run already (it does, the moment it starts one).
+    const revision = inputData.revision;
+    const rootRecord = revision
+      ? (readArtifact(revision.rootRunId, 'run.json') as { taskId?: string; title?: string } | null)
+      : null;
+    const taskId = revision ? rootRecord?.taskId : await allocateTaskId();
+    const provisionalName = fallbackRunName(inputData.task);
+    const provisionalTitle = revision
+      ? roundTitle(rootRecord?.title ?? fallbackRunName(revision.originalTask).title, revision.round, revision.title)
+      : provisionalName.title;
+    const workBranchFor = (name: RunName): string =>
+      inputData.branchName ?? branchNameFor(taskId ?? effectiveRunId.slice(-4), name);
+
     const run: RunContext = {
       runId: effectiveRunId,
       traceDir: '',
@@ -477,7 +556,7 @@ const prepareRunStep = createStep({
       repoPath,
       repoName,
       baseBranch,
-      workBranch,
+      workBranch: workBranchFor(provisionalName),
       branchCreated: false,
       stack,
       testCommand: inputData.testCommand ?? stack.testCommand,
@@ -492,17 +571,22 @@ const prepareRunStep = createStep({
       // Stage selection is resolved once, here, so every later step reads one source of truth.
       pipeline: { ...DEFAULT_PIPELINE, ...(inputData.pipeline ?? {}) },
       ...(inputData.revision ? { revision: inputData.revision } : {}),
+      ...(taskId ? { taskId } : {}),
+      title: provisionalTitle,
     };
 
-    const { traceDir } = createRunTrace({
+    const { traceDir, startedAt } = openRunTrace({
       runId: run.runId,
       task: run.task,
       repoPath,
       repoName,
-      branch: workBranch,
+      branch: run.workBranch,
       baseBranch,
       models,
       pipeline: run.pipeline,
+      ...(taskId ? { taskId } : {}),
+      title: provisionalTitle,
+      titleSource: revision ? 'round' : 'fallback',
       // Where this run sits in the story of its pull request. A plain run is round 1 of its own
       // chain; a revision points at the round it continues so the UI can show them as one task.
       kind: run.revision ? 'revision' : 'run',
@@ -523,6 +607,15 @@ const prepareRunStep = createStep({
       startedAt: run.startedAt,
     });
     run.traceDir = traceDir;
+    run.startedAt = startedAt; // the run began when it was started, not when this step got going
+
+    // Name the task. Before the branch is made: the branch is named for what the work is.
+    if (!revision) {
+      const { name, source } = await nameTask({ runId: run.runId, repoPath, repoName }, inputData.task, logger);
+      run.title = name.title;
+      run.workBranch = workBranchFor(name);
+      updateRunMeta(run.runId, { title: name.title, titleSource: source, branch: run.workBranch });
+    }
 
     if (baseChoice.note) {
       logger?.info?.(`[factory] ${baseChoice.note}`, { runId: run.runId, base: baseBranch });
@@ -530,7 +623,7 @@ const prepareRunStep = createStep({
     }
 
     if (!config.dryRun) {
-      const branch = await createBranch(repoPath, workBranch, baseBranch, {
+      const branch = await createBranch(repoPath, run.workBranch, baseBranch, {
         adoptRemote: inputData.branchName !== undefined,
         freshStart: true,
       });
@@ -554,6 +647,8 @@ const prepareRunStep = createStep({
       step: 'prepare-run',
       branch: run.workBranch,
       stack: stack.type,
+      ...(run.taskId ? { taskId: run.taskId } : {}),
+      ...(run.title ? { title: run.title } : {}),
     });
 
     return { run };
@@ -2102,7 +2197,11 @@ export const pullRequestStep = createStep({
     // the record of what was (and was not) published.
     let failure: { status: 'PUSH_FAILED' | 'PR_FAILED' | 'FAILED'; message: string } | null = null;
     let publicationState: Awaited<ReturnType<typeof inspectBranchPublication>> | null = null;
-    const plannedCommitMessage = run.revision ? revisionCommitMessage(run.revision) : text.commitMessage;
+    // The commit leads back to its task: `Factory-Task: f0042` (a round carries its task's id).
+    const plannedCommitMessage = withTaskTrailer(
+      run.revision ? revisionCommitMessage(run.revision) : text.commitMessage,
+      run.taskId,
+    );
 
     // What the human chose last time (a retry starts from that, not from the original proposal).
     const prior = run.dryRun ? {} : latestDeliveryEdits(run.runId);
@@ -2672,6 +2771,8 @@ const finalizeStep = createStep({
       rootRunId: run.revision?.rootRunId ?? run.runId,
       round: run.revision?.round ?? 1,
       ...(run.revision ? { parentRunId: run.revision.parentRunId } : {}),
+      ...(run.taskId ? { taskId: run.taskId } : {}),
+      ...(run.title ? { title: run.title } : {}),
       repository: run.repoPath,
       branch: run.workBranch,
       startedAt: run.startedAt,

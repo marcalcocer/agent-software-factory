@@ -57,6 +57,9 @@ Then produce the run-level decision:
   change, written the way a user would phrase it. The next run receives only this text plus the
   repository, so it must stand alone: name the files, the expected behaviour and the
   acceptance criteria. Omit it for `REPLY_ONLY`.
+- `roundTitle`: when re-running, what the new round is about, as a short phrase under 60
+  characters that tells it from the earlier rounds, for a list of runs ("Finish dark mode on the
+  investment pages"). Omit it for `REPLY_ONLY`.
 
 ## Hard rules
 

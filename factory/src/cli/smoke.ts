@@ -112,6 +112,56 @@ function gateChecks(
   ]);
 }
 
+/**
+ * What must hold for the identity of any run: it was named by the run namer before the architect, it
+ * has a task id, its branch follows the convention `factory/<id>/<type>-<slug>`, the title and the id
+ * reached the run record and the summary, and the record was completed rather than started twice.
+ */
+function namingChecks(traceDir: string): Array<[string, boolean, string?]> {
+  const read = (file: string): Record<string, any> | null => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(traceDir, file), 'utf8')) as Record<string, any>;
+    } catch {
+      return null;
+    }
+  };
+  const events = (() => {
+    try {
+      return fs
+        .readFileSync(path.join(traceDir, 'events.ndjson'), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, any>);
+    } catch {
+      return [];
+    }
+  })();
+  const namer = read('00-run-namer.json');
+  const meta = read('run.json');
+  const summary = read('summary.json');
+  const firstOf = (type: string) => events.findIndex((event) => event.type === type);
+  const branch = String(meta?.branch ?? '');
+
+  return [
+    ['the run namer named the task', namer?.status === 'COMPLETED' && Boolean(namer?.data?.title), String(namer?.status)],
+    ['the task has an id', /^f\d{4,}$/.test(String(meta?.taskId)), String(meta?.taskId)],
+    [
+      'the branch follows factory/<id>/<type>-<slug>',
+      branch === `factory/${meta?.taskId}/${namer?.data?.type}-${namer?.data?.slug}`,
+      branch,
+    ],
+    ['the title reached the run record', meta?.title === namer?.data?.title && meta?.titleSource === 'agent', `${meta?.title} (${meta?.titleSource})`],
+    ['the summary carries the id and the title', summary?.taskId === meta?.taskId && summary?.title === meta?.title, `${summary?.taskId} ${summary?.title}`],
+    [
+      'the task was named before the architect planned',
+      firstOf('run_naming') !== -1 &&
+        firstOf('run_naming') < events.findIndex((event) => event.type === 'step_artifact' && event.step === 'pm-architect'),
+      `naming@${firstOf('run_naming')}`,
+    ],
+    ['the run was started once, not twice', events.filter((event) => event.type === 'run_started').length === 1, String(events.filter((event) => event.type === 'run_started').length)],
+  ];
+}
+
 const SCENARIOS: ScenarioExpectation[] = [
   {
     scenario: 'happy',
@@ -120,6 +170,7 @@ const SCENARIOS: ScenarioExpectation[] = [
     expect: 'DELIVERED_WITHOUT_PR',
     expectedAttempts: 1,
     requiredArtifacts: [
+      '00-run-namer.json',
       '01-pm-architect.json',
       '02-developer.json',
       '03-qa-tester.json',
@@ -130,7 +181,10 @@ const SCENARIOS: ScenarioExpectation[] = [
       '08-pull-request.json',
       'summary.json',
     ],
-    extraChecks: (dir) => gateChecks(dir, { qa: 'PASS', codeReview: 'APPROVED', security: 'PASS', documentation: 'COMPLETED' }),
+    extraChecks: (dir) => [
+      ...namingChecks(dir),
+      ...gateChecks(dir, { qa: 'PASS', codeReview: 'APPROVED', security: 'PASS', documentation: 'COMPLETED' }),
+    ],
   },
   {
     scenario: 'happy',

@@ -13,6 +13,7 @@ export { documentationAgent } from './documentation.agent.ts';
 export { feedbackTriageAgent } from './feedback-triage.agent.ts';
 export { mergeSummaryAgent } from './merge-summary.agent.ts';
 export { prWriterAgent } from './pr-writer.agent.ts';
+export { runNamerAgent } from './run-namer.agent.ts';
 
 import { pmArchitectAgent } from './pm-architect.agent.ts';
 import { developerAgent } from './developer.agent.ts';
@@ -24,6 +25,7 @@ import { documentationAgent } from './documentation.agent.ts';
 import { feedbackTriageAgent } from './feedback-triage.agent.ts';
 import { mergeSummaryAgent } from './merge-summary.agent.ts';
 import { prWriterAgent } from './pr-writer.agent.ts';
+import { runNamerAgent } from './run-namer.agent.ts';
 
 export const factoryAgents = {
   pmArchitectAgent,
@@ -36,4 +38,5 @@ export const factoryAgents = {
   feedbackTriageAgent,
   mergeSummaryAgent,
   prWriterAgent,
+  runNamerAgent,
 };

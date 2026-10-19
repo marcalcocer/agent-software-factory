@@ -317,10 +317,47 @@ async function commandRun(flags: Record<string, FlagValue>): Promise<number> {
     }
   }
 
+  const startedAt = new Date().toISOString();
+
+  // Record the run NOW, before it is announced. Whoever is told its id - the Studio, or the watcher
+  // that started a round by itself - must find the run. The first workflow step used to be the first
+  // to write it, a second or two later: long enough for a round to be missing from the history until
+  // the user switched repository and back. The workflow completes this record; it does not replace it.
+  {
+    const { createRunTrace } = await import('../tools/logger-tools.ts');
+    const { fallbackRunName, roundTitle } = await import('../tools/run-naming.ts');
+    const rootTitle = revision ? readRunMeta(revision.rootRunId)?.title : undefined;
+    createRunTrace({
+      runId,
+      task,
+      repoPath,
+      repoName: path.basename(repoPath),
+      kind: revision ? 'revision' : 'run',
+      rootRunId: revision?.rootRunId ?? runId,
+      round: revision?.round ?? 1,
+      ...(revision
+        ? {
+            parentRunId: revision.parentRunId,
+            pullRequest: {
+              number: revision.pullRequest.number,
+              url: revision.pullRequest.url,
+              headBranch: revision.pullRequest.headBranch,
+              baseBranch: revision.pullRequest.baseBranch,
+            },
+          }
+        : {}),
+      title: revision
+        ? roundTitle(rootTitle ?? fallbackRunName(revision.originalTask).title, revision.round, revision.title)
+        : fallbackRunName(task).title,
+      titleSource: revision ? 'round' : 'fallback',
+      dryRun: config.dryRun,
+      startedAt,
+    });
+  }
+
   heading(`Factory run ${runId}`);
   printJson('Input', { ...inputData, dryRun: config.dryRun });
 
-  const startedAt = new Date().toISOString();
   const workflow = mastra.getWorkflow('softwareFactoryWorkflow');
   const run = await workflow.createRun({ runId });
 
