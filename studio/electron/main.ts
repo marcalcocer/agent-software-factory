@@ -1,7 +1,7 @@
 /**
  * Electron main process - handles app lifecycle and native OS integration.
  */
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,6 +10,8 @@ import './ipc/auth.js';
 import './ipc/factory.js';
 import './ipc/settings.js';
 import './ipc/git.js';
+import './ipc/pr-watch.js';
+import { installExternalLinkHandlers } from './services/external-links.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,6 +33,12 @@ function createWindow() {
       sandbox: false, // Needed for access to Node APIs in preload
     },
   });
+
+  // Links to the outside world (the pull-request URL in the Delivery report, ...) open in the
+  // user's own browser, where they are already signed in - not in a bare Electron window.
+  installExternalLinkHandlers(mainWindow.webContents, process.env.VITE_DEV_SERVER_URL, (url) =>
+    shell.openExternal(url),
+  );
 
   // In development, load from Vite dev server
   if (process.env.VITE_DEV_SERVER_URL) {

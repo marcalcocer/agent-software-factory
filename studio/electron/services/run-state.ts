@@ -1,0 +1,115 @@
+/**
+ * Derives what the UI needs to know about a run from what it left on disk.
+ *
+ * Kept free of Electron imports so it can be exercised directly against real run directories.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import type { FactoryRun, RunEventRecord, RunStatus } from '../../shared/types';
+import { inferInterruption } from '../../shared/runInference';
+
+export function readJson<T>(file: string): T | null {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')) as T;
+  } catch {
+    return null;
+  }
+}
+
+/** The factory's structured audit trail (`events.ndjson`) in a run directory. */
+export function readRunEvents(runDir: string): RunEventRecord[] {
+  const file = path.join(runDir, 'events.ndjson');
+  if (!fs.existsSync(file)) return [];
+  const events: RunEventRecord[] = [];
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      events.push(JSON.parse(line) as RunEventRecord);
+    } catch {
+      // A torn last line while the factory is mid-write: skip it.
+    }
+  }
+  return events;
+}
+
+/**
+ * Everything the UI needs to know about a run.
+ *
+ * Precedence: a live process beats everything (a retry must not look failed because of the
+ * previous attempt's summary), then an open human gate, then the recorded outcome, then a
+ * recorded process failure, and finally an inference of where an unexplained stop happened.
+ * `factory:list` and `factory:get` used to disagree about the same run (one said FAILED, the
+ * other RUNNING) because only the list knew about live processes.
+ *
+ * @param alive whether the Electron main process currently holds a live process for the run.
+ */
+export function readRunState(
+  runDir: string,
+  runId: string,
+  alive: boolean,
+): { run: FactoryRun; repoPath: string } | null {
+  const summary = readJson<any>(path.join(runDir, 'summary.json'));
+  const meta = readJson<any>(path.join(runDir, 'run.json'));
+  if (!summary && !meta) return null;
+
+  const repoPath: string = summary?.repository || meta?.repoPath || meta?.repository || '';
+  const suspended = fs.existsSync(path.join(runDir, 'pending-input.json'));
+
+  let status: RunStatus;
+  let error: string | undefined;
+  let failedStep: string | undefined;
+  let finishedAt: string | undefined;
+
+  if (alive) {
+    status = 'RUNNING';
+  } else if (suspended) {
+    status = 'SUSPENDED';
+  } else if (summary && !(summary.status === 'FAILED' && !summary.error)) {
+    status = summary.status;
+    error = summary.error || undefined;
+    failedStep = summary.failedStep || undefined;
+    finishedAt = summary.finishedAt;
+  } else {
+    // No outcome was recorded: the process died hard, or an older run failed silently.
+    status = 'FAILED';
+    const failure = readJson<{ at?: string; message?: string }>(path.join(runDir, 'failure.json'));
+    const events = readRunEvents(runDir);
+    if (failure?.message) {
+      error = failure.message;
+      finishedAt = failure.at;
+    } else {
+      const interruption = inferInterruption(events);
+      error = interruption.message;
+      failedStep = interruption.failedStep;
+    }
+    finishedAt = finishedAt ?? events[events.length - 1]?.at ?? summary?.finishedAt;
+  }
+
+  return {
+    repoPath,
+    run: {
+      runId,
+      repoId: path.basename(repoPath),
+      task: summary?.task || meta?.task || '',
+      status,
+      attempts: summary?.attempts || 0,
+      branch: summary?.branch ?? meta?.branch,
+      startedAt: summary?.startedAt || meta?.startedAt || new Date().toISOString(),
+      finishedAt: status === 'RUNNING' || status === 'SUSPENDED' ? undefined : finishedAt,
+      tokens: summary?.tokens,
+      gates: summary?.gates,
+      steps: summary?.steps || [],
+      error,
+      failedStep,
+      pipeline: meta?.pipeline,
+      // How this run relates to others (a round on a pull request continues an earlier run).
+      kind: summary?.kind ?? meta?.kind ?? 'run',
+      rootRunId: summary?.rootRunId ?? meta?.rootRunId ?? runId,
+      ...(summary?.parentRunId || meta?.parentRunId
+        ? { parentRunId: summary?.parentRunId ?? meta?.parentRunId }
+        : {}),
+      round: summary?.round ?? meta?.round ?? 1,
+      ...(meta?.pullRequest ? { pullRequest: meta.pullRequest } : {}),
+    },
+  };
+}

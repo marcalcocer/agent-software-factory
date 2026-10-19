@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { groupRuns } from '../lib/groupRuns';
 
 interface Run {
   id: string;
@@ -7,6 +8,11 @@ interface Run {
   status: 'running' | 'completed' | 'failed' | 'escalated';
   startTime: Date;
   endTime?: Date;
+  error?: string;
+  /** Which task this run belongs to, and which round of it. */
+  rootRunId?: string;
+  round?: number;
+  pullRequestNumber?: number;
   summary?: {
     durationMs: number;
     tokensUsed: number;
@@ -80,14 +86,16 @@ export function RunHistory({ runs, loading, onSelectRun, onResume, onRename, onD
       </div>
 
       <div className="divide-y divide-slate-200 dark:divide-slate-700">
-        {runs.map((run) => (
+        {groupRuns(runs).map(({ run, nested, rounds }) => (
           <div
             key={run.id}
             onClick={() => {
               if (editingId) return;
               onSelectRun?.(run.id);
             }}
-            className="p-4 hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer transition-colors"
+            className={`p-4 hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer transition-colors ${
+              nested ? 'pl-10 bg-slate-50/60 dark:bg-slate-900/30 border-l-4 border-indigo-300 dark:border-indigo-700' : ''
+            }`}
           >
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
@@ -143,19 +151,38 @@ export function RunHistory({ runs, loading, onSelectRun, onResume, onRename, onD
                     </span>
                   )}
                 </div>
+                {run.round && run.round > 1 ? (
+                  <div className="mb-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                    ↳ Round {run.round} of this task
+                    {run.pullRequestNumber ? ` · pull request #${run.pullRequestNumber}` : ''}
+                  </div>
+                ) : rounds > 1 ? (
+                  <div className="mb-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                    {rounds} rounds · review comments were addressed on the same pull request
+                  </div>
+                ) : null}
                 <div className="text-sm text-slate-500 dark:text-slate-400 truncate">
                   {run.id}
                 </div>
-                {run.status === 'failed' && onResume && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onResume(run.id);
-                    }}
-                    className="mt-2 px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors"
-                  >
-                    ▶ Retry
-                  </button>
+                {run.status === 'failed' && (
+                  <>
+                    {run.error && (
+                      <div className="mt-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded px-2 py-1">
+                        {run.error}
+                      </div>
+                    )}
+                    {onResume && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onResume(run.id);
+                        }}
+                        className="mt-2 px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors"
+                      >
+                        ▶ Retry
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
 

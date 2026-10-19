@@ -1,85 +1,475 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
-import type { PendingInput, RunArtifact } from '../../shared/types';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type {
+  DeliveryEdits,
+  FactoryRun,
+  PendingInput,
+  PipelineConfig,
+  RunArtifact,
+  RunEventRecord,
+} from '../../shared/types';
+import {
+  artifactForNode,
+  attributeLogs,
+  derivePipeline,
+  type NodeStatus,
+  type PipelineNode,
+} from '../../shared/pipelineState';
 import { AgentDetail } from './AgentDetail';
 import { HumanInputPanel } from './HumanInputPanel';
 
-interface AgentStep {
-  id: string;
-  name: string;
-  icon: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'retry';
-  attempt?: number;
-  duration?: number;
-  activity?: string; // What the agent is currently doing
-  filesChanged?: number;
-  testsPassed?: number;
-  findings?: number;
+/** Turn raw factory errors into a friendlier, actionable message. */
+function humanizeError(raw: string): string {
+  const msg = raw.trim();
+
+  if (/has uncommitted changes/i.test(msg)) {
+    return (
+      'The target repository has uncommitted changes.\n\n' +
+      'The factory needs a clean git baseline so it can produce a reviewable diff. ' +
+      'Commit or stash your changes in the repository, then run the task again.'
+    );
+  }
+
+  if (/session limit|usage limit|rate.?limit/i.test(msg)) {
+    return (
+      'Claude subscription usage limit reached.\n\n' +
+      'You are still signed in — you have simply used up your quota for the current window. ' +
+      'Wait for the limit to reset (the message usually says when, e.g. "resets 10:10pm"), ' +
+      'then press "Retry run" to continue from where it stopped — the plan and any finished ' +
+      'steps are kept.'
+    );
+  }
+
+  if (/No runnable verification configured/i.test(msg)) {
+    return (
+      'No test command could be detected for this repository.\n\n' +
+      'Add a known build manifest (package.json, pom.xml, go.mod, ...) at the repo root or a ' +
+      'subproject, or pass an explicit test command in Settings.'
+    );
+  }
+
+  // Handle validation errors from input schema
+  if (/Invalid input data/i.test(msg)) {
+    const cleanMsg = msg
+      .replace(/Invalid input data:\s*/i, '')
+      .replace(/^-\s*/gm, '• ')
+      .replace(/Too small: expected string to have >=(\d+) characters/g, 
+               'Must be at least $1 characters long')
+      .replace(/Too large: expected string to have <=(\d+) characters/g, 
+               'Must be at most $1 characters long')
+      .trim();
+    
+    return (
+      'Invalid input provided:\n\n' +
+      cleanMsg +
+      '\n\nPlease fix the input and try again.'
+    );
+  }
+
+  return msg;
 }
+
+const ALL_STAGES: PipelineConfig = { qa: true, review: true, security: true, documentation: true };
+
+/** How often a live (or waiting) run is re-read from disk. */
+const POLL_MS = 2000;
+const MAX_OUTPUT_LINES = 3000;
 
 interface PipelineViewProps {
   runId: string | null;
+  /** The caller's belief that the run is live - only used until the run's real state is read. */
   isRunning: boolean;
   onClose?: () => void;
+  onRetry?: (runId: string) => void;
+  /** Open another run - used to move between the rounds of one task. */
+  onOpenRun?: (runId: string) => void;
+  /** The stage selection of the task form; used only before the run records its own. */
+  pipelineConfig?: PipelineConfig;
 }
 
-const INITIAL_AGENTS: AgentStep[] = [
-  { id: 'prepare-run', name: 'Prepare', icon: '⚙️', status: 'pending' },
-  { id: 'pm-architect', name: 'PM Architect', icon: '📋', status: 'pending' },
-  { id: 'developer', name: 'Developer', icon: '💻', status: 'pending' },
-  { id: 'qa-tester', name: 'QA', icon: '🧪', status: 'pending' },
-  { id: 'security', name: 'Security', icon: '🔒', status: 'pending' },
-  { id: 'reviewer', name: 'Review', icon: '👀', status: 'pending' },
-  { id: 'documentation', name: 'Docs', icon: '📝', status: 'pending' },
-  { id: 'delivery', name: 'Delivery', icon: '🚀', status: 'pending' },
-];
+/* -------------------------------------------------------------------------- */
+/* Pipeline strip                                                              */
+/* -------------------------------------------------------------------------- */
 
-export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
-  const [agents, setAgents] = useState<AgentStep[]>(INITIAL_AGENTS);
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const [logs, setLogs] = useState<Array<{ text: string; agent?: string }>>([]);
-  const [currentAttempt, setCurrentAttempt] = useState(1);
-  const [elapsedTime, setElapsedTime] = useState(0);
+const isFinished = (status: NodeStatus) => status === 'completed' || status === 'skipped';
+
+function PipelineStrip({
+  nodes,
+  selectedId,
+  onSelect,
+}: {
+  nodes: PipelineNode[];
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+}) {
+  return (
+    <div className="bg-white dark:bg-slate-800 rounded-lg p-6 overflow-x-auto">
+      <div
+        className="flex items-center justify-between"
+        style={{ minWidth: Math.max(800, nodes.length * 96) }}
+      >
+        {nodes.map((node, index) => (
+          <div key={node.id} className="flex items-center">
+            <button
+              onClick={() => onSelect(selectedId === node.id ? null : node.id)}
+              title={node.activity ?? node.name}
+              className={`relative flex flex-col items-center group transition-all duration-300 ${
+                selectedId === node.id ? 'scale-110' : 'hover:scale-105'
+              }`}
+            >
+              <div
+                className={`relative w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-all duration-300 shadow-lg ${
+                  node.status === 'running'
+                    ? 'bg-blue-500 ring-4 ring-blue-400/50 animate-pulse'
+                    : node.status === 'waiting'
+                      ? 'bg-amber-500 ring-4 ring-amber-400/50 animate-pulse'
+                      : node.status === 'completed'
+                        ? 'bg-green-500'
+                        : node.status === 'failed'
+                          ? 'bg-red-500'
+                          : node.status === 'retry'
+                            ? 'bg-yellow-500'
+                            : node.status === 'skipped'
+                              ? 'bg-amber-400/60 dark:bg-amber-500/40'
+                              : 'bg-slate-300 dark:bg-slate-600'
+                } ${selectedId === node.id ? 'ring-4 ring-indigo-400' : ''}`}
+              >
+                {node.status === 'running' && (
+                  <div className="absolute inset-0 rounded-full bg-blue-400 animate-ping opacity-75"></div>
+                )}
+                {node.status === 'completed' ? (
+                  <span className="relative text-white text-xl">✓</span>
+                ) : node.status === 'failed' ? (
+                  <span className="relative text-white text-xl">✗</span>
+                ) : node.status === 'retry' ? (
+                  <span className="relative text-white text-xl">↻</span>
+                ) : node.status === 'waiting' ? (
+                  <span className="relative text-white text-xl">⏸</span>
+                ) : node.status === 'skipped' ? (
+                  <span className="relative text-amber-900 dark:text-amber-200 text-xl">⊘</span>
+                ) : (
+                  <span className={`relative ${node.status === 'running' ? 'animate-bounce' : ''}`}>
+                    {node.icon}
+                  </span>
+                )}
+              </div>
+
+              <span
+                className={`mt-2 text-sm font-medium whitespace-nowrap ${
+                  node.status === 'running'
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : node.status === 'waiting'
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : node.status === 'failed'
+                        ? 'text-red-600 dark:text-red-400'
+                        : node.status === 'skipped'
+                          ? 'text-amber-600 dark:text-amber-400'
+                          : node.status === 'completed'
+                            ? 'text-green-600 dark:text-green-400'
+                            : node.status === 'retry'
+                              ? 'text-yellow-600 dark:text-yellow-400'
+                              : 'text-slate-500'
+                }`}
+              >
+                {node.name}
+              </span>
+
+              {node.status === 'running' && (
+                <div className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 flex space-x-1">
+                  <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                  <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                  <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                </div>
+              )}
+            </button>
+
+            {index < nodes.length - 1 && (
+              <div className="flex items-center mx-2">
+                <div
+                  className={`h-1 w-8 transition-colors duration-300 ${
+                    isFinished(node.status) ? 'bg-green-400' : 'bg-slate-300 dark:bg-slate-600'
+                  }`}
+                ></div>
+                <div
+                  className={`w-0 h-0 border-t-[6px] border-t-transparent border-b-[6px] border-b-transparent border-l-[8px] transition-colors duration-300 ${
+                    isFinished(node.status) ? 'border-l-green-400' : 'border-l-slate-300 dark:border-l-slate-600'
+                  }`}
+                ></div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Header copy                                                                 */
+/* -------------------------------------------------------------------------- */
+
+const WAITING_COPY: Record<string, { title: string; subtitle: string }> = {
+  CLARIFICATION_REQUIRED: {
+    title: 'Factory Needs Your Answers',
+    subtitle: 'The architect asked a few questions before planning',
+  },
+  DELIVERY_APPROVAL_REQUIRED: {
+    title: 'Factory Waiting for Approval',
+    subtitle: 'Review and approve the delivery',
+  },
+  ESCALATION_REQUIRED: {
+    title: 'Factory Needs Your Decision',
+    subtitle: 'The factory could not resolve this on its own',
+  },
+};
+
+function describeOutcome(
+  status: string | undefined,
+  isRound = false,
+): { title: string; subtitle: string; tone: 'green' | 'amber' } {
+  switch (status) {
+    case 'DELIVERED':
+    case 'DELIVERED_WITH_PR':
+      return {
+        title: 'Factory Complete',
+        subtitle: isRound ? 'Pull request updated with the requested changes' : 'Pull request opened',
+        tone: 'green',
+      };
+    case 'DELIVERED_WITHOUT_PR':
+      return { title: 'Factory Complete', subtitle: 'Delivered without a pull request', tone: 'green' };
+    case 'ESCALATED_TO_HUMAN':
+      return { title: 'Escalated to a Human', subtitle: 'Resolved by a human decision', tone: 'amber' };
+    case 'ABORTED_BY_HUMAN':
+      return { title: 'Run Aborted', subtitle: 'Stopped by a human decision', tone: 'amber' };
+    case 'BLOCKED':
+      return { title: 'Run Blocked', subtitle: 'A gate blocked the delivery', tone: 'amber' };
+    default:
+      return { title: 'Factory Complete', subtitle: 'Multi-agent pipeline', tone: 'green' };
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* View                                                                        */
+/* -------------------------------------------------------------------------- */
+
+export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pipelineConfig }: PipelineViewProps) {
+  const [runInfo, setRunInfo] = useState<FactoryRun | null>(null);
+  /** Every round of this task (the run itself and each revision of it), oldest first. */
+  const [rounds, setRounds] = useState<Array<{ runId: string; round: number; status: string; kind: string }>>([]);
   const [artifacts, setArtifacts] = useState<RunArtifact[]>([]);
-  const [startedAt, setStartedAt] = useState<string | null>(null);
+  const [events, setEvents] = useState<RunEventRecord[]>([]);
   const [pendingInput, setPendingInput] = useState<PendingInput | null>(null);
+  const [outputLines, setOutputLines] = useState<string[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [submittingInput, setSubmittingInput] = useState(false);
-  const currentRunningAgentRef = useRef<string | null>(null); // Track which agent is currently executing
+  const [now, setNow] = useState(() => Date.now());
+  /** After "Retry run" the process takes a moment to spawn; until then the disk still says FAILED. */
+  const [retryGraceUntil, setRetryGraceUntil] = useState(0);
+  const wasRunning = useRef(isRunning);
 
-  // Load run metadata and artifacts
-  const loadRunData = useCallback(async () => {
-    if (!runId) return;
+  const activeRunRef = useRef<string | null>(runId);
+  /** Number of output lines already received; the next read asks only for what follows. */
+  const outputCursor = useRef<number | undefined>(undefined);
+  /** A gate the user just answered. The CLI removes its file a moment later; hide it meanwhile. */
+  const submittedRef = useRef<{ reason: string; until: number } | null>(null);
+  const lastAutoSelectedRef = useRef<string | null>(null);
+  const inFlight = useRef(false);
+  const queued = useRef(false);
+
+  // A different run: drop everything that belonged to the previous one.
+  useEffect(() => {
+    activeRunRef.current = runId;
+    setRunInfo(null);
+    setRounds([]);
+    setArtifacts([]);
+    setEvents([]);
+    setPendingInput(null);
+    setOutputLines([]);
+    setSelectedAgent(null);
+    setSubmittingInput(false);
+    outputCursor.current = undefined;
+    submittedRef.current = null;
+    lastAutoSelectedRef.current = null;
+  }, [runId]);
+
+  /**
+   * Reads everything the run has persisted. This is the single source of truth for the view:
+   * a mount after a repository switch, a finished run opened from history and a live run all
+   * read the same files, so the pipeline looks the same however the user got here.
+   */
+  const loadOnce = useCallback(async () => {
+    const id = runId;
+    if (!id) return;
     try {
-      const run = await window.api.invoke('factory:get', runId);
-      if (run) {
-        setStartedAt(run.startedAt);
+      const [run, arts, evs, pending, out] = await Promise.all([
+        window.api.invoke('factory:get', id),
+        window.api.invoke('factory:get-artifacts', id),
+        window.api.invoke('factory:get-events', id),
+        window.api.invoke('factory:get-pending-input', id),
+        window.api.invoke('factory:get-output', id, outputCursor.current),
+      ]);
+      if (activeRunRef.current !== id) return; // the user moved on while this was in flight
+
+      setRunInfo(run);
+      setArtifacts(arts);
+      setEvents(evs);
+
+      let effectivePending = pending;
+      const submitted = submittedRef.current;
+      if (pending && submitted && pending.reason === submitted.reason && Date.now() < submitted.until) {
+        effectivePending = null;
+      } else if (!pending) {
+        submittedRef.current = null;
       }
+      setPendingInput(effectivePending);
+      if (effectivePending) setSubmittingInput(false);
+
+      if (outputCursor.current === undefined) {
+        setOutputLines(out.lines.slice(-MAX_OUTPUT_LINES));
+      } else if (out.lines.length > 0) {
+        setOutputLines((prev) => [...prev, ...out.lines].slice(-MAX_OUTPUT_LINES));
+      }
+      outputCursor.current = out.total;
     } catch {
-      // Ignore errors
+      // Transient (file mid-write, run just created): the next poll retries.
     }
   }, [runId]);
 
-  const loadArtifacts = useCallback(async () => {
-    if (!runId) return;
-    try {
-      const result = await window.api.invoke('factory:get-artifacts', runId);
-      setArtifacts(result);
-    } catch {
-      // Ignore artifact load errors
+  /** Serialises reads so two overlapping refreshes cannot append the same output twice. */
+  const refresh = useCallback(async () => {
+    if (inFlight.current) {
+      queued.current = true;
+      return;
     }
-  }, [runId]);
+    inFlight.current = true;
+    try {
+      do {
+        queued.current = false;
+        await loadOnce();
+      } while (queued.current);
+    } finally {
+      inFlight.current = false;
+    }
+  }, [loadOnce]);
 
-  // Poll for an open human-in-the-loop gate. The workflow writes `pending-input.json`
-  // when it suspends and removes it on resume, so this drives the input form.
-  const loadPendingInput = useCallback(async () => {
+  useEffect(() => {
+    if (isRunning && !wasRunning.current) setRetryGraceUntil(Date.now() + 15_000);
+    wasRunning.current = isRunning;
+  }, [isRunning]);
+
+  /* ---- derived pipeline ---- */
+  // The run's own recorded stages win; before it has any, show what the task form selected.
+  const effectivePipeline = useMemo<PipelineConfig>(
+    () => runInfo?.pipeline ?? (runInfo ? ALL_STAGES : (pipelineConfig ?? ALL_STAGES)),
+    [runInfo, pipelineConfig],
+  );
+
+  // Just (re)started by the user but the backend has not caught up: trust the user, not the disk.
+  const starting = isRunning && now < retryGraceUntil && runInfo?.status !== 'RUNNING';
+
+  const derived = useMemo(
+    () =>
+      derivePipeline({
+        artifacts,
+        events,
+        pendingInput,
+        runStatus: starting ? null : (runInfo?.status ?? null),
+        assumeAlive: isRunning,
+        pipeline: effectivePipeline,
+        failedStep: starting ? undefined : runInfo?.failedStep,
+      }),
+    [artifacts, events, pendingInput, runInfo, isRunning, starting, effectivePipeline],
+  );
+
+  // Which rounds this task has. Not part of the polling: it scans the log directory, and the answer
+  // only changes when a round is added or this run changes state.
+  useEffect(() => {
+    const id = runId;
+    if (!id) return;
+    let cancelled = false;
+    window.api
+      .invoke('factory:get-rounds', id)
+      .then((list) => {
+        if (!cancelled) setRounds(list);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, derived.lifecycle]);
+
+  /* ---- keep it fresh ---- */
+  const shouldPoll =
+    (runInfo === null && isRunning) ||
+    starting ||
+    derived.lifecycle === 'running' ||
+    derived.lifecycle === 'waiting';
+
+  useEffect(() => {
     if (!runId) return;
-    try {
-      const result = await window.api.invoke('factory:get-pending-input', runId);
-      setPendingInput(result);
-      if (result) setSubmittingInput(false);
-    } catch {
-      // Ignore polling errors
+    void refresh();
+    if (!shouldPoll) return;
+    const timer = setInterval(() => void refresh(), POLL_MS);
+    return () => clearInterval(timer);
+  }, [runId, shouldPoll, refresh]);
+
+  // Output and completion events only *nudge* a refresh: the state itself is read from disk.
+  useEffect(() => {
+    if (!runId) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const nudge = () => {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        void refresh();
+      }, 400);
+    };
+    const offOutput = window.api.on('factory:output', (id: string) => {
+      if (id === runId) nudge();
+    });
+    const offDone = window.api.on('factory:completed', (id: string) => {
+      if (id === runId) void refresh();
+    });
+    const offError = window.api.on('factory:error', (id: string) => {
+      if (id === runId) void refresh();
+    });
+    return () => {
+      offOutput();
+      offDone();
+      offError();
+      if (timer) clearTimeout(timer);
+    };
+  }, [runId, refresh]);
+
+  /* ---- elapsed time ---- */
+  useEffect(() => {
+    if (derived.lifecycle !== 'running' && !starting) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [derived.lifecycle, starting]);
+
+  const elapsedSeconds = useMemo(() => {
+    if (!runInfo?.startedAt) return 0;
+    const start = new Date(runInfo.startedAt).getTime();
+    const lastEvent = events[events.length - 1]?.at;
+    const end =
+      derived.lifecycle === 'running'
+        ? now
+        : new Date(runInfo.finishedAt ?? lastEvent ?? now).getTime();
+    return Math.max(0, Math.floor((end - start) / 1000));
+  }, [runInfo, events, derived.lifecycle, now]);
+
+  /* ---- selection ---- */
+  const waitingNodeId = derived.nodes.find((n) => n.status === 'waiting')?.id ?? null;
+  const focusId = derived.runningIds[0] ?? waitingNodeId ?? derived.failedNodeId;
+
+  // Follow the step that is running / waiting / failed - but only when it CHANGES, so the user
+  // can still click around without being dragged back.
+  useEffect(() => {
+    if (focusId && lastAutoSelectedRef.current !== focusId) {
+      lastAutoSelectedRef.current = focusId;
+      setSelectedAgent(focusId);
     }
-  }, [runId]);
+  }, [focusId]);
 
   const handleSubmitInput = useCallback(
     async (answer: {
@@ -88,442 +478,48 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
       guidance?: string;
       approvePush?: boolean;
       approvePullRequest?: boolean;
+      edits?: DeliveryEdits;
     }) => {
-      if (!runId) return;
+      if (!runId || !pendingInput) return;
       setSubmittingInput(true);
       try {
+        submittedRef.current = { reason: pendingInput.reason, until: Date.now() + 10_000 };
         await window.api.invoke('factory:submit-input', { runId, ...answer });
         setPendingInput(null);
+        void refresh();
       } catch (error) {
         console.error('Failed to submit input:', error);
+        submittedRef.current = null;
         setSubmittingInput(false);
       }
     },
-    [runId],
+    [runId, pendingInput, refresh],
   );
 
-  useEffect(() => {
-    if (!runId) return;
-    loadRunData();
-    loadArtifacts();
-    loadPendingInput();
+  /* ---- logs per step ---- */
+  const tailIds = useMemo(() => {
+    if (derived.runningIds.length > 0) return derived.runningIds;
+    return focusId ? [focusId] : [];
+  }, [derived.runningIds, focusId]);
 
-    // While running, poll for new artifacts and for an input gate opening.
-    if (isRunning) {
-      const interval = setInterval(() => {
-        loadArtifacts();
-        loadPendingInput();
-      }, 3000);
-      return () => clearInterval(interval);
-    }
-  }, [runId, isRunning, loadRunData, loadArtifacts, loadPendingInput]);
+  const attributedLogs = useMemo(
+    () => attributeLogs(outputLines, events, derived.exchanges.length > 0, tailIds),
+    [outputLines, events, derived.exchanges.length, tailIds],
+  );
 
-  // Also refresh artifacts right after the run completes
-  useEffect(() => {
-    if (runId && !isRunning) {
-      loadArtifacts();
-    }
-  }, [runId, isRunning, loadArtifacts]);
-
-  // Build dynamic pipeline from artifacts (each attempt gets its own node)
-  // BUT always show full expected pipeline, even if artifacts don't exist yet
-  useEffect(() => {
-    const stepLabels: Record<string, string> = {
-      'prepare-run': 'Prepare',
-      'pm-architect': 'PM Architect',
-      'developer': 'Dev',
-      'qa-tester': 'QA',
-      'triage': 'Triage',
-      'reviewer': 'Review',
-      'security': 'Security',
-      'documentation': 'Docs',
-    };
-    const stepIcons: Record<string, string> = {
-      'prepare-run': '⚙️',
-      'pm-architect': '📋',
-      'developer': '💻',
-      'qa-tester': '🧪',
-      'triage': '🔍',
-      'reviewer': '👀',
-      'security': '🔒',
-      'documentation': '📝',
-    };
-
-    // Group artifacts by step
-    const byStep: Record<string, RunArtifact[]> = {};
-    artifacts.forEach(art => {
-      if (!byStep[art.step]) byStep[art.step] = [];
-      byStep[art.step].push(art);
-    });
-
-    const nodes: AgentStep[] = [];
-
-    // Prepare (no artifact, check via events/logs) - always show
-    // We'll update its status via log detection in updateAgentFromLog
-    const prepareStatus = agents.find(a => a.id === 'prepare-run')?.status || 'pending';
-    nodes.push({
-      id: 'prepare-run',
-      name: 'Prepare',
-      icon: '⚙️',
-      status: prepareStatus,
-      attempt: 1,
-    });
-
-    // PM (single) - always show, update from artifact if exists
-    const pmArt = byStep['pm-architect']?.[0];
-    nodes.push({
-      id: 'pm-architect',
-      name: 'PM Architect',
-      icon: '📋',
-      status: pmArt ? (pmArt.status === 'COMPLETED' ? 'completed' : 'failed') : 'pending',
-      attempt: pmArt?.attempt || 1,
-    });
-
-    // Dev/QA/Triage cycles - show at least attempt 1, more if artifacts exist
-    const maxAttempt = artifacts.length > 0 ? Math.max(...artifacts.map(a => a.attempt || 1), 1) : 1;
-    for (let attempt = 1; attempt <= maxAttempt; attempt++) {
-      // Developer
-      const devArt = byStep['developer']?.find(a => a.attempt === attempt);
-      if (attempt === 1 || devArt) {
-        nodes.push({
-          id: `developer-${attempt}`,
-          name: `Dev ${attempt}`,
-          icon: '💻',
-          status: devArt 
-            ? (devArt.status === 'COMPLETED' || devArt.status === 'PASS' ? 'completed' : 'failed')
-            : 'pending',
-          attempt,
-        });
-      }
-
-      // QA
-      const qaArt = byStep['qa-tester']?.find(a => a.attempt === attempt);
-      if (attempt === 1 || qaArt) {
-        let qaStatus: AgentStep['status'] = 'pending';
-        if (qaArt) {
-          qaStatus = qaArt.status === 'PASS' ? 'completed' : qaArt.status === 'FAIL' ? 'failed' : 'retry';
-        }
-        nodes.push({
-          id: `qa-tester-${attempt}`,
-          name: `QA ${attempt}`,
-          icon: '🧪',
-          status: qaStatus,
-          attempt,
-        });
-      }
-
-      // Triage (only show if artifact exists - doesn't always run)
-      const triageArt = byStep['triage']?.find(a => a.attempt === attempt);
-      if (triageArt) {
-        nodes.push({
-          id: `triage-${attempt}`,
-          name: `Triage ${attempt}`,
-          icon: '🔍',
-          status: triageArt.status === 'COMPLETED' ? 'completed' : 'failed',
-          attempt,
-        });
-      }
-    }
-
-    // Review, Security, Docs (single) - always show
-    ['reviewer', 'security', 'documentation'].forEach(step => {
-      const art = byStep[step]?.[0];
-      let status: AgentStep['status'] = 'pending';
-      
-      if (art) {
-        // Map various success statuses to completed
-        if (art.status === 'COMPLETED' || 
-            art.status === 'PASS' || 
-            art.status === 'APPROVED' ||
-            art.status === 'APPROVED_WITH_SUGGESTIONS' ||
-            art.status === 'SKIPPED') {
-          status = 'completed';
-        } else if (art.status === 'FAIL' || art.status === 'FAILED' || art.status === 'BLOCKED') {
-          status = 'failed';
-        }
-      }
-      
-      nodes.push({
-        id: step,
-        name: stepLabels[step] || step,
-        icon: stepIcons[step] || '🤖',
-        status,
-        attempt: art?.attempt || 1,
-      });
-    });
-
-    // Delivery - always show
-    nodes.push({ id: 'delivery', name: 'Delivery', icon: '🚀', status: 'pending' });
-
-    setAgents(nodes);
-  }, [artifacts, isRunning]);
-
-  // Timer for elapsed time - calculate from actual startedAt timestamp
-  useEffect(() => {
-    if (!startedAt) return;
-    
-    const updateElapsed = () => {
-      const elapsed = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
-      setElapsedTime(elapsed);
-    };
-    
-    // Update immediately
-    updateElapsed();
-    
-    // Then update every second if running
-    if (isRunning) {
-      const interval = setInterval(updateElapsed, 1000);
-      return () => clearInterval(interval);
-    }
-  }, [startedAt, isRunning]);
-
-  // Reset when new run starts
-  useEffect(() => {
-    if (runId && isRunning) {
-      setAgents(INITIAL_AGENTS.map(a => ({ ...a, status: 'pending' })));
-      setLogs([]);
-      setCurrentAttempt(1);
-      // Don't reset elapsedTime - it's calculated from startedAt
-    }
-  }, [runId, isRunning]);
-
-  // Auto-select the currently running agent (or the first completed one if none running)
-  useEffect(() => {
-    if (!isRunning) return;
-    
-    const runningAgent = agents.find(a => a.status === 'running');
-    if (runningAgent && selectedAgent !== runningAgent.id) {
-      setSelectedAgent(runningAgent.id);
-    }
-  }, [agents, isRunning, selectedAgent]);
-
-  // Update agent state based on the log line
-  const updateAgentFromLog = useCallback((line: string) => {
-    const lowerLine = line.toLowerCase();
-    
-    // Detect errors in prepare step (before any agent starts)
-    const prepareErrorMatch = line.match(/Error executing step workflow\.software-factory\.step\.prepare-run/i);
-    if (prepareErrorMatch) {
-      currentRunningAgentRef.current = 'prepare-run';
-    }
-    
-    // Detect which agent is currently running from "Agent X started" messages
-    const agentStartMatch = line.match(/Agent "([^"]+)" started/i);
-    
-    if (agentStartMatch) {
-      const agentRole = agentStartMatch[1];
-      // Map role names to step IDs
-      const roleToStep: Record<string, string> = {
-        'pm-architect': 'pm-architect',
-        'developer': 'developer',
-        'qa-tester': 'qa-tester',
-        'triage': 'triage',
-        'reviewer': 'reviewer',
-        'security': 'security',
-        'documentation': 'documentation',
-      };
-      const stepId = roleToStep[agentRole];
-      if (stepId) {
-        currentRunningAgentRef.current = stepId;
-      }
-    }
-    
-    // Add to logs with agent context - all logs from now until the next agent starts belong to this agent
-    setLogs(prev => [...prev.slice(-100), { text: line, agent: currentRunningAgentRef.current || undefined }]); // Keep last 100 lines
-    
-    // Detect attempt number
-    const attemptMatch = line.match(/attempt[:\s]+(\d+)/i);
-    if (attemptMatch) {
-      setCurrentAttempt(parseInt(attemptMatch[1], 10));
-    }
-
-    // Detect agent activity
-    setAgents(prev => {
-      const updated = [...prev];
-      
-      // Prepare step fails when we see an error
-      if (lowerLine.includes('error executing step') && lowerLine.includes('prepare-run')) {
-        const prepIdx = updated.findIndex(a => a.id === 'prepare-run');
-        if (prepIdx >= 0) {
-          updated[prepIdx] = { ...updated[prepIdx], status: 'failed', activity: 'Setup failed' };
-        }
-      }
-      
-      // Prepare step completes when we see "run prepared"
-      if (lowerLine.includes('run prepared')) {
-        const prepIdx = updated.findIndex(a => a.id === 'prepare-run');
-        if (prepIdx >= 0) {
-          updated[prepIdx] = { ...updated[prepIdx], status: 'completed', activity: 'Repository ready' };
-        }
-        // Start PM Architect after prepare completes
-        const pmIdx = updated.findIndex(a => a.id === 'pm-architect');
-        if (pmIdx >= 0 && updated[pmIdx].status === 'pending') {
-          updated[pmIdx] = { ...updated[pmIdx], status: 'running', activity: 'Analyzing requirements...' };
-        }
-      }
-      
-      // PM Architect starts
-      if (lowerLine.includes('pm-architect') && !lowerLine.includes('finished')) {
-        const idx = updated.findIndex(a => a.id === 'pm-architect');
-        if (idx >= 0 && updated[idx].status === 'pending') {
-          updated[idx] = { ...updated[idx], status: 'running', activity: 'Creating implementation plan...' };
-        }
-      }
-      
-      // Developer start
-      if (lowerLine.includes('developer') && !lowerLine.includes('finished')) {
-        const idx = updated.findIndex(a => a.id === 'developer');
-        if (idx >= 0 && (updated[idx].status === 'pending' || updated[idx].status === 'retry')) {
-          updated[idx] = { ...updated[idx], status: 'running' };
-        }
-        // Mark PM as complete if developer starts
-        const pmIdx = updated.findIndex(a => a.id === 'pm-architect');
-        if (pmIdx >= 0 && updated[pmIdx].status === 'running') {
-          updated[pmIdx] = { ...updated[pmIdx], status: 'completed', activity: 'Implementation plan created' };
-        }
-      }
-      
-      // Developer finished
-      if (lowerLine.includes('developer step finished') || lowerLine.includes('developer') && lowerLine.includes('completed')) {
-        const idx = updated.findIndex(a => a.id === 'developer');
-        if (idx >= 0) {
-          // Extract files changed
-          const filesMatch = line.match(/changedFiles[:\s]+(\d+)/i);
-          const filesChanged = filesMatch ? parseInt(filesMatch[1], 10) : undefined;
-          updated[idx] = { 
-            ...updated[idx], 
-            status: 'completed',
-            activity: filesChanged ? `Modified ${filesChanged} file${filesChanged > 1 ? 's' : ''}` : 'Completed',
-            filesChanged
-          };
-        }
-      }
-      
-      // Developer activity hints
-      if (lowerLine.includes('developer') && updated.findIndex(a => a.id === 'developer' && a.status === 'running') >= 0) {
-        const idx = updated.findIndex(a => a.id === 'developer');
-        if (idx >= 0 && !updated[idx].activity) {
-          updated[idx] = { ...updated[idx], activity: 'Writing code and implementing changes...' };
-        }
-      }
-      
-      // QA
-      if (lowerLine.includes('qa') && !lowerLine.includes('finished')) {
-        const idx = updated.findIndex(a => a.id === 'qa-tester');
-        if (idx >= 0 && updated[idx].status === 'pending') {
-          updated[idx] = { ...updated[idx], status: 'running', activity: 'Running tests and checking functionality...' };
-        }
-      }
-      if (lowerLine.includes('qa step finished') || (lowerLine.includes('qa') && lowerLine.includes('pass'))) {
-        const idx = updated.findIndex(a => a.id === 'qa-tester');
-        if (idx >= 0) {
-          const verdictMatch = line.match(/verdict[:\s]+"?(\w+)"?/i);
-          const passed = verdictMatch ? verdictMatch[1].toUpperCase() === 'PASS' : undefined;
-          updated[idx] = {
-            ...updated[idx],
-            status: passed === false ? 'failed' : 'completed',
-            activity: passed === false ? 'Verification failed ✗' : passed ? 'All checks passed ✓' : 'Tests completed',
-          };
-        }
-      }
-      
-      // Security
-      if (lowerLine.includes('security') && !lowerLine.includes('finished')) {
-        const idx = updated.findIndex(a => a.id === 'security');
-        if (idx >= 0 && updated[idx].status === 'pending') {
-          updated[idx] = { ...updated[idx], status: 'running' };
-        }
-      }
-      if (lowerLine.includes('security scan finished') || lowerLine.includes('security') && lowerLine.includes('pass')) {
-        const idx = updated.findIndex(a => a.id === 'security');
-        if (idx >= 0) {
-          updated[idx] = { ...updated[idx], status: 'completed' };
-        }
-      }
-      
-      // Code Review
-      if (lowerLine.includes('review') && !lowerLine.includes('finished')) {
-        const idx = updated.findIndex(a => a.id === 'reviewer');
-        if (idx >= 0 && updated[idx].status === 'pending') {
-          updated[idx] = { ...updated[idx], status: 'running' };
-        }
-      }
-      if (lowerLine.includes('code review finished')) {
-        const idx = updated.findIndex(a => a.id === 'reviewer');
-        if (idx >= 0) {
-          if (lowerLine.includes('changes_requested')) {
-            updated[idx] = { ...updated[idx], status: 'retry' };
-            // Mark developer for retry
-            const devIdx = updated.findIndex(a => a.id === 'developer');
-            if (devIdx >= 0) {
-              updated[devIdx] = { ...updated[devIdx], status: 'retry' };
-            }
-          } else {
-            updated[idx] = { ...updated[idx], status: 'completed' };
-          }
-        }
-      }
-      
-      // Triage (retry decision)
-      if (lowerLine.includes('triage') && lowerLine.includes('retry_developer')) {
-        const devIdx = updated.findIndex(a => a.id === 'developer');
-        if (devIdx >= 0) {
-          updated[devIdx] = { ...updated[devIdx], status: 'retry' };
-        }
-      }
-      
-      // Documentation
-      if (lowerLine.includes('documentation') && !lowerLine.includes('finished')) {
-        const idx = updated.findIndex(a => a.id === 'documentation');
-        if (idx >= 0 && updated[idx].status === 'pending') {
-          updated[idx] = { ...updated[idx], status: 'running' };
-        }
-      }
-      if (lowerLine.includes('documentation step finished')) {
-        const idx = updated.findIndex(a => a.id === 'documentation');
-        if (idx >= 0) {
-          updated[idx] = { ...updated[idx], status: 'completed' };
-        }
-      }
-      
-      // Delivery
-      if (lowerLine.includes('delivery') || lowerLine.includes('commit')) {
-        const idx = updated.findIndex(a => a.id === 'delivery');
-        if (idx >= 0 && updated[idx].status === 'pending') {
-          updated[idx] = { ...updated[idx], status: 'running' };
-        }
-      }
-      if (lowerLine.includes('delivery step finished') || lowerLine.includes('run finished')) {
-        const idx = updated.findIndex(a => a.id === 'delivery');
-        if (idx >= 0) {
-          updated[idx] = { ...updated[idx], status: 'completed' };
-        }
-      }
-      
-      return updated;
-    });
-  }, []);
-
-  // Listen for factory output
-  useEffect(() => {
-    if (!runId) return;
-
-    const unsubscribe = window.api.on('factory:output', (outputRunId: string, line: string) => {
-      if (outputRunId === runId) {
-        updateAgentFromLog(line);
-      }
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [runId, updateAgentFromLog]);
-
-  // Show starting state when runId is not yet available
+  /* ---- render ---- */
+  // Run just started: its directory does not exist yet. Show the planned pipeline, pulsing.
   if (!runId && isRunning) {
+    const skeleton = derivePipeline({
+      artifacts: [],
+      events: [],
+      pendingInput: null,
+      runStatus: null,
+      assumeAlive: true,
+      pipeline: pipelineConfig ?? ALL_STAGES,
+    });
     return (
       <div className="space-y-4">
-        {/* Starting header */}
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg p-6 text-white">
           <div className="flex items-center gap-4">
             <div className="relative">
@@ -538,35 +534,12 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
             </div>
           </div>
         </div>
-        
-        {/* Skeleton pipeline */}
-        <div className="bg-white dark:bg-slate-800 rounded-lg p-6 overflow-x-auto">
-          <div className="flex items-center justify-between min-w-[800px]">
-            {INITIAL_AGENTS.map((agent, index) => (
-              <div key={agent.id} className="flex items-center">
-                <div className="flex flex-col items-center opacity-50">
-                  <div className="w-16 h-16 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-2xl animate-pulse">
-                    {agent.icon}
-                  </div>
-                  <span className="mt-2 text-sm font-medium text-slate-400">{agent.name}</span>
-                </div>
-                {index < INITIAL_AGENTS.length - 1 && (
-                  <div className="flex items-center mx-2">
-                    <div className="h-1 w-8 bg-slate-200 dark:bg-slate-700"></div>
-                    <div className="w-0 h-0 border-t-[6px] border-t-transparent border-b-[6px] border-b-transparent border-l-[8px] border-l-slate-200 dark:border-l-slate-700"></div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
+        <PipelineStrip nodes={skeleton.nodes} selectedId={null} onSelect={() => {}} />
       </div>
     );
   }
 
-  if (!runId) {
-    return null;
-  }
+  if (!runId) return null;
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -574,29 +547,76 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const selectedAgentData = agents.find(a => a.id === selectedAgent);
-  // Latest artifact for the selected agent (prefer the newest attempt)
-  const selectedArtifact = selectedAgent
-    ? [...artifacts]
-        .filter(a => a.step === selectedAgent)
-        .sort((a, b) => (b.attempt || 0) - (a.attempt || 0))[0]
-    : undefined;
-  const agentLogs = logs
-    .filter(log => {
-      if (!selectedAgent) return true;
-      // Show logs that belong to the selected agent, or logs that mention "run prepared" for the prepare step
-      return log.agent === selectedAgent || 
-             (selectedAgent === 'prepare-run' && log.text.toLowerCase().includes('run prepared'));
-    })
-    .map(log => log.text); // Convert back to string array for AgentDetail
+  const { lifecycle } = derived;
+  const isRound = runInfo?.kind === 'revision';
+  const outcome = describeOutcome(runInfo?.status, isRound);
+  const waitingCopy = (pendingInput && WAITING_COPY[pendingInput.reason]) || {
+    title: 'Factory Waiting for Input',
+    subtitle: 'The run is paused',
+  };
+  const failedNode = derived.nodes.find((n) => n.id === derived.failedNodeId);
+  // Every step finished and the delivery went through, yet the run has no outcome recorded: a
+  // missing closing record, not a failure. Saying "Failed" in red there is what made a successful
+  // run - pull request and all - look broken.
+  const notClosedOut =
+    lifecycle === 'failed' &&
+    !failedNode &&
+    derived.nodes.find((n) => n.id === 'delivery')?.status === 'completed';
+
+  const headerTone =
+    lifecycle === 'waiting'
+      ? 'bg-gradient-to-r from-amber-600 to-orange-600'
+      : lifecycle === 'running'
+        ? 'bg-gradient-to-r from-blue-600 to-indigo-600'
+        : lifecycle === 'failed'
+          ? notClosedOut
+            ? 'bg-gradient-to-r from-amber-600 to-orange-600'
+            : 'bg-gradient-to-r from-red-600 to-rose-600'
+          : outcome.tone === 'amber'
+            ? 'bg-gradient-to-r from-amber-600 to-orange-600'
+            : 'bg-gradient-to-r from-green-600 to-emerald-600';
+
+  const headerTitle =
+    lifecycle === 'waiting'
+      ? waitingCopy.title
+      : lifecycle === 'running'
+        ? 'Factory Running'
+        : lifecycle === 'failed'
+          ? notClosedOut
+            ? 'Run Not Closed Out'
+            : 'Factory Failed'
+          : outcome.title;
+
+  const headerSubtitle =
+    lifecycle === 'waiting'
+      ? waitingCopy.subtitle
+      : lifecycle === 'failed'
+        ? notClosedOut
+          ? 'The delivery finished - only the final record is missing'
+          : failedNode
+            ? `Stopped at ${failedNode.name}`
+            : 'The run did not finish'
+        : lifecycle === 'running'
+          ? derived.attempt > 1
+            ? `Attempt ${derived.attempt}`
+            : isRound
+              ? `Round ${runInfo?.round ?? 2} - addressing review comments`
+              : 'Multi-agent pipeline'
+          : outcome.subtitle;
+
+  const selectedNode = derived.nodes.find((n) => n.id === selectedAgent) ?? null;
+  const selectedLogs = selectedNode
+    ? attributedLogs.filter((l) => l.ids.includes(selectedNode.id)).map((l) => l.text)
+    : [];
+  const runningNodes = derived.nodes.filter((n) => n.status === 'running');
 
   return (
     <div className="space-y-4">
       {/* Header with timer */}
-      <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg p-4 text-white">
+      <div className={`rounded-lg p-4 text-white ${headerTone}`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {!isRunning && onClose && (
+            {lifecycle !== 'running' && onClose && (
               <button
                 onClick={onClose}
                 className="p-2 hover:bg-white/10 rounded transition-colors"
@@ -605,7 +625,7 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
                 ← Back
               </button>
             )}
-            {isRunning && (
+            {lifecycle === 'running' && (
               <div className="relative">
                 <div className="w-10 h-10 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>
                 <div className="absolute inset-0 flex items-center justify-center">
@@ -613,178 +633,151 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
                 </div>
               </div>
             )}
+            {lifecycle === 'waiting' && <div className="text-3xl">⏸</div>}
+            {lifecycle === 'failed' && <div className="text-4xl">{notClosedOut ? '!' : '✗'}</div>}
+            {lifecycle === 'done' && (
+              <div className="text-4xl">{outcome.tone === 'amber' ? '!' : '✓'}</div>
+            )}
             <div>
-              <h3 className="font-bold text-lg">
-                {isRunning ? 'Factory Running' : 'Factory Complete'}
-              </h3>
-              <p className="text-sm text-white/80">
-                {currentAttempt > 1 ? `Attempt ${currentAttempt}` : 'Multi-agent pipeline'}
-              </p>
+              <h3 className="font-bold text-lg">{headerTitle}</h3>
+              <p className="text-sm text-white/80">{headerSubtitle}</p>
             </div>
           </div>
           <div className="text-right">
-            <div className="text-2xl font-mono font-bold">{formatTime(elapsedTime)}</div>
+            <div className="text-2xl font-mono font-bold">{formatTime(elapsedSeconds)}</div>
             <div className="text-sm text-white/70">{runId}</div>
           </div>
         </div>
       </div>
 
-      {/* Human-in-the-loop gate: the pipeline is paused until this is answered */}
-      {pendingInput && (
-        <HumanInputPanel
-          input={pendingInput}
-          onSubmit={handleSubmitInput}
-          submitting={submittingInput}
-        />
-      )}
-
-      {/* Pipeline visualization */}
-      <div className="bg-white dark:bg-slate-800 rounded-lg p-6 overflow-x-auto">
-        <div className="flex items-center justify-between min-w-[800px]">
-          {agents.map((agent, index) => (
-            <div key={agent.id} className="flex items-center">
-              {/* Agent node */}
+      {/* The rounds of this task: one task, several rounds, each with its own results */}
+      {(rounds.length > 1 || isRound) && (
+        <nav
+          aria-label="Rounds of this task"
+          data-testid="rounds-nav"
+          className="flex flex-wrap items-center gap-2 rounded-lg bg-white dark:bg-slate-800 px-4 py-2 text-sm"
+        >
+          <span className="text-slate-500 dark:text-slate-400">
+            {runInfo?.pullRequest ? `Pull request #${runInfo.pullRequest.number}` : 'This task'}:
+          </span>
+          {rounds.map((entry) => {
+            const current = entry.runId === runId;
+            return (
               <button
-                onClick={() => setSelectedAgent(selectedAgent === agent.id ? null : agent.id)}
-                className={`relative flex flex-col items-center group transition-all duration-300 ${
-                  selectedAgent === agent.id ? 'scale-110' : 'hover:scale-105'
+                key={entry.runId}
+                disabled={current || !onOpenRun}
+                onClick={() => onOpenRun?.(entry.runId)}
+                aria-current={current ? 'true' : undefined}
+                title={entry.runId}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                  current
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:hover:bg-slate-100'
                 }`}
               >
-                {/* Circle */}
-                <div
-                  className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-all duration-300 shadow-lg ${
-                    agent.status === 'running'
-                      ? 'bg-blue-500 ring-4 ring-blue-300 ring-opacity-50 animate-pulse'
-                      : agent.status === 'completed'
-                      ? 'bg-green-500'
-                      : agent.status === 'failed'
-                      ? 'bg-red-500'
-                      : agent.status === 'retry'
-                      ? 'bg-yellow-500 animate-bounce'
-                      : 'bg-slate-300 dark:bg-slate-600'
-                  } ${selectedAgent === agent.id ? 'ring-4 ring-indigo-400' : ''}`}
-                >
-                  {agent.status === 'completed' ? (
-                    <span className="text-white text-xl">✓</span>
-                  ) : agent.status === 'failed' ? (
-                    <span className="text-white text-xl">✗</span>
-                  ) : agent.status === 'retry' ? (
-                    <span className="text-white text-xl">↻</span>
-                  ) : (
-                    <span className={agent.status === 'running' ? 'animate-bounce' : ''}>
-                      {agent.icon}
-                    </span>
-                  )}
-                </div>
-                
-                {/* Label */}
-                <span className={`mt-2 text-sm font-medium ${
-                  agent.status === 'running' 
-                    ? 'text-blue-600 dark:text-blue-400' 
-                    : agent.status === 'completed'
-                    ? 'text-green-600 dark:text-green-400'
-                    : agent.status === 'retry'
-                    ? 'text-yellow-600 dark:text-yellow-400'
-                    : 'text-slate-500'
-                }`}>
-                  {agent.name}
-                </span>
-
-                {/* Running indicator */}
-                {agent.status === 'running' && (
-                  <div className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 flex space-x-1">
-                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                  </div>
-                )}
+                Round {entry.round}
+                {entry.status === 'RUNNING' && ' ●'}
+                {entry.status === 'FAILED' && ' ✗'}
               </button>
+            );
+          })}
+          {isRound && runInfo?.parentRunId && (
+            <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">
+              continues <span className="font-mono">{runInfo.parentRunId}</span>
+            </span>
+          )}
+        </nav>
+      )}
 
-              {/* Connector arrow */}
-              {index < agents.length - 1 && (
-                <div className="flex items-center mx-2">
-                  <div className={`h-1 w-8 transition-colors duration-300 ${
-                    agent.status === 'completed' ? 'bg-green-400' : 'bg-slate-300 dark:bg-slate-600'
-                  }`}></div>
-                  <div className={`w-0 h-0 border-t-[6px] border-t-transparent border-b-[6px] border-b-transparent border-l-[8px] transition-colors duration-300 ${
-                    agent.status === 'completed' ? 'border-l-green-400' : 'border-l-slate-300 dark:border-l-slate-600'
-                  }`}></div>
-                </div>
+      {/* Why the run failed: always shown for a failed run, with the real reason */}
+      {lifecycle === 'failed' && (
+        <div
+          className={`border-2 rounded-lg p-4 shadow-md ${
+            notClosedOut
+              ? 'border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20'
+              : 'border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-900/20'
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <span className="text-2xl">{notClosedOut ? 'ℹ️' : '⚠️'}</span>
+            <div className="flex-1">
+              <h3
+                className={`text-base font-bold mb-2 ${
+                  notClosedOut ? 'text-amber-800 dark:text-amber-200' : 'text-red-700 dark:text-red-300'
+                }`}
+              >
+                {notClosedOut ? 'Run Not Closed Out' : `Run Failed${failedNode ? ` at ${failedNode.name}` : ''}`}
+              </h3>
+              <p
+                className={`text-sm whitespace-pre-wrap break-words leading-relaxed mb-3 ${
+                  notClosedOut ? 'text-amber-900 dark:text-amber-100' : 'text-red-900 dark:text-red-100'
+                }`}
+              >
+                {humanizeError(runInfo?.error ?? 'The run failed without recording a reason.')}
+              </p>
+              {onRetry && (
+                <button
+                  onClick={() => onRetry(runId)}
+                  className="px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors"
+                >
+                  {notClosedOut ? '✓ Close out run' : '▶ Retry Run'}
+                </button>
               )}
             </div>
-          ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Current Agent Activity Card */}
-      {(() => {
-        const runningAgent = agents.find(a => a.status === 'running');
-        if (!runningAgent) return null;
-        
-        return (
-          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg p-4 text-white">
-            <div className="flex items-center gap-3">
-              <div className="text-4xl animate-pulse">{runningAgent.icon}</div>
-              <div className="flex-1">
-                <h4 className="font-bold text-lg">{runningAgent.name}</h4>
-                <p className="text-sm text-white/80">
-                  {runningAgent.activity || 'Processing...'}
-                </p>
-                {(runningAgent.filesChanged || runningAgent.testsPassed || runningAgent.findings) && (
-                  <div className="flex gap-4 mt-2 text-xs">
-                    {runningAgent.filesChanged && (
-                      <span className="bg-white/20 px-2 py-1 rounded">
-                        📄 {runningAgent.filesChanged} file{runningAgent.filesChanged > 1 ? 's' : ''}
-                      </span>
-                    )}
-                    {runningAgent.testsPassed !== undefined && (
-                      <span className="bg-white/20 px-2 py-1 rounded">
-                        ✓ {runningAgent.testsPassed} tests
-                      </span>
-                    )}
-                    {runningAgent.findings && (
-                      <span className="bg-white/20 px-2 py-1 rounded">
-                        🔍 {runningAgent.findings} finding{runningAgent.findings > 1 ? 's' : ''}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
+      {/* Human-in-the-loop gate: the pipeline is paused until this is answered */}
+      {pendingInput && (
+        <HumanInputPanel input={pendingInput} onSubmit={handleSubmitInput} submitting={submittingInput} />
+      )}
+
+      <PipelineStrip nodes={derived.nodes} selectedId={selectedAgent} onSelect={setSelectedAgent} />
+
+      {/* What is happening right now (review and security can run side by side) */}
+      {runningNodes.map((node) => (
+        <div key={node.id} className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg p-4 text-white">
+          <div className="flex items-center gap-3">
+            <div className="text-4xl animate-pulse">{node.icon}</div>
+            <div className="flex-1">
+              <h4 className="font-bold text-lg">{node.name}</h4>
+              <p className="text-sm text-white/80">{node.activity || 'Processing...'}</p>
             </div>
           </div>
-        );
-      })()}
+        </div>
+      ))}
 
-      {/* Selected agent report */}
-      {selectedAgentData && (
+      {/* Selected step report */}
+      {selectedNode && (
         <div className="bg-slate-900 rounded-lg overflow-hidden">
           <div className="px-4 py-3 bg-slate-800 border-b border-slate-700 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-xl">{selectedAgentData.icon}</span>
-              <span className="text-sm font-semibold text-slate-100">
-                {selectedAgentData.name} Report
-              </span>
+              <span className="text-xl">{selectedNode.icon}</span>
+              <span className="text-sm font-semibold text-slate-100">{selectedNode.name} Report</span>
             </div>
-            <button
-              onClick={() => setSelectedAgent(null)}
-              className="text-xs text-slate-400 hover:text-white"
-            >
+            <button onClick={() => setSelectedAgent(null)} className="text-xs text-slate-400 hover:text-white">
               Close
             </button>
           </div>
           <div className="p-4">
-            <AgentDetail 
-              step={selectedAgentData.id} 
-              artifact={selectedArtifact}
-              logs={agentLogs}
-              isRunning={isRunning && selectedAgentData.status === 'running'}
+            <AgentDetail
+              step={selectedNode.id}
+              node={selectedNode}
+              artifact={artifactForNode(selectedNode, artifacts)}
+              logs={selectedLogs}
+              isRunning={selectedNode.status === 'running'}
+              error={selectedNode.id === derived.failedNodeId ? (runInfo?.error ?? null) : null}
+              exchange={derived.exchanges[0]}
+              events={events}
+              pendingInput={pendingInput}
             />
           </div>
         </div>
       )}
 
-      {/* Technical Logs - only show when no agent is selected (general overview) */}
-      {!selectedAgent && isRunning && logs.length > 0 && (
+      {/* Technical logs - only when no step is selected (general overview) */}
+      {!selectedAgent && lifecycle === 'running' && outputLines.length > 0 && (
         <div className="bg-slate-900 rounded-lg overflow-hidden">
           <div className="w-full px-4 py-2 bg-slate-800 border-b border-slate-700 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -796,9 +789,9 @@ export function PipelineView({ runId, isRunning, onClose }: PipelineViewProps) {
             </div>
           </div>
           <div className="p-4 max-h-48 overflow-y-auto font-mono text-xs text-slate-300 space-y-1">
-            {logs.slice(-30).map((log, index) => (
+            {outputLines.slice(-30).map((line, index) => (
               <div key={index} className="hover:bg-slate-800 px-1 rounded">
-                {log.text}
+                {line}
               </div>
             ))}
           </div>

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { PendingInput } from '../../shared/types';
+import type { DeliveryEdits, PendingInput } from '../../shared/types';
+import { DeliveryApprovalForm } from './DeliveryApprovalForm';
 
 interface HumanInputPanelProps {
   input: PendingInput;
@@ -9,6 +10,7 @@ interface HumanInputPanelProps {
     guidance?: string;
     approvePush?: boolean;
     approvePullRequest?: boolean;
+    edits?: DeliveryEdits;
   }) => void;
   submitting?: boolean;
 }
@@ -96,86 +98,7 @@ export function HumanInputPanel({ input, onSubmit, submitting = false }: HumanIn
         )}
 
         {input.reason === 'DELIVERY_APPROVAL_REQUIRED' && (
-          <>
-            <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md p-3">
-              <p className="text-sm text-green-800 dark:text-green-200">
-                ✓ All quality gates passed and the work is committed locally.
-              </p>
-            </div>
-
-            <dl className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                  Branch
-                </dt>
-                <dd className="font-mono text-slate-800 dark:text-slate-200 break-all">{input.branch}</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                  Target
-                </dt>
-                <dd className="font-mono text-slate-800 dark:text-slate-200 break-all">{input.baseBranch}</dd>
-              </div>
-              {input.commitSha && (
-                <div>
-                  <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                    Commit
-                  </dt>
-                  <dd className="font-mono text-slate-800 dark:text-slate-200">
-                    {input.commitSha.slice(0, 8)}
-                  </dd>
-                </div>
-              )}
-              {input.filesChanged !== undefined && (
-                <div>
-                  <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                    Files changed
-                  </dt>
-                  <dd className="text-slate-800 dark:text-slate-200">{input.filesChanged}</dd>
-                </div>
-              )}
-            </dl>
-
-            {input.pullRequestTitle && (
-              <div>
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1">
-                  Proposed pull request
-                </h4>
-                <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                  {input.pullRequestTitle}
-                </p>
-              </div>
-            )}
-
-            <div className="pt-1">
-              <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3">
-                How should this be delivered?
-              </h4>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  disabled={submitting}
-                  onClick={() => onSubmit({ approvePush: true, approvePullRequest: true })}
-                  className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
-                >
-                  Push & open pull request
-                </button>
-                <button
-                  disabled={submitting}
-                  onClick={() => onSubmit({ approvePush: true, approvePullRequest: false })}
-                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                >
-                  Push only
-                </button>
-                <button
-                  disabled={submitting}
-                  onClick={() => onSubmit({ approvePush: false, approvePullRequest: false })}
-                  className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50 transition-colors"
-                >
-                  Keep local
-                </button>
-              </div>
-            </div>
-          </>
+          <DeliveryApprovalForm input={input} submitting={submitting} onSubmit={onSubmit} />
         )}
 
         {input.reason === 'ESCALATION_REQUIRED' && (

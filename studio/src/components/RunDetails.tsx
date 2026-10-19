@@ -65,6 +65,24 @@ function humanizeError(raw: string): string {
     );
   }
 
+  // Handle validation errors from input schema
+  if (/Invalid input data/i.test(msg)) {
+    const cleanMsg = msg
+      .replace(/Invalid input data:\s*/i, '')
+      .replace(/^-\s*/gm, '• ')
+      .replace(/Too small: expected string to have >=(\d+) characters/g, 
+               'Must be at least $1 characters long')
+      .replace(/Too large: expected string to have <=(\d+) characters/g, 
+               'Must be at most $1 characters long')
+      .trim();
+    
+    return (
+      'Invalid input provided:\n\n' +
+      cleanMsg +
+      '\n\nPlease fix the input and try again.'
+    );
+  }
+
   return msg;
 }
 
@@ -174,15 +192,20 @@ export function RunDetails({ runId, onClose, onResume }: RunDetailsProps) {
 
               {/* Failure reason */}
               {isFailed && (
-                <div className="border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
-                  <h3 className="text-sm font-semibold text-red-700 dark:text-red-300 mb-2">
-                    ✗ Why it failed
-                  </h3>
-                  <p className="text-sm text-red-800 dark:text-red-200 whitespace-pre-wrap break-words">
-                    {summary?.error
-                      ? humanizeError(summary.error)
-                      : 'The run failed and did not record a reason.'}
-                  </p>
+                <div className="border-2 border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-900/20 rounded-lg p-4 shadow-md">
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">⚠️</span>
+                    <div className="flex-1">
+                      <h3 className="text-base font-bold text-red-700 dark:text-red-300 mb-2">
+                        Why it failed
+                      </h3>
+                      <p className="text-sm text-red-900 dark:text-red-100 whitespace-pre-wrap break-words leading-relaxed">
+                        {summary?.error
+                          ? humanizeError(summary.error)
+                          : 'The run failed and did not record a reason. Check the execution steps below for details.'}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               )}
 

@@ -13,10 +13,12 @@ interface SidebarProps {
   onBrowseRepo: () => void;
   onOpenSettings: () => void;
   onRemoveRepo?: (repoName: string) => void;
+  /** Review comments waiting on pull requests, per repository name. */
+  badges?: Record<string, number>;
   loading: boolean;
 }
 
-export function Sidebar({ repos, activeRepo, onSelectRepo, onBrowseRepo, onOpenSettings, onRemoveRepo, loading }: SidebarProps) {
+export function Sidebar({ repos, activeRepo, onSelectRepo, onBrowseRepo, onOpenSettings, onRemoveRepo, badges, loading }: SidebarProps) {
   return (
     <aside className="w-64 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col">
       {/* Header */}
@@ -61,7 +63,17 @@ export function Sidebar({ repos, activeRepo, onSelectRepo, onBrowseRepo, onOpenS
                       : 'text-slate-700 dark:text-slate-300'
                   }`}
                 >
-                  <div className="font-medium pr-6">{repo.name}</div>
+                  <div className="font-medium pr-6 flex items-center gap-2">
+                    <span className="truncate">{repo.name}</span>
+                    {(badges?.[repo.name] ?? 0) > 0 && (
+                      <span
+                        title={`${badges![repo.name]} review comment${badges![repo.name] === 1 ? '' : 's'} waiting on pull requests`}
+                        className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full text-xs font-semibold bg-amber-500 text-white"
+                      >
+                        {badges![repo.name]}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-slate-500">
                     {repo.recentRuns} runs
                   </div>

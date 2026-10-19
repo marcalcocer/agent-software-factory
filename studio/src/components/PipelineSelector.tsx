@@ -35,8 +35,8 @@ const OPTIONAL_STAGES: StageInfo[] = [
   {
     id: 'documentation',
     label: 'Documentation',
-    description: 'Update docs, changelog, and write PR description',
-    warningWhenDisabled: 'Documentation will not be updated',
+    description: 'Update the README, changelog and docs when the change makes them stale',
+    warningWhenDisabled: 'Documentation will not be checked or updated (the pull-request text is still written)',
   },
 ];
 
@@ -44,6 +44,7 @@ const MANDATORY_STAGES = [
   { label: 'Prepare', description: 'Repository setup and validation' },
   { label: 'PM Architect', description: 'Task planning and architecture' },
   { label: 'Developer', description: 'Code implementation' },
+  { label: 'PR Writer', description: 'Commit message, pull-request title and description' },
   { label: 'Delivery', description: 'Commit and create pull request' },
 ];
 

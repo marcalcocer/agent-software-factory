@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import type { PrWatchSettingsBundle } from '../../shared/types';
 import type { ThemeSetting } from '../theme';
+import { PullRequestSettings } from './PullRequestSettings';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -27,6 +29,9 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange }: SettingsPanelP
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  /** Pull-request settings are owned by the watcher; `null` until they have been read. */
+  const [prSettings, setPrSettings] = useState<PrWatchSettingsBundle | null>(null);
+  const [repoNames, setRepoNames] = useState<Array<{ name: string }>>([]);
 
   useEffect(() => {
     if (isOpen) {
@@ -41,6 +46,13 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange }: SettingsPanelP
       if (savedSettings?.global) {
         setSettings(savedSettings.global);
       }
+      // Independent of the general settings: if either is unavailable the rest still works.
+      const [bundle, repos] = await Promise.all([
+        window.api.invoke('pr-watch:get-settings').catch(() => null),
+        window.api.invoke('factory:list-repos').catch(() => []),
+      ]);
+      setPrSettings(bundle);
+      setRepoNames(repos.map((repo) => ({ name: repo.name })));
     } catch (error) {
       console.error('Failed to load settings:', error);
     } finally {
@@ -52,6 +64,9 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange }: SettingsPanelP
     setSaving(true);
     try {
       await window.api.invoke('settings:update', { global: settings });
+      if (prSettings) {
+        await window.api.invoke('pr-watch:save-settings', { defaults: prSettings.defaults, repos: prSettings.repos });
+      }
       onClose();
     } catch (error) {
       console.error('Failed to save settings:', error);
@@ -64,7 +79,7 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange }: SettingsPanelP
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-lg">
+      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
@@ -79,7 +94,7 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange }: SettingsPanelP
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-6">
+        <div className="p-6 space-y-6 overflow-y-auto">
           {loading ? (
             <div className="text-center text-slate-500 py-8">Loading settings...</div>
           ) : (
@@ -177,6 +192,12 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange }: SettingsPanelP
                   <option value="error">Error</option>
                 </select>
               </div>
+
+              {prSettings && (
+                <div className="pt-4 border-t border-slate-200 dark:border-slate-700">
+                  <PullRequestSettings value={prSettings} repos={repoNames} onChange={setPrSettings} />
+                </div>
+              )}
             </>
           )}
         </div>
