@@ -162,7 +162,8 @@ npm run factory -- pr-feedback \
 # This will:
 # 1. Triage the feedback
 # 2. Post replies to each comment
-# 3. Kick off a new factory run with the follow-up task
+# 3. Kick off a factory run with the follow-up task, on the pull request's own branch
+#    (the new commit updates the PR - it does not open a second one)
 # 4. The new run gets its own log directory
 
 # Check both runs
@@ -177,14 +178,17 @@ cd studio
 npm run dev
 ```
 
-1. Select a repo that has an open PR
-2. Click **PR Feedback** to expand the panel
-3. Enter the PR number
-4. Check **Post replies to PR** if you want visible output
-5. Check **Auto-rerun factory** if you want a follow-up task
-6. Click **Triage Feedback**
-7. Watch the pipeline view stream the triage agent's work
-8. Check the resulting artifact for routing decisions
+1. Open a repository whose pull request was opened by the factory
+2. The **Pull requests** panel lists what it is watching ("Watching 1 open pull request - checked 20 s ago")
+3. Leave a comment on the pull request on GitHub (a conversation comment, or an inline one)
+4. Within the check interval (1 minute by default; **Check now** to skip the wait) the PR shows up as
+   *New comments*, and the repository gets a badge in the sidebar
+5. With the automatic steps on, the comments are classified by themselves; if they ask for code changes a
+   **round** starts and appears in the run history nested under the original task ("Round 2 of this task")
+6. When the round reaches the delivery gate, approve the push: the existing pull request is updated
+7. Start a review but do not submit it: your draft comments are ignored. Submit it, and they are detected on the next check
+8. Open **Settings → Pull requests** (sidebar) to change the interval or the automatic steps, globally or per repository
+9. When a round reuses the plan, open it: the PM Architect step is marked *skipped* with the reason
 
 ### Safety Guards
 
@@ -201,6 +205,141 @@ Example of blocker escalation:
   "excerpt": "Can we just skip this failing test for now?",
   "action": "ESCALATE"
 }
+```
+
+---
+
+## Feature 3: Merging a Pull Request, and Tasks That No Longer Stack
+
+Two things were added together: the **Pull requests** panel can merge a pull request (after you
+approve it), and a new task never starts from a branch the factory made for an earlier one.
+
+### A. Stacking fix (no tokens, no GitHub)
+
+The problem it fixes: after a run, the factory leaves its branch checked out; the next task used to be
+cut from it, so its pull request contained the previous task's commits too.
+
+1. In a test repository, leave the working copy on a `factory/...` branch that has commits
+   `master` does not (this is what any finished run leaves behind):
+   ```bash
+   git -C <repo> checkout factory/<some-earlier-task>
+   git -C <repo> log --oneline master..HEAD        # shows the earlier task's commit(s)
+   ```
+2. Start a new task from the Studio (or `run --repo <repo> --task "..." --dry-run` for a free check of the
+   choice, which only records it).
+3. Look at the run's events - it says where it started from and why:
+   ```bash
+   grep base_branch_chosen factory/logs/<run-id>/events.ndjson
+   # "Started from master instead of factory/<some-earlier-task>: ... would carry its commits ..."
+   ```
+4. For a real (non-dry) run, once the branch exists: **`git -C <repo> log --oneline master..HEAD` must show
+   only this task's own commits** - nothing from the earlier task. (Before the fix it showed both.)
+5. A branch you made yourself is still respected: from `my-feature` (not `factory/...`, no pull request opened
+   from it) the new branch is cut from `my-feature`.
+6. After merging a pull request on GitHub (without the Studio), your local `master` is behind: a new task is
+   still cut from GitHub's `master`, so it contains what was just merged. `git log --oneline -3` on the new
+   branch shows the squash commit.
+
+### B. Merging (Studio)
+
+Needs a pull request the factory opened, with no unhandled review comments. Use a throwaway repository
+the first time: **merging publishes** (a push to the default branch can trigger a deploy).
+
+1. Open the repository in the Studio. Every open pull request is a card. One with no comments says
+   *"Do you approve this pull request?"* and offers only **"Yes - I reviewed it and I have no comments"**.
+   There is no merge button yet.
+2. Click **Check now** if the PR is new. It must show no conflicts: with conflicts the card says
+   *"It cannot be merged yet"* and offers nothing.
+3. Click the approval button. The card shows **Approved**, the commit it applies to, and
+   **Merge with squash...** (plus **Withdraw approval**).
+4. *Approval is bound to a commit:* push anything to the PR branch (or let a round do it), then **Check now**.
+   The card must go back to the question and say *"This pull request changed after you approved it"*.
+5. Click **Merge with squash...**. After a few seconds a preview appears: *"Squash N commits into one on
+   master"*, the size of the change, an editable **Subject** (ending in `(#<number>)`) and **Description**,
+   and a ticked **Delete the branch ... after merging**.
+   - The text should describe the final result, not the review back-and-forth ("address review feedback...").
+   - Signed out of Claude (`claude login` needed)? The preview says so, shows the pull request's own title and
+     summary instead, and offers **Try the AI again**. The merge still works.
+6. Edit the subject if you like and click **Squash and merge**. Afterwards:
+   - a green notice says *Merged #N* with the commit (a link) and what else happened;
+   - on GitHub: one new commit on the base branch with exactly your message; the PR shows *Merged*;
+     the branch is gone (if you left the box ticked);
+   - locally: `git branch --show-current` is the base branch and `git status` is clean.
+7. Cases to try:
+   - uncommitted changes in the working copy -> merged, but the notice says the working copy stayed where it
+     was and why (your changes are untouched);
+   - a run still going in that repository -> same: merged, working copy left alone;
+   - a new review comment on GitHub after approving, before merging -> refused: *"A review comment has arrived
+     that nobody has dealt with yet"*.
+8. **Dry run** (Settings -> dry run by default): the preview uses the plain title/summary (no model call) and
+   **Squash and merge** reports *"Dry run - nothing was merged"* after checking everything.
+
+Command-line equivalent (nothing is merged by the first two):
+```bash
+npm run factory -- pr-check --repo <repo>                                   # headSha, mergeBlockers, mergeWarnings
+npm run factory -- pr-merge-draft --repo <repo> --pr N                      # PR_MERGE_DRAFT_JSON {subject, body, source, ...}
+npm run factory -- pr-merge --repo <repo> --pr N --head-sha <sha> --subject="x (#N)" --dry-run
+npm run factory -- pr-merge --repo <repo> --pr N --head-sha 0000000000000000000000000000000000000000 --subject="x"
+#   -> refused: "The pull request changed after you approved it ..." (the approved commit must be the current one)
+```
+
+---
+
+## Feature 4: The PR Writer (commit message and pull-request text)
+
+The commit message, the pull-request title and the pull-request description used to be written by the
+documentation agent. So a task that switched documentation off was published with the raw task text as its
+title and a placeholder as its description. They now have their own mandatory agent, the **PR Writer**; the
+documentation agent only decides whether the docs need updating.
+
+### A. No tokens (dry run)
+
+```bash
+cd factory
+npm run smoke        # 70 checks, including two scenarios for this:
+                     #   documentation OFF            -> docs SKIPPED, PR writer COMPLETED, delivery uses its text
+                     #   every optional stage OFF     -> the PR text still exists and says "not run" for all four
+```
+
+### B. In the Studio
+
+1. Start a small task on a test repository with **Docs unchecked** (and, if you like, QA / Review / Security too).
+2. Watch the pipeline strip: `... Docs ⊘ → PR Writer → Delivery`. The **PR Writer** node is always there and
+   cannot be switched off.
+3. Open the **PR Writer** node. It shows the **commit message**, the **pull-request title** and the
+   **description** (with the labels), and says what was not shown to it (lockfiles are left out).
+4. In the description, find **Quality gates**. For every stage you switched off it must read
+   `not run (disabled for this task)`; for the others it shows the real result (QA: `PASS - 34 of 34 tests passed`).
+   This section is written by the factory, not by the AI.
+5. At the **delivery gate**, the commit message, title and description are the PR Writer's - not the raw task
+   text and not a placeholder. Edit anything you like; push & open the pull request. On GitHub the title and
+   description are exactly what the form showed.
+6. `git log -1` on the branch: the commit message is the PR Writer's (it is no longer the planner's early guess,
+   which was written before any code existed).
+7. With **Docs on**, open the **Docs** node: it lists the documentation files it updated (or says
+   "Nothing to do" with the reason) - and nothing about the pull request.
+
+### C. When the AI cannot answer
+
+This only happens if the model drops out at the very last step (a usage limit or an expired session right
+after QA passed) - earlier steps would have failed first - so it is hard to provoke by hand. It is covered by
+automated checks, and this is what you would see: the PR Writer node is marked **FALLBACK** ("Drafted without
+the AI", with the reason), the delivery gate shows an amber note, and the form is filled with a real description
+built from the run's reports (summary, changed files, QA commands, gates) instead of a placeholder. Nothing
+blocks the delivery; read the text, edit it if you like, and continue.
+
+### D. A round on an existing pull request
+
+Comment on the pull request and let a round run. The PR Writer node is listed as **skipped** (amber ⊘): *"the
+pull request already has its title and description"*. The round's commit message is the usual
+`chore: address review feedback on PR #N (round R)`; the title and description on GitHub are left alone.
+
+### Command line
+
+```bash
+npm run factory -- run --repo <repo> --task "..." --no-docs        # docs off; the PR writer still runs
+ls factory/logs/<run-id>/ | grep 07-                                 # 07-documentation.json (SKIPPED) and 07-pr-writer.json
+cat factory/logs/<run-id>/07-pr-writer.json | jq '.status, .data.pullRequest.title'
 ```
 
 ---
@@ -265,6 +404,26 @@ See `SELF-HOSTED-RUNNER.md` for full cost analysis and setup guide.
 - [ ] Factory never re-triages its own marked replies
 - [ ] Test-weakening requests get escalated, not auto-applied
 - [ ] Studio UI streams triage agent output
+
+### PR Writer
+- [ ] The PR Writer node is always in the pipeline and cannot be switched off (`--no-docs` only skips Docs)
+- [ ] With Docs off, the delivery gate and the pull request on GitHub have a real title and description (not the raw task)
+- [ ] The "Quality gates" section says `not run (disabled for this task)` for every switched-off stage
+- [ ] The commit carries the PR Writer's message, not the planner's early draft
+- [ ] Signed out of Claude: the step is FALLBACK, the gate shows a note, and the delivery still works
+- [ ] A round on an existing pull request lists the PR Writer as skipped and leaves the title / description alone
+- [ ] The Docs node lists the documentation files it updated, or says nothing needed updating
+
+### Merging and Stacking
+- [ ] A new task started while a `factory/...` branch is checked out is cut from the default branch (`git log master..HEAD` shows only its own commits)
+- [ ] A pull request with no comments asks *"Do you approve this pull request?"*; there is no merge button before approving
+- [ ] A pull request with conflicts says why it cannot be merged and offers no approval
+- [ ] Pushing to the branch after approving makes the approval void (the question comes back)
+- [ ] The squash message describes the final result and ends with `(#N)`; it can be edited before merging
+- [ ] With Claude signed out, the message falls back to the PR title/summary and says so
+- [ ] After merging: one new commit on the base branch, the branch deleted (if ticked), the working copy back on the base branch
+- [ ] Uncommitted changes, or a run in progress, leave the working copy alone and the notice says why
+- [ ] A review comment arriving after approval stops the merge
 
 ---
 
