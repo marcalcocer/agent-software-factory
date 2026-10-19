@@ -14,7 +14,12 @@ import type {
   RunArtifact,
   RunEventRecord,
 } from '../../shared/types';
-import { readJson, readRunEvents as readEventsIn, readRunState as readRunStateIn } from '../services/run-state.js';
+import {
+  readJson,
+  readRunArtifacts,
+  readRunEvents as readEventsIn,
+  readRunState as readRunStateIn,
+} from '../services/run-state.js';
 import { ensureClaudeAuth } from '../services/claude-auth.js';
 import { mainWindow } from '../main.js';
 
@@ -917,41 +922,7 @@ ipcMain.handle(
  * Reads the numbered artifact JSON files written by each agent.
  */
 ipcMain.handle('factory:get-artifacts', async (_event, runId: string): Promise<RunArtifact[]> => {
-  const runDir = runDirOf(runId);
-
-  if (!fs.existsSync(runDir)) {
-    return [];
-  }
-
-  const artifacts: RunArtifact[] = [];
-
-  try {
-    const files = fs
-      .readdirSync(runDir)
-      .filter((f) => /^\d{2}-.*\.json$/.test(f))
-      .sort();
-
-    for (const file of files) {
-      try {
-        const raw = JSON.parse(fs.readFileSync(path.join(runDir, file), 'utf8'));
-        artifacts.push({
-          step: raw.step,
-          attempt: raw.attempt ?? 1,
-          status: raw.status,
-          model: raw.model,
-          durationMs: raw.durationMs,
-          writtenAt: raw.writtenAt,
-          data: raw.data ?? {},
-        });
-      } catch {
-        // Skip corrupt artifact files
-      }
-    }
-  } catch {
-    return [];
-  }
-
-  return artifacts;
+  return readRunArtifacts(runDirOf(runId));
 });
 
 /**

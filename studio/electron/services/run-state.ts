@@ -5,7 +5,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import type { FactoryRun, RunEventRecord, RunStatus } from '../../shared/types';
+import type { FactoryRun, RunArtifact, RunEventRecord, RunStatus } from '../../shared/types';
 import { inferInterruption } from '../../shared/runInference';
 
 export function readJson<T>(file: string): T | null {
@@ -30,6 +30,38 @@ export function readRunEvents(runDir: string): RunEventRecord[] {
     }
   }
   return events;
+}
+
+/**
+ * The step artifacts (`01-pm-architect.json`, `02-developer.attempt-2.json`, ...) of a run
+ * directory, in file-name order. A file that cannot be read - torn while the factory writes it - is
+ * skipped rather than failing the whole read.
+ */
+export function readRunArtifacts(runDir: string): RunArtifact[] {
+  if (!fs.existsSync(runDir)) return [];
+  const artifacts: RunArtifact[] = [];
+  try {
+    const files = fs
+      .readdirSync(runDir)
+      .filter((file) => /^\d{2}-.*\.json$/.test(file))
+      .sort();
+    for (const file of files) {
+      const raw = readJson<any>(path.join(runDir, file));
+      if (!raw) continue;
+      artifacts.push({
+        step: raw.step,
+        attempt: raw.attempt ?? 1,
+        status: raw.status,
+        model: raw.model,
+        durationMs: raw.durationMs,
+        writtenAt: raw.writtenAt,
+        data: raw.data ?? {},
+      });
+    }
+  } catch {
+    return [];
+  }
+  return artifacts;
 }
 
 /**
