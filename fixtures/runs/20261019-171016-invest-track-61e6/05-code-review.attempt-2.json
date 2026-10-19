@@ -1,0 +1,65 @@
+{
+  "step": "code-review",
+  "attempt": 2,
+  "status": "APPROVED_WITH_SUGGESTIONS",
+  "model": "claude-sonnet-5-5",
+  "durationMs": 11749,
+  "writtenAt": "2026-10-19T17:18:37.192Z",
+  "data": {
+    "status": "APPROVED_WITH_SUGGESTIONS",
+    "summary": "The privacy leak is fixed: the Profit value and the Gain/Loss badge are both masked in privacy mode. The theme utility is dependency-injected and tested, and the semantic tokens and dark mode are wired up as specified. QA passed 61/61. Only minor issues remain: sign-coloured text still leaks the sign in privacy mode, and the code mixes `var` and `const`.",
+    "scores": {
+      "correctness": 4,
+      "maintainability": 4,
+      "conventions": 4,
+      "testQuality": 4
+    },
+    "findings": [
+      {
+        "severity": "MINOR",
+        "file": "ui/src/components/investments/Summary.jsx",
+        "line": 57,
+        "issue": "In privacy mode the Benefit and Profit values are still coloured green or red by sign (valueClassName on lines 57 and 63). This reveals whether the result is positive or negative, which is the same leak the developer just closed for the badge.",
+        "suggestion": "Pass a neutral class when isPrivate is true, e.g. `isPrivate ? undefined : signClass(benefit)`, and do the same for profit.",
+        "rule": null
+      },
+      {
+        "severity": "MINOR",
+        "file": "ui/src/lib/__tests__/theme.test.js",
+        "line": 1,
+        "issue": "Tests use `var` for locals, which follows AGENTS.md. The production code mixes `const` (ThemeToggle, Summary) and `var` (theme.js), so the style is inconsistent.",
+        "suggestion": "Use `var` consistently for method-local variables in new code, as AGENTS.md asks. This is a style point only.",
+        "rule": "AGENTS.md: use var for local variables"
+      },
+      {
+        "severity": "MINOR",
+        "file": "ui/src/components/ThemeToggle.jsx",
+        "line": 6,
+        "issue": "`isDark` starts as false and is corrected in an effect, so the icon and aria-label briefly show the wrong state on hydration when the saved theme is dark. The page itself does not flash, because the inline script sets the class before paint.",
+        "suggestion": "Accept this, or add `suppressHydrationWarning` or a lazy initial state. It is not blocking.",
+        "rule": null
+      }
+    ],
+    "conventionViolations": [
+      {
+        "rule": "Use var for local variables inside methods",
+        "source": "PROJECT_AGENTS_MD",
+        "file": "ui/src/components/ThemeToggle.jsx",
+        "detail": "Uses `const` for locals. The same is true in Summary.jsx and Header.astro. This is a minor drift: the rule is written for Java, and the JS in this repo is mixed."
+      }
+    ],
+    "architectureNotes": [
+      "Theme logic is isolated in lib/theme.js with an injected storage and root, so it is testable without a DOM.",
+      "The inline script in Layout.astro duplicates the resolve logic from theme.js, because it must run before the bundle loads. Keep the two in sync.",
+      "No chart or service files were touched, as the acceptance criteria require."
+    ],
+    "positives": [
+      "Privacy masking now covers the Profit value and the sign badge.",
+      "Dependency-injected theme utility with tests for storage failures and invalid values.",
+      "Semantic CSS-variable tokens for light and dark, with darkMode set to 'class'.",
+      "Header mobile menu keeps aria-expanded in sync.",
+      "The Header link list is deduplicated into a single array that drives both menus."
+    ],
+    "mustFixBeforeMerge": []
+  }
+}

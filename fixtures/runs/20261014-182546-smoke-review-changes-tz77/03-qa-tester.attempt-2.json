@@ -1,0 +1,35 @@
+{
+  "step": "qa-tester",
+  "attempt": 2,
+  "status": "PASS",
+  "model": "dry-run-stub",
+  "durationMs": 0,
+  "writtenAt": "2026-10-14T18:25:46.119Z",
+  "data": {
+    "verdict": "PASS",
+    "passed": true,
+    "summary": "[dry-run] Build and suite green on attempt 2; acceptance criteria verified.",
+    "executedCommands": [
+      {
+        "command": "npm test",
+        "exitCode": 0,
+        "durationMs": 3800,
+        "timedOut": false
+      }
+    ],
+    "totals": {
+      "tests": 24,
+      "passed": 24,
+      "failed": 0,
+      "skipped": 0
+    },
+    "failures": [],
+    "e2eChecks": [],
+    "weakenedVerification": {
+      "detected": false,
+      "evidence": []
+    },
+    "bugReports": [],
+    "recommendation": "[dry-run] No action required."
+  }
+}

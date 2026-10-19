@@ -13,9 +13,9 @@ or documentation change you make is committed once it is finished and verified.
 
 - **One logical change per commit.** Do not mix unrelated changes, and do not leave finished work
   uncommitted at the end of a task.
-- **Verify before committing.** Run `npm run typecheck`, and the checks that cover what you touched
-  (`npm run smoke --workspace=factory` after a change to the workflow or the agents). Do not commit
-  code that fails them.
+- **Verify before committing.** Run `npm run check` (typecheck, unit tests and the graph smoke test)
+  or, for a small change, the part of it that covers what you touched. Do not commit code that
+  fails. A change to the workflow or the agents always needs `npm run smoke`.
 - **Message.** Conventional Commits: `type(scope): subject`. Types: `feat`, `fix`, `refactor`,
   `perf`, `test`, `docs`, `build`, `ci`, `chore`. Scopes: `factory`, `studio`, `ci`, `docs`, `test`,
   or none. The subject is imperative, at most 72 characters, with no final period. Add a body when

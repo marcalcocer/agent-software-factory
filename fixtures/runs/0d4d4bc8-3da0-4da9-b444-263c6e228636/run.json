@@ -1,0 +1,12 @@
+{
+  "runId": "0d4d4bc8-3da0-4da9-b444-263c6e228636",
+  "task": "PR feedback triage for #8: feat(ui): add design tokens, dark mode and modern app shell",
+  "repoPath": "/home/dev/workspace/invest-track",
+  "repoName": "invest-track",
+  "branch": "factory/i-want-to-do-a-big-refactor-on-t-61e6",
+  "baseBranch": "master",
+  "models": {},
+  "kind": "pr-feedback",
+  "dryRun": false,
+  "startedAt": "2026-10-19T17:33:54.155Z"
+}

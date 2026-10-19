@@ -1,0 +1,219 @@
+{
+  "step": "pm-architect",
+  "attempt": 1,
+  "status": "REUSED",
+  "model": null,
+  "durationMs": null,
+  "writtenAt": "2026-10-19T17:35:00.622Z",
+  "data": {
+    "plan": {
+      "summary": "Phase 1 of a phased UI modernization of the Astro + React 19 + Tailwind 3 app in ui/. Add a design-token foundation (Inter font, semantic CSS variables, light/dark theme), small accessible UI primitives (Button, Card, Badge, Skeleton) in the shadcn/Radix style, a modern fintech app shell (sticky header with a working mobile menu, privacy toggle and theme toggle), a redesigned Summary KPI section, skeleton loading, and a restyled BaseModal. Existing chart dashboards, services and lib logic stay untouched. Later phases are out of scope.",
+      "understanding": "After Phase 1 the home page looks like a professional finance dashboard. It has a clean sticky header with brand, nav, privacy toggle and light/dark toggle. The summary uses KPI cards with semantic green/red profit indicators and tabular numerals. Skeleton placeholders replace the spinner, and all modals share one polished shell. Data fetching, privacy mode, routing under base /invest-track/ and the chart dashboards behave exactly as before.",
+      "ambiguityLevel": "MINOR",
+      "clarificationQuestions": [],
+      "assumptions": [
+        "Stack decisions were delegated to us: keep Astro + React + Tailwind 3 (no framework migration), add clsx, tailwind-merge and class-variance-authority for primitives, and keep @heroicons/react for icons. Radix is not added in Phase 1, to keep dependencies minimal.",
+        "Keep the current dashboards the same means ForecastGraphModal, CombinedForecastGraphModal, InvestmentGraphModal and ChartUtils chart config/data are not changed; they only inherit the new BaseModal chrome.",
+        "Delivery is per phase; this plan covers Phase 1 only.",
+        "Dark mode uses Tailwind darkMode 'class', persisted in localStorage with prefers-color-scheme fallback, applied by an inline script in Layout.astro to avoid a flash.",
+        "Inter is self-hosted/system-fallback via CSS font stack to avoid a network dependency; if a package is needed, @fontsource-variable/inter is used.",
+        "The test runner is node --test on src/**/*.test.js, so only pure JS logic gets unit tests; components are verified via npm run build."
+      ],
+      "acceptanceCriteria": [
+        "npm run build in ui/ exits 0 and npm test passes, including all existing tests.",
+        "tailwind.config.mjs defines darkMode 'class' and semantic color tokens backed by CSS variables in src/styles/global.css for both light and dark themes.",
+        "Header renders brand, Home/About links with the active state, PrivacyToggle and ThemeToggle; the mobile menu opens and closes via a button with aria-expanded updated.",
+        "Toggling the theme adds or removes the 'dark' class on html and persists the choice in localStorage; reload keeps it with no flash.",
+        "Summary shows 4 KPI cards (Invested, Obtained, Benefit, Profit) for total and for organic (collapsible), with profit and benefit colored by sign, and values masked when privacy mode is on.",
+        "While loading, Home renders skeleton placeholders instead of LoadingSpinner.",
+        "BaseModal keeps the same props (children, onClose, maxWidth), closes on Escape and backdrop click, has role='dialog' and aria-modal, and all existing modals still open and close.",
+        "No chart component or lib service file is modified except for the new theme utility."
+      ],
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Add styling utility dependencies",
+          "description": "Add clsx, tailwind-merge and class-variance-authority to ui/package.json dependencies with pinned caret versions, then update the lockfile. Add src/lib/cn.js (NEW) exporting cn(...inputs) combining clsx and twMerge.",
+          "type": "INFRA",
+          "targetFiles": [
+            "ui/package.json",
+            "ui/package-lock.json",
+            "ui/src/lib/cn.js"
+          ],
+          "risk": "LOW",
+          "dependsOn": []
+        },
+        {
+          "id": "T2",
+          "title": "Design tokens and Tailwind theme",
+          "description": "Define CSS variables (background, foreground, card, muted, border, primary, success, danger, ring, radius) for :root and .dark in global.css. Extend tailwind.config.mjs with darkMode 'class', the token colors, Inter font family, and fadeIn keyframes (global.css may already be used by the animate-fadeIn class; keep it working).",
+          "type": "FEATURE",
+          "targetFiles": [
+            "ui/tailwind.config.mjs",
+            "ui/src/styles/global.css"
+          ],
+          "risk": "MEDIUM",
+          "dependsOn": [
+            "T1"
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Theme utility with tests",
+          "description": "Create src/lib/theme.js (NEW) with pure functions getStoredTheme, resolveTheme(stored, prefersDark), applyTheme(theme, root) and THEME_STORAGE_KEY, with storage and root injected for testability. Add src/lib/__tests__/theme.test.js (NEW) using node:test, covering stored value, system fallback, invalid stored value, and class toggling. Place helpers at the end of the file, use explicit imports, and use var in function bodies.",
+          "type": "TEST",
+          "targetFiles": [
+            "ui/src/lib/theme.js",
+            "ui/src/lib/__tests__/theme.test.js"
+          ],
+          "risk": "LOW",
+          "dependsOn": [
+            "T2"
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "UI primitives",
+          "description": "Create NEW components in src/components/ui/: Button.jsx (cva variants), Card.jsx (Card, CardHeader, CardTitle, CardContent), Badge.jsx (success/danger/neutral), Skeleton.jsx. All use cn and the token classes.",
+          "type": "FEATURE",
+          "targetFiles": [
+            "ui/src/components/ui/Button.jsx",
+            "ui/src/components/ui/Card.jsx",
+            "ui/src/components/ui/Badge.jsx",
+            "ui/src/components/ui/Skeleton.jsx"
+          ],
+          "risk": "LOW",
+          "dependsOn": [
+            "T2"
+          ]
+        },
+        {
+          "id": "T5",
+          "title": "App shell: Layout, Header, ThemeToggle",
+          "description": "Layout.astro: add an inline no-flash theme script, Inter font, token body classes, and a meta theme-color. Header.astro: remove the duplicated desktop/mobile link markup by using a single links array, make it sticky with a blur and token styling, fix the mobile toggle with aria-expanded, and add ThemeToggle. Create ThemeToggle.jsx (NEW), modeled on PrivacyToggle.jsx, using theme.js and heroicons Sun/Moon. Restyle PrivacyToggle.jsx to match.",
+          "type": "FEATURE",
+          "targetFiles": [
+            "ui/src/layouts/Layout.astro",
+            "ui/src/components/Header.astro",
+            "ui/src/components/ThemeToggle.jsx",
+            "ui/src/components/PrivacyToggle.jsx"
+          ],
+          "risk": "MEDIUM",
+          "dependsOn": [
+            "T3",
+            "T4"
+          ]
+        },
+        {
+          "id": "T6",
+          "title": "Dashboard home: summary and loading",
+          "description": "Rewrite Summary.jsx as KPI cards using Card/Badge with sign-colored benefit and profit, tabular-nums, and a collapsible organic section; keep props (summary, isPrivate) and formatValueForPrivacy. Replace LoadingSpinner usage in Home.jsx with a skeleton layout (also restyle LoadingSpinner.jsx and AIMessage.jsx with tokens). Remove the console.log in Home. Do not change data fetching or the dashboards.",
+          "type": "FEATURE",
+          "targetFiles": [
+            "ui/src/components/investments/Summary.jsx",
+            "ui/src/components/Home.jsx",
+            "ui/src/components/LoadingSpinner.jsx",
+            "ui/src/components/AIMessage.jsx"
+          ],
+          "risk": "MEDIUM",
+          "dependsOn": [
+            "T4",
+            "T5"
+          ]
+        },
+        {
+          "id": "T7",
+          "title": "Modal shell",
+          "description": "Restyle BaseModal.jsx with token classes, backdrop blur, role='dialog', aria-modal, Escape-to-close, body scroll lock and an open animation, keeping the existing props API so all modals work unchanged. Lightly restyle ModalHeader.jsx. Do not touch the chart modals' content.",
+          "type": "FEATURE",
+          "targetFiles": [
+            "ui/src/components/modals/BaseModal.jsx",
+            "ui/src/components/modals/ModalHeader.jsx"
+          ],
+          "risk": "MEDIUM",
+          "dependsOn": [
+            "T4"
+          ]
+        },
+        {
+          "id": "T8",
+          "title": "Verify",
+          "description": "Run npm test and npm run build in ui/, fix failures, and grep for leftover dark-mode-less hardcoded white/gray classes in touched files only.",
+          "type": "TEST",
+          "targetFiles": [
+            "ui/package.json"
+          ],
+          "risk": "LOW",
+          "dependsOn": [
+            "T6",
+            "T7"
+          ]
+        }
+      ],
+      "testStrategy": {
+        "unitTests": [
+          "theme.test.js: resolveTheme returns stored 'dark'/'light', falls back to the system preference, and ignores invalid stored values",
+          "theme.test.js: applyTheme adds or removes the 'dark' class on a fake root and persists to a fake storage",
+          "Existing ForecastUtils, ChartUtils and datetimeFormater tests stay green and unmodified"
+        ],
+        "integrationTests": [
+          "npm run build validates that all Astro pages and React components compile with the new Tailwind config"
+        ],
+        "e2eChecks": [
+          "Manual or dev-server probe: load /invest-track/ and verify header, theme toggle persistence, privacy masking, skeleton and summary cards, and that existing modals open and close"
+        ],
+        "commands": [
+          "cd ui && npm test",
+          "cd ui && npm run build"
+        ]
+      },
+      "conventionNotes": [
+        "AGENTS.md: explicit imports only, no wildcard imports, including in tests.",
+        "AGENTS.md: use var for local variables inside methods, not for class fields or method parameters.",
+        "AGENTS.md: test helper methods go at the end of the test file; run the test suite after creating or modifying any test.",
+        "AGENTS.md: create tests for new classes following the existing test pattern (node:test in src/lib/__tests__).",
+        "Global testing: deterministic tests with injected storage and root; never weaken or skip existing tests.",
+        "Global rules: no hardcoded secrets or environment URLs; new dependencies justified in risks; English identifiers and comments.",
+        "Java conventions and Lombok rules are not applicable to the ui/ package."
+      ],
+      "outOfScope": [
+        "Changing chart/dashboard components or their data (ForecastGraphModal, CombinedForecastGraphModal, InvestmentGraphModal, ChartUtils)",
+        "Phase 2+: investment detail page (Investment.jsx, InvestmentStats, entries table/mobile, forecast section), Details list, and form modals restyle",
+        "About and 404 page redesign",
+        "Migrating to Tailwind 4, Next.js or another framework, or adding TypeScript across the codebase",
+        "Backend (Java) changes, API contract changes, and new component test infrastructure (e.g. Vitest or Playwright)"
+      ],
+      "risks": [
+        {
+          "description": "New dependencies clsx, tailwind-merge and class-variance-authority (small, widely used, no runtime peers) are added.",
+          "severity": "LOW",
+          "mitigation": "Pin caret versions, add only these three, and justify them in the PR description."
+        },
+        {
+          "description": "Changing global CSS and Tailwind tokens could unintentionally alter chart modals or untouched pages.",
+          "severity": "MEDIUM",
+          "mitigation": "Only add tokens and keep existing utility classes working. Use dark classes only in restyled files, and check that the chart modals still render."
+        },
+        {
+          "description": "Dark mode may produce unreadable ApexCharts or Recharts on untouched components.",
+          "severity": "MEDIUM",
+          "mitigation": "Chart containers keep white card backgrounds until their phase, or the dark theme is gated to restyled surfaces; document the known limitation."
+        },
+        {
+          "description": "The theme flash or SSR mismatch occurs because pages use client:only React.",
+          "severity": "LOW",
+          "mitigation": "Apply the theme class through an inline head script before paint."
+        },
+        {
+          "description": "No component test infrastructure exists, so visual regressions are not caught automatically.",
+          "severity": "MEDIUM",
+          "mitigation": "Gate on npm run build, keep logic in pure testable modules, and do manual checks on the dev server."
+        }
+      ],
+      "suggestedBranchName": "feature/ui-modernization-phase-1",
+      "commitMessage": "feat(ui): add design tokens, dark mode and modern app shell"
+    },
+    "reusedFrom": "20261019-171016-invest-track-61e6",
+    "clarificationsUsed": null
+  }
+}

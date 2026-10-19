@@ -1,0 +1,66 @@
+{
+  "step": "delivery",
+  "attempt": 1,
+  "status": "PR_UPDATED",
+  "model": null,
+  "durationMs": null,
+  "writtenAt": "2026-10-19T17:46:44.460Z",
+  "data": {
+    "delivery": {
+      "committed": true,
+      "commitSha": "61ab73936ee38f4d1c7f57e8a1458463c2b17a74",
+      "commitMessage": "chore: address review feedback on PR #8 (round 2)\n\n- marcalcocer (ui/src/components/investments/Summary.jsx): Some findings I see testing the UI:",
+      "pushed": true,
+      "pullRequestCreated": true,
+      "pullRequestUrl": "https://github.com/marcalcocer/invest-track/pull/8",
+      "branch": "factory/i-want-to-do-a-big-refactor-on-t-61e6",
+      "pendingActions": [],
+      "notes": [
+        "Round 2: pull request #8 was updated, not re-opened.",
+        "Replied to 1 review comment on GitHub."
+      ]
+    },
+    "pullRequest": {
+      "title": "",
+      "body": "",
+      "labels": [],
+      "breakingChanges": false
+    },
+    "baseBranch": "master",
+    "decision": {
+      "approvePush": true,
+      "approvePullRequest": true,
+      "source": "human"
+    },
+    "publication": {
+      "hasRemote": true,
+      "localExists": true,
+      "remoteExists": true,
+      "unpushed": 1,
+      "aheadOfBase": 2,
+      "needsPush": true,
+      "published": false
+    },
+    "timeline": [
+      {
+        "at": "2026-10-19T17:42:52.704Z",
+        "action": "commit",
+        "ok": true,
+        "detail": "Committed 61ab739 \"chore: address review feedback on PR #8 (round 2)\""
+      },
+      {
+        "at": "2026-10-19T17:46:41.646Z",
+        "action": "push",
+        "ok": true,
+        "detail": "Pushed factory/i-want-to-do-a-big-refactor-on-t-61e6 to origin"
+      },
+      {
+        "at": "2026-10-19T17:46:41.646Z",
+        "action": "pull-request",
+        "ok": true,
+        "detail": "Updated pull request #8 (new commit pushed to factory/i-want-to-do-a-big-refactor-on-t-61e6)"
+      }
+    ],
+    "error": null
+  }
+}

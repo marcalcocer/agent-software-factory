@@ -1,0 +1,13 @@
+{
+  "step": "feedback-delivery",
+  "attempt": 1,
+  "status": "RERUN_IMPLEMENTATION",
+  "model": null,
+  "durationMs": null,
+  "writtenAt": "2026-10-19T17:34:54.294Z",
+  "data": {
+    "repliesPosted": 1,
+    "postReplies": true,
+    "items": 2
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "step": "triage",
+  "attempt": 1,
+  "status": "RETRY_DEVELOPER",
+  "model": "dry-run-stub",
+  "durationMs": 0,
+  "writtenAt": "2026-10-14T18:25:46.106Z",
+  "data": {
+    "source": "CODE_REVIEW",
+    "modelDecision": "RETRY_DEVELOPER",
+    "effectiveDecision": "RETRY_DEVELOPER",
+    "guardrailOverrides": [],
+    "report": {
+      "decision": "RETRY_DEVELOPER",
+      "rootCause": {
+        "category": "CONVENTION_VIOLATION",
+        "explanation": "[dry-run] Rounding is applied before the multiplication.",
+        "evidence": [
+          "[dry-run] src/main/example.ts:48"
+        ]
+      },
+      "confidence": 0.85,
+      "loopDetected": false,
+      "loopEvidence": "",
+      "developerHints": [
+        "[dry-run] Move the rounding after the tax multiplication in src/main/example.ts:48.",
+        "[dry-run] Add a boundary test for 10.125."
+      ],
+      "filesToInspect": [
+        "src/main/example.ts",
+        "src/test/example.test.ts"
+      ],
+      "infraActions": [],
+      "humanQuestion": "",
+      "escalationSummary": "",
+      "summary": "[dry-run] Real defect with an actionable fix: retrying the developer."
+    }
+  }
+}

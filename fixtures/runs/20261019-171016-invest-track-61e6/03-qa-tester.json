@@ -1,0 +1,109 @@
+{
+  "step": "qa-tester",
+  "attempt": 1,
+  "status": "FAIL",
+  "model": "claude-haiku-5-5",
+  "durationMs": 38342,
+  "writtenAt": "2026-10-19T17:16:46.749Z",
+  "data": {
+    "verdict": "FAIL",
+    "passed": false,
+    "summary": "The factory-run `npm test` (exit 0, 57/57 pass) and `npm run build` (exit 0) are green, and no existing test was touched. The change still fails acceptance criterion 5: the Summary Profit KPI renders the percentage unmasked when privacy mode is on, because `isPrivate` is never applied to that value in `Summary.jsx`. The remaining UI criteria (header/ThemeToggle, no-flash script, skeleton, BaseModal props and behaviour) were checked by static reading only, since no browser or dev server was available to me.",
+    "executedCommands": [
+      {
+        "command": "npm test (cwd ui/, executed by factory)",
+        "exitCode": 0,
+        "durationMs": 269,
+        "timedOut": false
+      },
+      {
+        "command": "npm run build (cwd ui/, executed by factory)",
+        "exitCode": 0,
+        "durationMs": 3010,
+        "timedOut": false
+      }
+    ],
+    "totals": {
+      "tests": 57,
+      "passed": 57,
+      "failed": 0,
+      "skipped": 0
+    },
+    "failures": [],
+    "e2eChecks": [
+      {
+        "name": "Summary KPI privacy masking (Profit card)",
+        "request": "Home with privacy mode on: Summary.jsx renders the Profit KPI",
+        "expected": "Profit percentage is masked like the currency values when privacy mode is on",
+        "actual": "Summary.jsx line 62 renders `${(100 * profit).toFixed(2)}%` unconditionally; `isPrivate` is only passed to formatValueForPrivacy for invested/obtained/benefit",
+        "passed": false
+      },
+      {
+        "name": "Summary KPI sign colouring",
+        "request": "Static inspection of Summary.jsx signClass/valueClassName for Benefit and Profit",
+        "expected": "Positive=success, negative=danger, zero=foreground",
+        "actual": "signClass returns text-success / text-danger / text-foreground for benefit and profit (lines 8-12, 57, 63)",
+        "passed": true
+      },
+      {
+        "name": "Summary 4 KPI cards, organic collapsible",
+        "request": "Static inspection of Summary.jsx",
+        "expected": "Invested, Obtained, Benefit, Profit cards for total and an aria-expanded toggle for organic",
+        "actual": "SummaryRow renders four KpiCards; organic block is behind a button with aria-expanded and isOrganicExpanded",
+        "passed": true
+      },
+      {
+        "name": "Theme toggle persistence and no-flash",
+        "request": "Static inspection of Layout.astro inline script and ThemeToggle.jsx/theme.js",
+        "expected": "Inline head script applies saved or system theme before paint; toggle adds/removes html.dark and writes localStorage 'theme'",
+        "actual": "Head script reads localStorage 'theme' and toggles html class before body renders; ThemeToggle calls applyTheme(next, documentElement, localStorage). Not executed in a browser.",
+        "passed": true
+      },
+      {
+        "name": "Header active state and mobile menu aria-expanded",
+        "request": "Static inspection of Header.astro",
+        "expected": "Home/About links get aria-current and active classes; mobile button toggles aria-expanded and menu visibility",
+        "actual": "links array sets aria-current and primary classes; script flips aria-expanded and toggles hidden/flex on #mobile-menu. Not executed in a browser.",
+        "passed": true
+      },
+      {
+        "name": "Home skeleton while loading",
+        "request": "Static inspection of Home.jsx",
+        "expected": "HomeSkeleton rendered instead of LoadingSpinner while isLoading",
+        "actual": "isLoading branch returns HomeSkeleton built from Skeleton primitives; LoadingSpinner import removed",
+        "passed": true
+      },
+      {
+        "name": "BaseModal props, Escape, backdrop, dialog role",
+        "request": "Static inspection of BaseModal.jsx",
+        "expected": "Props children/onClose/maxWidth kept; Escape and backdrop call onClose; role=dialog and aria-modal=true",
+        "actual": "All present (lines 4, 7-8, 23, 26-27). Not executed in a browser.",
+        "passed": true
+      }
+    ],
+    "weakenedVerification": {
+      "detected": false,
+      "evidence": [
+        "The diff touches no existing test file; the only test file is the new ui/src/lib/__tests__/theme.test.js.",
+        "No @Disabled, .skip, or it.todo was introduced in the diff I could read.",
+        "The diff is truncated in the middle, so the only unseen hunks are Summary.jsx, BaseModal.jsx, PrivacyToggle.jsx and ThemeToggle.jsx; I read those files directly and found no skipped or removed assertions.",
+        "theme.test.js covers the acceptance criterion behaviours (valid/invalid storage, system fallback, class toggle, storage errors) with real assertions."
+      ]
+    },
+    "bugReports": [
+      {
+        "title": "Summary Profit KPI is not masked in privacy mode",
+        "severity": "MAJOR",
+        "stepsToReproduce": [
+          "Run the UI in ui/ with `npm run dev` (or `npm run build` and serve ui/dist).",
+          "Open /invest-track/ and click the eye toggle so privacy mode is on (localStorage privacyMode='true').",
+          "Look at the Summary section, Total row, Profit card, and expand Organic Details."
+        ],
+        "expected": "Every value in the Summary KPI cards is masked when privacy mode is on, per acceptance criterion 5. The profit percentage is masked the same way as the currency values.",
+        "actual": "Invested, Obtained and Benefit are masked through formatValueForPrivacy, but the Profit value is `${(100 * profit).toFixed(2)}%` (ui/src/components/investments/Summary.jsx line 62), which ignores isPrivate. The real profit percentage is shown in privacy mode, in both the total and the organic rows.",
+        "evidence": "ui/src/components/investments/Summary.jsx:62 `value={`${(100 * profit).toFixed(2)}%`}` has no isPrivate branch. SummaryRow receives isPrivate (line 87, 111) but the Profit KPI never uses it. Acceptance criterion 5 states values are masked when privacy mode is on."
+      }
+    ],
+    "recommendation": "In ui/src/components/investments/Summary.jsx, make the Profit KPI honour privacy mode. In SummaryRow, compute the profit display as `isPrivate ? <the same masked placeholder that formatValueForPrivacy returns> : `${(100 * profit).toFixed(2)}%``, or add a small formatPercentForPrivacy helper next to formatValueForPrivacy in ui/src/lib/currencyAdapter.js. Do not change the chart or service files to do this. Keep signClass on the masked value as well. Then re-run `npm test` and `npm run build` in ui/ and verify in a browser that privacy mode hides the Profit value in both the total and the organic rows. Optionally add a regression test if a pure helper is extracted."
+  }
+}

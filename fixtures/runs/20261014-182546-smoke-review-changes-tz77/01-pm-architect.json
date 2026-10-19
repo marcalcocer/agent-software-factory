@@ -1,0 +1,73 @@
+{
+  "step": "pm-architect",
+  "attempt": 1,
+  "status": "COMPLETED",
+  "model": "dry-run-stub",
+  "durationMs": 1,
+  "writtenAt": "2026-10-14T18:25:46.092Z",
+  "data": {
+    "plan": {
+      "summary": "[dry-run] Plan for: Smoke test the factory graph for the \"review-changes\" scenario.",
+      "understanding": "[dry-run] The requirement was restated in behavioural terms.",
+      "ambiguityLevel": "NONE",
+      "clarificationQuestions": [],
+      "assumptions": [],
+      "acceptanceCriteria": [
+        "[dry-run] The new behaviour is covered by a unit test.",
+        "[dry-run] The existing test suite still passes."
+      ],
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "[dry-run] Implement the requested behaviour",
+          "description": "[dry-run] Production code change described by the plan.",
+          "type": "FEATURE",
+          "targetFiles": [
+            "src/main/example.ts"
+          ],
+          "risk": "LOW",
+          "dependsOn": []
+        },
+        {
+          "id": "T2",
+          "title": "[dry-run] Cover the behaviour with tests",
+          "description": "[dry-run] Unit test for the happy path and the boundaries.",
+          "type": "TEST",
+          "targetFiles": [
+            "src/test/example.test.ts"
+          ],
+          "risk": "LOW",
+          "dependsOn": [
+            "T1"
+          ]
+        }
+      ],
+      "testStrategy": {
+        "unitTests": [
+          "[dry-run] exampleService: happy path, boundary, invalid input"
+        ],
+        "integrationTests": [],
+        "e2eChecks": [],
+        "commands": [
+          "npm test"
+        ]
+      },
+      "conventionNotes": [
+        "[dry-run] Global testing conventions apply: no weakened verification."
+      ],
+      "outOfScope": [
+        "[dry-run] Unrelated refactors."
+      ],
+      "risks": [
+        {
+          "description": "[dry-run] Low risk change.",
+          "severity": "LOW",
+          "mitigation": "[dry-run] Covered by tests."
+        }
+      ],
+      "suggestedBranchName": "feature/dry-run-change",
+      "commitMessage": "feat(example): dry-run change"
+    },
+    "clarificationsUsed": null
+  }
+}

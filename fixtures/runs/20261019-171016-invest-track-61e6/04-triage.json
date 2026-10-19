@@ -1,0 +1,45 @@
+{
+  "step": "triage",
+  "attempt": 1,
+  "status": "RETRY_DEVELOPER",
+  "model": "claude-sonnet-5-5",
+  "durationMs": 19143,
+  "writtenAt": "2026-10-19T17:17:05.904Z",
+  "data": {
+    "source": "QA",
+    "modelDecision": "RETRY_DEVELOPER",
+    "effectiveDecision": "RETRY_DEVELOPER",
+    "guardrailOverrides": [],
+    "report": {
+      "decision": "RETRY_DEVELOPER",
+      "rootCause": {
+        "category": "PRODUCTION_CODE",
+        "explanation": "The Profit KPI in Summary.jsx formats the percentage directly and never applies isPrivate, so the real profit percentage is shown in privacy mode. This violates acceptance criterion 5. Build and tests are green, so this is the only blocking defect.",
+        "evidence": [
+          "Summary.jsx:62 value={`${(100 * profit).toFixed(2)}%`} has no isPrivate branch",
+          "Summary.jsx:46-56 Invested/Obtained/Benefit use formatValueForPrivacy(..., isPrivate)",
+          "currencyAdapter.js:35-37 formatValueForPrivacy returns \"******\" when isPrivate"
+        ]
+      },
+      "confidence": 0.95,
+      "loopDetected": false,
+      "loopEvidence": "First attempt, so there is no earlier failure to compare against.",
+      "developerHints": [
+        "In ui/src/components/investments/Summary.jsx line 62, change the Profit KPI value to `isPrivate ? \"******\" : `${(100 * profit).toFixed(2)}%``. This covers both the total row and the organic row, because both use SummaryRow.",
+        "Prefer adding `formatPercentForPrivacy(value, isPrivate)` next to formatValueForPrivacy in ui/src/lib/currencyAdapter.js. It should return \"******\" when private and otherwise `${(100 * value).toFixed(2)}%`. Import it in Summary.jsx. Reuse the same mask string so the cards look consistent.",
+        "Add a node:test regression test for the helper, covering both the private and the non-private case. Follow the style of the existing tests in ui/src/lib/__tests__, with explicit imports, helpers at the end of the file and `var` inside function bodies.",
+        "Consider also not showing the Gain/Loss/Break-even Badge when isPrivate is true. The badge leaks the sign of the profit. Keep signClass on the value, as it is now.",
+        "Do not touch chart components or services. Re-run `npm test` and `npm run build` in ui/ afterwards."
+      ],
+      "filesToInspect": [
+        "ui/src/components/investments/Summary.jsx",
+        "ui/src/lib/currencyAdapter.js",
+        "ui/src/lib/__tests__"
+      ],
+      "infraActions": [],
+      "humanQuestion": "",
+      "escalationSummary": "",
+      "summary": "Retry the developer. The one blocking defect is a small, well-defined production bug: the Profit KPI ignores privacy mode. Tests and build pass and nothing was weakened. The fix is localized and the hints are concrete."
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "step": "documentation",
+  "attempt": 2,
+  "status": "COMPLETED",
+  "model": "claude-haiku-5-5",
+  "durationMs": 21243,
+  "writtenAt": "2026-10-19T17:42:52.649Z",
+  "data": {
+    "status": "COMPLETED",
+    "summary": "Checked the documentation against the diff. The only stale statement was in ui/README.md: the feature list said privacy mode hides \"monetary values and profit figures\". This change makes privacy mode hide only monetary values, so I corrected that line to say percentages and profitability stay visible. The README's dark-theme, theme-toggle, header and component descriptions already match the code (Header.astro, PrivacyToggle.jsx, ThemeToggle.jsx and ui/ primitives exist). The repo has no CHANGELOG.md and no OpenAPI spec, and AGENTS.md states no facts this change invalidates. The docs/ HTML pages (landing page and privacy policy) do not describe the changed behaviour. No code, tests or build files were touched.",
+    "updatedFiles": [
+      {
+        "path": "ui/README.md",
+        "changeType": "MODIFIED",
+        "description": "Privacy mode feature bullet now says it hides monetary values only, and that percentages and profitability stay visible."
+      }
+    ],
+    "changelogEntry": {
+      "section": "None",
+      "entries": []
+    },
+    "openApiUpdated": false,
+    "openApiNotes": "No OpenAPI or Swagger spec exists in the repository, and the change does not alter any HTTP contract.",
+    "followUps": [
+      "No CHANGELOG.md exists at the repository root or in ui/. I did not create one, since the plan does not ask for it. If the project starts keeping a changelog, the user-visible items here are dark mode, money-only privacy masking and zoom/pan on the investment and forecast charts.",
+      "CreateEntryModal preview still shows unmasked amounts in privacy mode, as the developer noted. This is a code change, so it is out of scope for the documentation agent."
+    ]
+  }
+}

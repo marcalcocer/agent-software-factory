@@ -1,0 +1,43 @@
+{
+  "step": "code-review",
+  "attempt": 1,
+  "status": "CHANGES_REQUESTED",
+  "model": "dry-run-stub",
+  "durationMs": 0,
+  "writtenAt": "2026-10-14T18:25:46.099Z",
+  "data": {
+    "status": "CHANGES_REQUESTED",
+    "summary": "[dry-run] The change needs a boundary test and an error path.",
+    "scores": {
+      "correctness": 4,
+      "maintainability": 3,
+      "conventions": 3,
+      "testQuality": 2
+    },
+    "findings": [
+      {
+        "severity": "MAJOR",
+        "file": "src/main/example.ts",
+        "line": 48,
+        "issue": "[dry-run] The invalid-input path is unhandled.",
+        "suggestion": "[dry-run] Validate the argument and throw a domain exception.",
+        "rule": "global-rules/java-conventions.md#6-error-handling"
+      }
+    ],
+    "conventionViolations": [
+      {
+        "rule": "Every behavioural change ships with tests",
+        "source": "GLOBAL_RULES",
+        "file": "src/test/example.test.ts",
+        "detail": "[dry-run] No boundary test for the half-cent case."
+      }
+    ],
+    "architectureNotes": [],
+    "positives": [
+      "[dry-run] Change is well scoped."
+    ],
+    "mustFixBeforeMerge": [
+      "[dry-run] Handle invalid input in calculateNet and add a boundary test for 10.125."
+    ]
+  }
+}

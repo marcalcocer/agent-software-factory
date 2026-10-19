@@ -1,0 +1,43 @@
+{
+  "step": "developer",
+  "attempt": 2,
+  "status": "COMPLETED",
+  "model": "dry-run-stub",
+  "durationMs": 0,
+  "writtenAt": "2026-10-14T18:25:46.348Z",
+  "data": {
+    "status": "COMPLETED",
+    "summary": "[dry-run] Implementation attempt 2 completed.",
+    "changedFiles": [
+      {
+        "path": "src/main/example.ts",
+        "changeType": "MODIFIED",
+        "purpose": "[dry-run] Feature code."
+      }
+    ],
+    "testsAdded": [
+      {
+        "path": "src/test/example.test.ts",
+        "level": "UNIT",
+        "description": "[dry-run] Covers the new behaviour."
+      }
+    ],
+    "commandsRun": [
+      {
+        "command": "npm test",
+        "exitCode": 0,
+        "summary": "[dry-run] Local suite green."
+      }
+    ],
+    "appliedFeedback": [
+      "[dry-run] Addressed: [dry-run] Move the rounding after the tax multiplication in src/main/example.ts:48.",
+      "[dry-run] Addressed: [dry-run] Add a boundary test for 10.125."
+    ],
+    "selfVerification": {
+      "localTestsPassed": true,
+      "notes": "[dry-run] Verified locally."
+    },
+    "followUps": [],
+    "blockers": []
+  }
+}

@@ -1,0 +1,218 @@
+{
+  "runId": "20261019-173458-invest-track-c0u4",
+  "status": "DELIVERED",
+  "task": "In the ui/ app (Astro + React + Tailwind) finish the dark-mode work started in PR #8 and fix the privacy and chart issues found in review.\n\n1) Dark mode everywhere. Search ui/src for hardcoded light-theme classes (bg-white, bg-slate-*, bg-gray-*, text-slate-*, text-gray-*, text-stone-*, border-slate-*, border-gray-*, etc.) and replace them with the design tokens defined in ui/tailwind.config.mjs and ui/src/styles/global.css (bg-background, bg-card, bg-muted, text-foreground, text-muted-foreground, border-border, text-primary, text-success, text-danger). Cover at least: investments/Details.jsx (\"Investment Details\"), InvestmentStats.jsx (Entries, Avg Profit, Last update), Investment.jsx, InvestmentEntriesTable.jsx (table headers and every entry row; currently only some rows are themed), InvestmentEntriesMobile.jsx, InvestmentForecastSection.jsx, InvestmentsDetailsListItem.jsx, Home.jsx, NotFound.jsx, pages/about.astro, and all modals (BaseModal, ModalHeader, UpdateEntryModal, CreateEntryModal, CreateInvestmentModal, EditInvestmentModal, CreateForecastModal, EditForecastModal, ConfirmDeleteModal). Form inputs, labels and buttons in modals must be readable in dark mode. Chart modals (InvestmentGraphModal.tsx, ForecastGraphModal.jsx, CombinedForecastGraphModal.jsx) must use a theme-aware ApexCharts theme (text, grid and tooltip colours) based on the current dark class. Acceptance: no hardcoded light-only colour classes remain without a dark counterpart or token; the investment page (/investment?id=4) and the Update Entry modal render with dark backgrounds and legible text in dark mode.\n\n2) Privacy mode must hide only monetary values. In ui/src/components/investments/Summary.jsx stop masking the profit percentage (it currently uses formatPercentForPrivacy, which returns '******'). Percentages and profitability must always display. Remove or repurpose formatPercentForPrivacy in ui/src/lib/currencyAdapter.js, and update ui/src/lib/__tests__/currencyAdapter.test.js accordingly. Check that other places (entries table, stats, details, graphs) mask only money, not percentages.\n\n3) Chart zoom. In InvestmentGraphModal.tsx (zoom.enabled is false at line 66), ForecastGraphModal.jsx and CombinedForecastGraphModal.jsx, make zoom, pan and the zoom toolbar work consistently on all graphs.\n\nFollow AGENTS.md: explicit imports, var for locals, helper functions at the end of test files. Run the full UI test suite afterwards and make sure it is green, without weakening any test.",
+  "kind": "revision",
+  "rootRunId": "20261019-171016-invest-track-61e6",
+  "round": 2,
+  "parentRunId": "20261019-171016-invest-track-61e6",
+  "repository": "/home/dev/workspace/invest-track",
+  "branch": "factory/i-want-to-do-a-big-refactor-on-t-61e6",
+  "startedAt": "2026-10-19T17:34:58.989Z",
+  "finishedAt": "2026-10-19T17:46:44.480Z",
+  "durationMs": 705491,
+  "attempts": 2,
+  "pullRequestUrl": "https://github.com/marcalcocer/invest-track/pull/8",
+  "tokens": {
+    "input": 112,
+    "output": 74090,
+    "reasoning": 16415,
+    "cached": 2562967,
+    "total": 2937555
+  },
+  "agentCalls": 8,
+  "toolCalls": 225,
+  "modelsUsed": [
+    {
+      "role": "developer",
+      "requestedModel": "claude-cli/sonnet",
+      "servedByModel": "claude-sonnet-5-5",
+      "calls": 2,
+      "inputTokens": 58,
+      "outputTokens": 45826,
+      "totalTokens": 1866249,
+      "durationMs": 297043,
+      "failovers": 0
+    },
+    {
+      "role": "qa-tester",
+      "requestedModel": "claude-cli/haiku",
+      "servedByModel": "claude-haiku-5-5",
+      "calls": 2,
+      "inputTokens": 24,
+      "outputTokens": 19945,
+      "totalTokens": 596250,
+      "durationMs": 101609,
+      "failovers": 0
+    },
+    {
+      "role": "triage",
+      "requestedModel": "claude-cli/sonnet",
+      "servedByModel": "claude-sonnet-5-5",
+      "calls": 1,
+      "inputTokens": 2,
+      "outputTokens": 1655,
+      "totalTokens": 28164,
+      "durationMs": 12998,
+      "failovers": 0
+    },
+    {
+      "role": "reviewer",
+      "requestedModel": "claude-cli/sonnet",
+      "servedByModel": "claude-sonnet-5-5",
+      "calls": 1,
+      "inputTokens": 4,
+      "outputTokens": 1622,
+      "totalTokens": 67133,
+      "durationMs": 19482,
+      "failovers": 0
+    },
+    {
+      "role": "security",
+      "requestedModel": "claude-cli/sonnet",
+      "servedByModel": "claude-sonnet-5-5",
+      "calls": 1,
+      "inputTokens": 10,
+      "outputTokens": 1419,
+      "totalTokens": 173233,
+      "durationMs": 33148,
+      "failovers": 0
+    },
+    {
+      "role": "documentation",
+      "requestedModel": "claude-cli/haiku",
+      "servedByModel": "claude-haiku-5-5",
+      "calls": 1,
+      "inputTokens": 14,
+      "outputTokens": 3623,
+      "totalTokens": 206526,
+      "durationMs": 21242,
+      "failovers": 0
+    }
+  ],
+  "steps": [
+    {
+      "step": "pm-architect",
+      "attempt": 1,
+      "status": "REUSED",
+      "durationMs": 0,
+      "artifact": "01-pm-architect.json"
+    },
+    {
+      "step": "developer",
+      "attempt": 1,
+      "status": "COMPLETED",
+      "durationMs": 232747,
+      "artifact": "02-developer.json"
+    },
+    {
+      "step": "qa-tester",
+      "attempt": 1,
+      "status": "FAIL",
+      "durationMs": 65655,
+      "artifact": "03-qa-tester.json"
+    },
+    {
+      "step": "triage",
+      "attempt": 1,
+      "status": "RETRY_DEVELOPER",
+      "durationMs": 12999,
+      "artifact": "04-triage.json"
+    },
+    {
+      "step": "developer",
+      "attempt": 2,
+      "status": "COMPLETED",
+      "durationMs": 64299,
+      "artifact": "02-developer.attempt-2.json"
+    },
+    {
+      "step": "qa-tester",
+      "attempt": 2,
+      "status": "PASS",
+      "durationMs": 35958,
+      "artifact": "03-qa-tester.attempt-2.json"
+    },
+    {
+      "step": "code-review",
+      "attempt": 2,
+      "status": "APPROVED_WITH_SUGGESTIONS",
+      "durationMs": 19484,
+      "artifact": "05-code-review.attempt-2.json"
+    },
+    {
+      "step": "security",
+      "attempt": 2,
+      "status": "PASS/LOW",
+      "durationMs": 33149,
+      "artifact": "06-security.attempt-2.json"
+    },
+    {
+      "step": "documentation",
+      "attempt": 2,
+      "status": "COMPLETED",
+      "durationMs": 21243,
+      "artifact": "07-documentation.attempt-2.json"
+    },
+    {
+      "step": "pr-writer",
+      "attempt": 2,
+      "status": "SKIPPED",
+      "durationMs": 0,
+      "artifact": "07-pr-writer.attempt-2.json"
+    },
+    {
+      "step": "delivery",
+      "attempt": 1,
+      "status": "PR_UPDATED",
+      "durationMs": 0,
+      "artifact": "08-pull-request.json"
+    }
+  ],
+  "artifacts": [
+    "01-pm-architect.json",
+    "02-developer.attempt-2.json",
+    "02-developer.json",
+    "03-qa-tester.attempt-2.json",
+    "03-qa-tester.json",
+    "04-triage.json",
+    "05-code-review.attempt-2.json",
+    "06-security.attempt-2.json",
+    "07-documentation.attempt-2.json",
+    "07-pr-writer.attempt-2.json",
+    "08-pull-request.json",
+    "run.json"
+  ],
+  "escalation": null,
+  "gates": {
+    "qa": "PASS",
+    "codeReview": "APPROVED_WITH_SUGGESTIONS",
+    "security": "PASS",
+    "documentation": "COMPLETED"
+  },
+  "history": [
+    {
+      "attempt": 1,
+      "developerStatus": "COMPLETED",
+      "qaVerdict": "FAIL",
+      "qaFailureSignature": "5101fb392e6b",
+      "reviewStatus": null,
+      "securityStatus": null,
+      "triageDecision": "RETRY_DEVELOPER",
+      "triageRootCause": "PRODUCTION_CODE",
+      "notes": "QA failure triaged as RETRY_DEVELOPER"
+    },
+    {
+      "attempt": 2,
+      "developerStatus": "COMPLETED",
+      "qaVerdict": "PASS",
+      "qaFailureSignature": null,
+      "reviewStatus": "APPROVED_WITH_SUGGESTIONS",
+      "securityStatus": "PASS",
+      "triageDecision": null,
+      "triageRootCause": null,
+      "notes": "All quality gates satisfied"
+    }
+  ],
+  "dryRun": false
+}

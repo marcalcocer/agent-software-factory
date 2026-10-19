@@ -1,0 +1,48 @@
+{
+  "step": "merge-summary",
+  "attempt": 1,
+  "status": "agent",
+  "model": "claude-haiku-5-5",
+  "durationMs": 13787,
+  "writtenAt": "2026-10-19T17:49:32.661Z",
+  "data": {
+    "pullRequest": 8,
+    "headSha": "61ab73936ee38f4d1c7f57e8a1458463c2b17a74",
+    "message": {
+      "subject": "Add design tokens, dark mode and modern app shell (#8)",
+      "body": "Replace the Flowbite-style colour classes with semantic design tokens\n(background, foreground, muted, primary, success, danger, border, ring)\nexposed as Tailwind colours and backed by CSS variables for light and\ndark themes. Dark mode is class based. A theme toggle in the header\nswitches between the two, and the choice is saved in localStorage.\n\nThe app shell is reworked: the header is sticky and has a mobile menu\nwith aria-expanded. Home shows skeleton placeholders instead of the\nfull-screen spinner while loading. Modals close on Escape and lock\nbody scroll while open.\n\nPrivacy mode now also masks monetary values in the entries table, the\nmobile entries list and the forecast table, and it is passed through\nto the graph modals.\n\n- Header.astro: sticky header, mobile menu, privacy and theme toggles\n- ThemeToggle.jsx: new component, uses applyTheme from lib/theme\n- components/ui: new Button, Card, Badge and Skeleton primitives\n- tailwind.config.mjs, global.css: semantic tokens and fadeIn animation\n- BaseModal.jsx: dialog role, Escape to close, body scroll lock\n- investments/*: components moved to tokens, isPrivate passed through"
+    },
+    "omitted": [
+      "ui/src/components/investments/Summary.jsx",
+      "ui/src/components/modals/CombinedForecastGraphModal.jsx",
+      "ui/src/components/modals/ConfirmDeleteModal.jsx",
+      "ui/src/components/modals/CreateEntryModal.jsx",
+      "ui/src/components/modals/CreateForecastModal.jsx",
+      "ui/src/components/modals/CreateInvestmentModal.jsx",
+      "ui/src/components/modals/EditForecastModal.jsx",
+      "ui/src/components/modals/EditInvestmentModal.jsx",
+      "ui/src/components/modals/ForecastGraphModal.jsx",
+      "ui/src/components/modals/InvestmentGraphModal.tsx",
+      "ui/src/components/modals/ModalHeader.jsx",
+      "ui/src/components/modals/UpdateEntryModal.jsx",
+      "ui/src/components/ui/Badge.jsx",
+      "ui/src/components/ui/Button.jsx",
+      "ui/src/components/ui/Card.jsx",
+      "ui/src/components/ui/Skeleton.jsx",
+      "ui/src/layouts/Layout.astro",
+      "ui/src/lib/__tests__/chartTheme.test.js",
+      "ui/src/lib/__tests__/currencyAdapter.test.js",
+      "ui/src/lib/__tests__/theme.test.js",
+      "ui/src/lib/chartTheme.js",
+      "ui/src/lib/cn.js",
+      "ui/src/lib/currencyAdapter.js",
+      "ui/src/lib/theme.js",
+      "ui/src/lib/useIsDarkMode.js",
+      "ui/src/lib/usePrivacyMode.js",
+      "ui/src/pages/about.astro",
+      "ui/src/styles/global.css",
+      "ui/tailwind.config.mjs"
+    ],
+    "shortened": []
+  }
+}

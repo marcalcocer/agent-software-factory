@@ -1,0 +1,30 @@
+{
+  "step": "security",
+  "attempt": 2,
+  "status": "PASS/LOW",
+  "model": "claude-sonnet-5-5",
+  "durationMs": 33149,
+  "writtenAt": "2026-10-19T17:42:31.305Z",
+  "data": {
+    "status": "PASS",
+    "riskLevel": "LOW",
+    "summary": "The diff only changes UI theming, privacy masking, chart theme and zoom options, and adds two small hooks. It adds no new network, auth, storage or dependency surface and commits no secrets. Privacy masking now covers money only, and the privacy flag is read from the existing toggle. The one finding is pre-existing and does not block this change: the shared chart tooltip builds HTML from series names without escaping them.",
+    "findings": [
+      {
+        "severity": "INFO",
+        "category": "XSS",
+        "owasp": "A03:2021",
+        "cwe": "CWE-79",
+        "file": "ui/src/lib/ChartUtils.js",
+        "line": 37,
+        "evidence": "getCustomTooltip returns an HTML string that interpolates `v.name` (the series name) without escaping. ApexCharts inserts this string as HTML. ChartUtils.js is not part of this diff, and this change only passes the tooltip function through.",
+        "impact": "If a series name can contain user-entered text (for example a forecast name), a crafted name such as `<img onerror=...>` could run script in the tooltip. The user would only affect their own data, so exposure is limited to self-XSS unless data is shared.",
+        "remediation": "HTML-escape `v.name`, and the value if it is not purely numeric, before interpolating into the tooltip string.",
+        "preExisting": true
+      }
+    ],
+    "secretsDetected": [],
+    "dependencyRisks": [],
+    "mustFixBeforeMerge": []
+  }
+}

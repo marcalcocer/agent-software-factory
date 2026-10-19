@@ -1,0 +1,112 @@
+{
+  "step": "qa-tester",
+  "attempt": 1,
+  "status": "FAIL",
+  "model": "claude-haiku-5-5",
+  "durationMs": 65655,
+  "writtenAt": "2026-10-19T17:40:02.437Z",
+  "data": {
+    "verdict": "FAIL",
+    "passed": false,
+    "summary": "The factory-run build (exit 0) and suite (exit 0, 66 pass, 0 fail) are green, and the source confirms most criteria: darkMode 'class' with light and dark token variables, the Summary KPI cards, the Home skeleton, the BaseModal role/aria-modal/Escape/backdrop, the no-flash script in Layout.astro and the chart zoom/theme wiring. The verdict is FAIL because privacy mode still leaves monetary values unmasked on the investment page (entries table, mobile cards and forecast table), which the task explicitly asked to check. Runtime criteria (theme persistence on reload, mobile menu, skeleton rendering, dark-mode visuals, zoom behaviour) were not executed because QA has no browser or http-probe in this run.",
+    "executedCommands": [
+      {
+        "command": "npm test (cwd ui/, supplied by factory: node --test \"src/**/*.test.js\")",
+        "exitCode": 0,
+        "durationMs": 380,
+        "timedOut": false
+      },
+      {
+        "command": "npm run build (cwd ui/, supplied by factory: astro build)",
+        "exitCode": 0,
+        "durationMs": 2983,
+        "timedOut": false
+      }
+    ],
+    "totals": {
+      "tests": 66,
+      "passed": 66,
+      "failed": 0,
+      "skipped": 0
+    },
+    "failures": [],
+    "e2eChecks": [
+      {
+        "name": "Summary shows 4 KPI cards with sign colouring",
+        "request": "Static inspection of ui/src/components/investments/Summary.jsx",
+        "expected": "Invested, Obtained, Benefit, Profit cards for total and organic; Benefit and Profit coloured by sign",
+        "actual": "KpiCard rendered for all four labels in SummaryRow, used for total and collapsible organic; signClass gives text-success/text-danger",
+        "passed": true
+      },
+      {
+        "name": "Summary profit percentage not masked by privacy mode",
+        "request": "Static inspection of Summary.jsx with isPrivate=true",
+        "expected": "Profit shows a percentage; money cards show ******",
+        "actual": "Profit uses formatPercent (never masks); Invested/Obtained/Benefit use formatValueForPrivacy",
+        "passed": true
+      },
+      {
+        "name": "Home renders skeleton while loading",
+        "request": "Static inspection of ui/src/components/Home.jsx",
+        "expected": "HomeSkeleton returned while loading instead of LoadingSpinner",
+        "actual": "Home.jsx:70 returns <HomeSkeleton /> built from ui/Skeleton; no LoadingSpinner in Home",
+        "passed": true
+      },
+      {
+        "name": "Theme applied before first paint",
+        "request": "Static inspection of ui/src/layouts/Layout.astro inline script",
+        "expected": "Stored theme read from localStorage and applied to html.dark before paint",
+        "actual": "Inline is:inline script toggles 'dark' on documentElement from localStorage.theme or prefers-color-scheme",
+        "passed": true
+      },
+      {
+        "name": "Privacy masks money on the investment page entries table",
+        "request": "Set localStorage privacyMode=true, open /investment?id=4 (not executed; static inspection)",
+        "expected": "Total Invested cells show ****** in InvestmentEntriesTable, InvestmentEntriesMobile and InvestmentForecastSection",
+        "actual": "InvestmentEntriesTable.jsx:35, InvestmentEntriesMobile.jsx:21 and InvestmentForecastSection.jsx:58 call currencyAdapter directly with no isPrivate; Investment.jsx does not pass isPrivate to these components or to InvestmentGraphModal (line 262)",
+        "passed": false
+      },
+      {
+        "name": "Runtime dark rendering, toggle persistence, mobile menu, zoom",
+        "request": "Dev-server browser checks of /invest-track/, /investment?id=4 and the Update Entry modal",
+        "expected": "Dark backgrounds, legible text, theme toggle persists across reload, mobile menu toggles aria-expanded, zoom/pan toolbar works",
+        "actual": "Not executed: QA has no browser or http-probe in this run. Only static evidence is available",
+        "passed": false
+      }
+    ],
+    "weakenedVerification": {
+      "detected": false,
+      "evidence": [
+        "ui/src/lib/__tests__/currencyAdapter.test.js: the test 'masks the value when privacy mode is on' for formatPercentForPrivacy was removed. This is a spec-mandated behaviour change (task item 2: percentages must never be masked), not a weakening, and the replacement tests assert the new behaviour: formatPercent positive/negative/zero, and formatValueForPrivacy masking money.",
+        "No existing test in the other suites was deleted, skipped or loosened (ForecastUtils, ChartUtils and datetimeFormater tests are untouched in the diff).",
+        "New tests in ui/src/lib/__tests__/chartTheme.test.js assert concrete values (foreColor, zoom.enabled, toolbar.tools, tooltip.custom identity)."
+      ]
+    },
+    "bugReports": [
+      {
+        "title": "Privacy mode does not mask monetary values in the investment entries table, mobile cards and forecast table",
+        "severity": "MAJOR",
+        "stepsToReproduce": [
+          "Run the UI and set localStorage privacyMode to 'true'.",
+          "Open /investment?id=4.",
+          "Look at the Total Invested value in the entries table and the mobile entry cards, and at the monetary columns of the forecast table."
+        ],
+        "expected": "Monetary values render as '******' when privacy mode is on, while percentages remain visible (task item 2: privacy mode must hide only monetary values).",
+        "actual": "Monetary values are rendered unmasked because these components call currencyAdapter directly and do not receive isPrivate.",
+        "evidence": "ui/src/components/investments/InvestmentSection/InvestmentEntriesTable.jsx:35 uses currencyAdapter(entry.totalInvestedAmount, ...); InvestmentEntriesMobile.jsx:21 uses currencyAdapter(entry.totalInvestedAmount, ...); InvestmentForecastSection.jsx:58 uses currencyAdapter(f.monthlyContribution ?? 0, ...). Investment.jsx line 262-266 renders InvestmentGraphModal without isPrivate. The developer report lists this as a follow-up, but the task explicitly asked that the entries table be checked for money masking."
+      },
+      {
+        "title": "Edit button in InvestmentsDetailsListItem uses a hardcoded yellow with no design token",
+        "severity": "MINOR",
+        "stepsToReproduce": [
+          "Open the investments list (Home or Details) in dark mode.",
+          "Inspect the Edit button on each investment card."
+        ],
+        "expected": "Button colours come from a design token (for example primary, success or muted) with an explicit dark counterpart.",
+        "actual": "Button uses bg-yellow-500 text-white border-yellow-700 hover:bg-yellow-600. It is readable in dark mode, but it is not a token and its border is a literal colour.",
+        "evidence": "ui/src/components/investments/InvestmentsDetailsSection/InvestmentsDetailsListItem.jsx:51. Repo-wide grep for bg-white, bg-gray-, bg-slate-, text-gray-, text-slate-, text-stone-, border-gray- and border-slate- returns no other matches in ui/src."
+      }
+    ],
+    "recommendation": "In ui/src/components/investments/Investment.jsx, pass isPrivate to InvestmentEntriesTable, InvestmentEntriesMobile and InvestmentForecastSection, and to the InvestmentGraphModal at line 262. Inside those three components, replace each money-rendering currencyAdapter(...) call (InvestmentEntriesTable.jsx:35, InvestmentEntriesMobile.jsx:21, InvestmentForecastSection.jsx:58) with formatValueForPrivacy(value, currency, isPrivate), and leave the percentage cells as they are. Then add a unit test for the component or helper that asserts money is masked while percentages are not. Separately, decide whether the criterion 'No chart component or lib service file is modified except for the new theme utility' should be reworded: task items 1 to 3 require changes to the chart modals and to currencyAdapter.js, so the criterion cannot hold as written."
+  }
+}

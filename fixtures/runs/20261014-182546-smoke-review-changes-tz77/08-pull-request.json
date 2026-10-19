@@ -1,0 +1,34 @@
+{
+  "step": "delivery",
+  "attempt": 1,
+  "status": "NO_CHANGES",
+  "model": null,
+  "durationMs": null,
+  "writtenAt": "2026-10-14T18:25:46.145Z",
+  "data": {
+    "delivery": {
+      "committed": false,
+      "commitSha": null,
+      "commitMessage": null,
+      "pushed": false,
+      "pullRequestCreated": false,
+      "pullRequestUrl": null,
+      "branch": "factory/smoke-test-the-factory-graph-for-tz77",
+      "pendingActions": [],
+      "notes": [
+        "Dry run: no commit, push or pull request was performed."
+      ]
+    },
+    "pullRequest": {
+      "title": "feat(example): dry-run change",
+      "body": "## Summary\n\n[dry-run] Smoke test the factory graph for the \"review-changes\" scenario.\n\n## Changes\n\n- [dry-run] Feature code and unit tests.\n\n## Test plan\n\n- `npm test` -> exit 0\n\n## Quality gates\n\n- QA: PASS\n- Code review: APPROVED\n- Security: PASS\n\n## Risks & rollback\n\n[dry-run] Low risk. Revert branch `factory/smoke-test-the-factory-graph-for-tz77`.",
+      "labels": [
+        "dry-run"
+      ],
+      "breakingChanges": false,
+      "testPlan": [
+        "npm test"
+      ]
+    }
+  }
+}

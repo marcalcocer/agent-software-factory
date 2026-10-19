@@ -1,0 +1,27 @@
+{
+  "step": "code-review",
+  "attempt": 2,
+  "status": "APPROVED",
+  "model": "dry-run-stub",
+  "durationMs": 1,
+  "writtenAt": "2026-10-14T18:25:46.125Z",
+  "data": {
+    "status": "APPROVED",
+    "summary": "[dry-run] Change is correct, idiomatic and well tested.",
+    "scores": {
+      "correctness": 5,
+      "maintainability": 5,
+      "conventions": 5,
+      "testQuality": 5
+    },
+    "findings": [],
+    "conventionViolations": [],
+    "architectureNotes": [
+      "[dry-run] Layering respected."
+    ],
+    "positives": [
+      "[dry-run] Clear naming and focused diff."
+    ],
+    "mustFixBeforeMerge": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "step": "pr-writer",
+  "attempt": 2,
+  "status": "COMPLETED",
+  "model": "claude-haiku-5-5",
+  "durationMs": 13726,
+  "writtenAt": "2026-10-19T17:19:16.166Z",
+  "data": {
+    "commitMessage": "feat(ui): add design tokens, dark mode and modern app shell\n\nReplace the Flowbite-style classes with semantic design tokens exposed as\nTailwind colours, backed by CSS variables for light and dark themes.\n\n- Add a header with a mobile menu, a privacy toggle and a theme toggle.\n- Persist the theme in localStorage, applied before first paint.\n- Mask the Profit percentage in privacy mode and hide its sign badge.\n- Add Button, Card, Badge and Skeleton UI primitives.",
+    "pullRequest": {
+      "title": "feat(ui): add design tokens, dark mode and modern app shell",
+      "body": "## Summary\nThe UI looked dated and inconsistent. This change introduces a set of semantic design tokens, a light and dark theme, and a new app shell with a responsive header. The Summary section is now a set of KPI cards. Privacy mode now also masks the Profit percentage, which previously leaked the value.\n\n## Changes\n- **Design tokens** (`ui/tailwind.config.mjs`, `ui/src/styles/global.css`): semantic colours (`background`, `foreground`, `muted`, `primary`, `success`, `danger`, `border`, `ring`, ...) backed by CSS variables for `:root` and `.dark`. Dark mode is class based. A sans-serif font stack and a `fadeIn` animation are added.\n- **Theme** (`ui/src/lib/theme.js`, `ui/src/lib/cn.js`, `ui/src/layouts/Layout.astro`): theme resolution (stored value, then system preference), persistence in `localStorage`, and an inline script that applies the theme before first paint.\n- **UI primitives** (`ui/src/components/ui/`): `Button`, `Card`, `Badge` and `Skeleton`.\n- **Header** (`ui/src/components/Header.astro`): sticky header with brand, Home/About links with the active state, a mobile menu toggled by a button with `aria-expanded`, plus `PrivacyToggle` and the new `ThemeToggle`.\n- **Summary** (`ui/src/components/investments/Summary.jsx`): KPI cards for total and organic investments. Profit and benefit are coloured by sign. Values are masked in privacy mode, and the Profit badge is hidden in privacy mode.\n- **Privacy formatting** (`ui/src/lib/currencyAdapter.js`): new `formatPercentForPrivacy` helper.\n- **Modals and home** (`ui/src/components/modals/BaseModal.jsx`, `ModalHeader.jsx`, `ui/src/components/Home.jsx`, `LoadingSpinner.jsx`): restyled modal chrome and loading state, with skeleton placeholders on the home page.\n- **Docs** (`ui/README.md`): feature list, folder overview and component descriptions updated.\n\nCharts, services and the rest of `lib` are unchanged.\n\n## Test plan\n- `npm test` in `ui/`: 61 tests, all passing (exit code 0). Includes new unit tests for `formatPercentForPrivacy` and the theme utilities.\n- `npm run build` in `ui/`: exit code 0.\n- Acceptance criteria covered by the checks above: build and tests pass, tokens and dark mode are configured, the theme persists, and the `formatPercentForPrivacy` masking is tested. Header behaviour, KPI rendering, skeletons and modal behaviour were not covered by automated tests and need a manual check.\n\n## Quality gates\n\n- QA: PASS - 61 of 61 tests passed\n- Code review: APPROVED WITH SUGGESTIONS\n- Security audit: PASS (no risk found)\n- Documentation: updated 1 file\n\n## Risks & rollback\n- Visual change across all pages: colours, spacing and the header are replaced. Modals and the chart views use the new tokens.\n- The theme script runs inline in `<head>`. If it fails, the page falls back to the system preference.\n- Rollback: revert the commit. No data or API changes are involved.\n\n## Follow-ups\n- In privacy mode, the sign-coloured Profit and benefit text can still reveal whether the value is positive or negative. Decide whether colour should also be masked.\n- The new code mixes `var` and `const`. Align on one style (AGENTS.md asks for `var` in methods).\n- Check that the Inter font is actually loaded; the visible diff only names it in the font stack.\n- `LoadingSpinner` is still used by several modals and the investment details, so it stays.\n- No `CHANGELOG` exists. Decide whether user-visible changes (theme toggle, privacy masking of profit) need release notes.",
+      "labels": [
+        "enhancement"
+      ],
+      "breakingChanges": false
+    },
+    "source": "agent",
+    "omitted": [],
+    "shortened": []
+  }
+}

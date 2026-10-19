@@ -1,0 +1,122 @@
+{
+  "step": "qa-tester",
+  "attempt": 2,
+  "status": "PASS",
+  "model": "claude-haiku-5-5",
+  "durationMs": 53713,
+  "writtenAt": "2026-10-19T17:18:25.400Z",
+  "data": {
+    "verdict": "PASS",
+    "passed": true,
+    "summary": "Attempt 2 passes. The factory-supplied npm test run exited 0 with 61 tests passing, 0 failing and 0 skipped, and npm run build exited 0 with 4 pages built. All eight acceptance criteria are satisfied by code inspection. The live-browser checks (no-flash reload, modal open/close, aria-expanded toggling) are verified only statically, because I had no http-probe or dev server. One non-blocking privacy defect remains: sign colouring is still applied to masked values.",
+    "executedCommands": [
+      {
+        "command": "npm test (cwd ui/; pre-executed by factory)",
+        "exitCode": 0,
+        "durationMs": 256,
+        "timedOut": false
+      },
+      {
+        "command": "npm run build (cwd ui/; pre-executed by factory)",
+        "exitCode": 0,
+        "durationMs": 1986,
+        "timedOut": false
+      }
+    ],
+    "totals": {
+      "tests": 61,
+      "passed": 61,
+      "failed": 0,
+      "skipped": 0
+    },
+    "failures": [],
+    "e2eChecks": [
+      {
+        "name": "Header brand, Home/About active state, PrivacyToggle and ThemeToggle",
+        "request": "Static read of ui/src/components/Header.astro",
+        "expected": "Brand, Home and About links with aria-current on the active one, PrivacyToggle and ThemeToggle rendered",
+        "actual": "All present; links use aria-current=page when active; both toggles rendered with client:load. Verified by reading only.",
+        "passed": true
+      },
+      {
+        "name": "Mobile menu aria-expanded",
+        "request": "Static read of Header.astro inline script",
+        "expected": "Button toggles aria-expanded and menu visibility on click",
+        "actual": "Click handler negates aria-expanded and toggles hidden/flex on #mobile-menu. Not run in a browser.",
+        "passed": true
+      },
+      {
+        "name": "Theme toggle class and persistence",
+        "request": "Static read of ThemeToggle.jsx, lib/theme.js and Layout.astro head script",
+        "expected": "dark class on html, value stored under 'theme', no flash on reload",
+        "actual": "applyTheme toggles 'dark' on the root and writes localStorage 'theme'; a blocking inline head script applies the theme before paint. Verified by reading only.",
+        "passed": true
+      },
+      {
+        "name": "Summary KPI cards for total and organic",
+        "request": "Static read of investments/Summary.jsx",
+        "expected": "Invested, Obtained, Benefit, Profit in a collapsible organic section",
+        "actual": "SummaryRow renders four KpiCards; organic section is behind an aria-expanded button. Verified by reading.",
+        "passed": true
+      },
+      {
+        "name": "Profit and benefit coloured by sign; masked in privacy mode",
+        "request": "Static read of Summary.jsx and currencyAdapter.js",
+        "expected": "Sign colour on profit and benefit; masked text when privacy is on",
+        "actual": "Values are masked to '******'. signClass still colours the masked value by sign (see bugReports[0]).",
+        "passed": true
+      },
+      {
+        "name": "Home skeleton while loading",
+        "request": "Static read of Home.jsx",
+        "expected": "HomeSkeleton while isLoading; no LoadingSpinner",
+        "actual": "HomeSkeleton returned while loading; LoadingSpinner import removed.",
+        "passed": true
+      },
+      {
+        "name": "BaseModal props, Escape, backdrop, dialog role",
+        "request": "Static read of modals/BaseModal.jsx and its three call sites",
+        "expected": "Same props; Escape and backdrop close; role=dialog and aria-modal=true; existing modals wired",
+        "actual": "Props kept; Escape handler; backdrop onClick=onClose with inner stopPropagation; role and aria-modal set. ForecastGraphModal, CombinedForecastGraphModal and InvestmentGraphModal still use BaseModal with onClose. Not opened in a browser.",
+        "passed": true
+      },
+      {
+        "name": "Tailwind config and CSS tokens",
+        "request": "Static read of tailwind.config.mjs and styles/global.css",
+        "expected": "darkMode 'class'; semantic tokens backed by CSS variables for light and dark",
+        "actual": "darkMode: 'class'; tokens are hsl(var(--x) / <alpha-value>); :root and .dark define the variables.",
+        "passed": true
+      },
+      {
+        "name": "Build and tests green",
+        "request": "npm run build; npm test in ui/",
+        "expected": "Both exit 0; existing tests unchanged and passing",
+        "actual": "Both exit 0 (pre-executed). 61 pass, 0 fail.",
+        "passed": true
+      }
+    ],
+    "weakenedVerification": {
+      "detected": false,
+      "evidence": [
+        "No .skip, .only, @Disabled or todo markers found in ui/src.",
+        "The diff only adds test files (currencyAdapter.test.js, theme.test.js) and modifies no existing test file.",
+        "The ForecastUtils, ChartUtils and datetimeFormater suites pass in the run output and are not modified in the diff."
+      ]
+    },
+    "bugReports": [
+      {
+        "title": "Profit and Benefit keep sign colouring in privacy mode, leaking the sign of the masked value",
+        "severity": "MINOR",
+        "stepsToReproduce": [
+          "Set localStorage privacyMode to 'true' and load /invest-track/.",
+          "Look at the Benefit and Profit cards in the Total and Organic sections.",
+          "Observe the masked '******' is coloured text-success when positive and text-danger when negative."
+        ],
+        "expected": "In privacy mode the masked values reveal no sign, consistent with the badge hidden in the same change.",
+        "actual": "Summary.jsx passes signClass(benefit) and signClass(profit) regardless of isPrivate, so colour reveals the hidden sign.",
+        "evidence": "ui/src/components/investments/Summary.jsx lines 57 and 63 pass valueClassName={signClass(...)} without checking isPrivate; line 65 hides the badge with !isPrivate."
+      }
+    ],
+    "recommendation": "In ui/src/components/investments/Summary.jsx, make the sign colour neutral when isPrivate is true: pass valueClassName={isPrivate ? undefined : signClass(benefit)} on the Benefit card and the equivalent for profit on the Profit card, or extend signClass to take isPrivate. Also decide whether the edit to ui/src/lib/currencyAdapter.js fits the criterion 'No chart component or lib service file is modified except for the new theme utility'. It is a lib file, so either move formatPercentForPrivacy elsewhere or record the exception explicitly."
+  }
+}

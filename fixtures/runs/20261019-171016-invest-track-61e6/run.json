@@ -1,0 +1,31 @@
+{
+  "runId": "20261019-171016-invest-track-61e6",
+  "task": "I want to do a big refactor on the UI for this repository. Right now, I think we have a UI that is working, but it doesn't seem professional. This is because I made it without having AI and tools that know how to do frontend. Now that I have you, I want you to rethink about the frontend that we have and present everything in a more professional way, in a more modern way using examples of similar applications or webs for you to follow a similar design or the common tools, frameworks, etc., that are used nowadays. So, I want you to refactor all the frontend. Give me ideas and let's decide how we can refactor this.",
+  "repoPath": "/home/dev/workspace/invest-track",
+  "repoName": "invest-track",
+  "branch": "factory/i-want-to-do-a-big-refactor-on-t-61e6",
+  "baseBranch": "master",
+  "models": {
+    "pm-architect": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "developer": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "qa-tester": "claude-cli/haiku -> claude-cli/sonnet",
+    "triage": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "security": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "reviewer": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "documentation": "claude-cli/haiku -> claude-cli/sonnet",
+    "feedback-triage": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "merge-summary": "claude-cli/haiku -> claude-cli/sonnet",
+    "pr-writer": "claude-cli/haiku -> claude-cli/sonnet"
+  },
+  "pipeline": {
+    "qa": true,
+    "review": true,
+    "security": true,
+    "documentation": true
+  },
+  "kind": "run",
+  "rootRunId": "20261019-171016-invest-track-61e6",
+  "round": 1,
+  "dryRun": false,
+  "startedAt": "2026-10-19T17:10:16.668Z"
+}

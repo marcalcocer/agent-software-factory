@@ -1,0 +1,2 @@
+{"at":"2026-10-19T17:49:32.660Z","type":"agent_call","role":"merge-summary","step":"merge-summary","attempt":1,"requestedModel":"claude-cli/haiku","servedByModel":"claude-haiku-5-5","inputTokens":2,"outputTokens":2635,"reasoningTokens":2134,"cachedTokens":0,"totalTokens":41361,"toolCalls":1,"durationMs":13787,"failedOver":false,"dryRun":false}
+{"at":"2026-10-19T17:49:32.661Z","type":"step_artifact","step":"merge-summary","attempt":1,"status":"agent","durationMs":13787,"artifact":"12-merge-summary.json"}

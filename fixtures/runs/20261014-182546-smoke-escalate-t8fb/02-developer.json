@@ -1,0 +1,40 @@
+{
+  "step": "developer",
+  "attempt": 1,
+  "status": "COMPLETED",
+  "model": "dry-run-stub",
+  "durationMs": 0,
+  "writtenAt": "2026-10-14T18:25:46.337Z",
+  "data": {
+    "status": "COMPLETED",
+    "summary": "[dry-run] Implementation attempt 1 completed.",
+    "changedFiles": [
+      {
+        "path": "src/main/example.ts",
+        "changeType": "MODIFIED",
+        "purpose": "[dry-run] Feature code."
+      }
+    ],
+    "testsAdded": [
+      {
+        "path": "src/test/example.test.ts",
+        "level": "UNIT",
+        "description": "[dry-run] Covers the new behaviour."
+      }
+    ],
+    "commandsRun": [
+      {
+        "command": "npm test",
+        "exitCode": 0,
+        "summary": "[dry-run] Local suite green."
+      }
+    ],
+    "appliedFeedback": [],
+    "selfVerification": {
+      "localTestsPassed": true,
+      "notes": "[dry-run] Verified locally."
+    },
+    "followUps": [],
+    "blockers": []
+  }
+}

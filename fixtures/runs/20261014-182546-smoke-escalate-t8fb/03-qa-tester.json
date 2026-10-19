@@ -1,0 +1,56 @@
+{
+  "step": "qa-tester",
+  "attempt": 1,
+  "status": "FAIL",
+  "model": "dry-run-stub",
+  "durationMs": 0,
+  "writtenAt": "2026-10-14T18:25:46.339Z",
+  "data": {
+    "verdict": "FAIL",
+    "passed": false,
+    "summary": "[dry-run] Attempt 1 failed with a PRODUCTION_DEFECT failure.",
+    "executedCommands": [
+      {
+        "command": "npm test",
+        "exitCode": 1,
+        "durationMs": 4200,
+        "timedOut": false
+      }
+    ],
+    "totals": {
+      "tests": 24,
+      "passed": 23,
+      "failed": 1,
+      "skipped": 0
+    },
+    "failures": [
+      {
+        "testId": "ExampleService > rounds half-cent amounts up",
+        "type": "PRODUCTION_DEFECT",
+        "message": "[dry-run] expected 10.13 but received 10.12",
+        "file": "src/test/example.test.ts",
+        "line": 42,
+        "stackExcerpt": "[dry-run] at ExampleService.calculateNet (src/main/example.ts:48)",
+        "suspectedRootCause": "[dry-run] Rounding applied before the tax multiplication."
+      }
+    ],
+    "e2eChecks": [],
+    "weakenedVerification": {
+      "detected": false,
+      "evidence": []
+    },
+    "bugReports": [
+      {
+        "title": "[dry-run] Half-cent amounts are rounded down",
+        "severity": "MAJOR",
+        "stepsToReproduce": [
+          "[dry-run] Call calculateNet with 10.125"
+        ],
+        "expected": "10.13",
+        "actual": "10.12",
+        "evidence": "[dry-run] Unit test output."
+      }
+    ],
+    "recommendation": "[dry-run] Move the rounding after the multiplication in src/main/example.ts:48."
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "step": "security",
+  "attempt": 2,
+  "status": "PASS/NONE",
+  "model": "claude-sonnet-5-5",
+  "durationMs": 7605,
+  "writtenAt": "2026-10-19T17:18:33.054Z",
+  "data": {
+    "status": "PASS",
+    "riskLevel": "NONE",
+    "summary": "The diff is a frontend theming and styling refactor. It adds no new dependencies, secrets, network calls or injection sinks. A grep of ui/src found no dangerouslySetInnerHTML, innerHTML, eval or plain http:// use. The theme code reads and writes only the value 'theme' in localStorage, and it validates that value against a light/dark allow-list. The inline script in Layout.astro is static and uses no user data. The privacy-mode fix now masks the Profit percentage and hides the gain/loss badge, which closes the earlier information leak. The diff output was truncated, so I could not read the middle of it, which includes the modal and ui component files. The grep covered all of ui/src and found nothing in them.",
+    "findings": [],
+    "secretsDetected": [],
+    "dependencyRisks": [],
+    "mustFixBeforeMerge": []
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "runId": "20261014-182546-smoke-review-changes-tz77",
+  "task": "Smoke test the factory graph for the \"review-changes\" scenario.",
+  "repoPath": "/home/dev/workspace/agent-software-factory/factory",
+  "repoName": "factory",
+  "branch": "factory/smoke-test-the-factory-graph-for-tz77",
+  "baseBranch": "master",
+  "models": {
+    "pm-architect": "anthropic/claude-sonnet-4-6 -> anthropic/claude-haiku-4-5",
+    "developer": "anthropic/claude-sonnet-4-6 -> anthropic/claude-haiku-4-5",
+    "qa-tester": "anthropic/claude-haiku-4-5 -> anthropic/claude-sonnet-4-6",
+    "triage": "anthropic/claude-sonnet-4-6 -> anthropic/claude-haiku-4-5",
+    "security": "anthropic/claude-sonnet-4-6 -> anthropic/claude-haiku-4-5",
+    "reviewer": "anthropic/claude-sonnet-4-6 -> anthropic/claude-haiku-4-5",
+    "documentation": "anthropic/claude-haiku-4-5 -> anthropic/claude-sonnet-4-6",
+    "feedback-triage": "anthropic/claude-sonnet-4-6 -> anthropic/claude-haiku-4-5"
+  },
+  "dryRun": true,
+  "startedAt": "2026-10-14T18:25:46.090Z"
+}

@@ -1,0 +1,63 @@
+{
+  "step": "code-review",
+  "attempt": 2,
+  "status": "APPROVED_WITH_SUGGESTIONS",
+  "model": "claude-sonnet-5-5",
+  "durationMs": 19484,
+  "writtenAt": "2026-10-19T17:42:17.627Z",
+  "data": {
+    "status": "APPROVED_WITH_SUGGESTIONS",
+    "summary": "The change delivers dark-mode tokens, money-only privacy masking, theme-aware charts and a shared zoom config. The privacy hook imports exports that exist, `formatPercentForPrivacy` has no remaining references, and all three chart modals use `withChartDefaults`. The diff was truncated, so I did not check every themed file. I found no blocking defects, only minor suggestions. The developer could not run the tests, but QA reports 67/67 passing with nothing weakened.",
+    "scores": {
+      "correctness": 4,
+      "maintainability": 4,
+      "conventions": 4,
+      "testQuality": 3
+    },
+    "findings": [
+      {
+        "severity": "MINOR",
+        "file": "ui/src/lib/usePrivacyMode.js",
+        "line": 1,
+        "issue": "A lib hook imports from a component module (`@/components/PrivacyToggle`), which inverts the layering. The hook has no tests.",
+        "suggestion": "Move `getPrivacyMode` and `PRIVACY_MODE_EVENT` into a lib module that both the toggle and the hook import. Optionally add a small test for the hook.",
+        "rule": "Architecture layering"
+      },
+      {
+        "severity": "MINOR",
+        "file": "ui/src/components/Home.jsx",
+        "line": 77,
+        "issue": "The comment 'Details still use light-only chart styling until their own phase' is now stale, because the charts are themed.",
+        "suggestion": "Remove the comment.",
+        "rule": "Comments explain why; no stale comments"
+      },
+      {
+        "severity": "MINOR",
+        "file": "ui/src/components/investments/Investment.jsx",
+        "line": 172,
+        "issue": "`text-white` remains on the `bg-success` button, and the Home dark wrapper is not verified. This is probably fine, since white on a green token is legible.",
+        "suggestion": "Use a token such as `text-primary-foreground`, or keep white if that is intentional.",
+        "rule": "Design tokens"
+      },
+      {
+        "severity": "MINOR",
+        "file": "ui/src/lib/__tests__/chartTheme.test.js",
+        "line": 1,
+        "issue": "There is no test that `withChartDefaults` preserves the chart-specific `yaxis` formatter, and `withChartDefaults` has no light-mode test.",
+        "suggestion": "Add a light-mode case and an assertion that `yaxis` passes through unchanged.",
+        "rule": "Testing conventions"
+      }
+    ],
+    "conventionViolations": [],
+    "architectureNotes": [
+      "Centralising theme and zoom options in chartTheme.js is a good, DRY approach.",
+      "The acceptance criterion 'no chart component is modified' conflicts with the task, which requires chart modal changes. Treat the criterion as superseded."
+    ],
+    "positives": [
+      "Privacy masking now covers money only, and percentages are always shown.",
+      "Tests for chartTheme and currencyAdapter assert real behaviour, and no existing test was skipped or weakened.",
+      "The `useIsDarkMode` hook makes the charts react live to the theme toggle."
+    ],
+    "mustFixBeforeMerge": []
+  }
+}

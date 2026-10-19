@@ -1,0 +1,91 @@
+{
+  "runId": "0d4d4bc8-3da0-4da9-b444-263c6e228636",
+  "kind": "pr-feedback",
+  "repository": "/home/dev/workspace/invest-track",
+  "pullRequest": 8,
+  "pullRequestUrl": "https://github.com/marcalcocer/invest-track/pull/8",
+  "branch": "factory/i-want-to-do-a-big-refactor-on-t-61e6",
+  "baseBranch": "master",
+  "status": "RERUN_IMPLEMENTATION",
+  "summary": "Comment 1 is a set of fixes inside the existing dark-mode and privacy work: dark-mode gaps, a privacy-mode bug and graph zoom. All of it goes to the developer. Comment 2 is a question about PR scope and gets a reply only.",
+  "commentsTriaged": 2,
+  "repliesPosted": 1,
+  "followUpTask": "In the ui/ app (Astro + React + Tailwind) finish the dark-mode work started in PR #8 and fix the privacy and chart issues found in review.\n\n1) Dark mode everywhere. Search ui/src for hardcoded light-theme classes (bg-white, bg-slate-*, bg-gray-*, text-slate-*, text-gray-*, text-stone-*, border-slate-*, border-gray-*, etc.) and replace them with the design tokens defined in ui/tailwind.config.mjs and ui/src/styles/global.css (bg-background, bg-card, bg-muted, text-foreground, text-muted-foreground, border-border, text-primary, text-success, text-danger). Cover at least: investments/Details.jsx (\"Investment Details\"), InvestmentStats.jsx (Entries, Avg Profit, Last update), Investment.jsx, InvestmentEntriesTable.jsx (table headers and every entry row; currently only some rows are themed), InvestmentEntriesMobile.jsx, InvestmentForecastSection.jsx, InvestmentsDetailsListItem.jsx, Home.jsx, NotFound.jsx, pages/about.astro, and all modals (BaseModal, ModalHeader, UpdateEntryModal, CreateEntryModal, CreateInvestmentModal, EditInvestmentModal, CreateForecastModal, EditForecastModal, ConfirmDeleteModal). Form inputs, labels and buttons in modals must be readable in dark mode. Chart modals (InvestmentGraphModal.tsx, ForecastGraphModal.jsx, CombinedForecastGraphModal.jsx) must use a theme-aware ApexCharts theme (text, grid and tooltip colours) based on the current dark class. Acceptance: no hardcoded light-only colour classes remain without a dark counterpart or token; the investment page (/investment?id=4) and the Update Entry modal render with dark backgrounds and legible text in dark mode.\n\n2) Privacy mode must hide only monetary values. In ui/src/components/investments/Summary.jsx stop masking the profit percentage (it currently uses formatPercentForPrivacy, which returns '******'). Percentages and profitability must always display. Remove or repurpose formatPercentForPrivacy in ui/src/lib/currencyAdapter.js, and update ui/src/lib/__tests__/currencyAdapter.test.js accordingly. Check that other places (entries table, stats, details, graphs) mask only money, not percentages.\n\n3) Chart zoom. In InvestmentGraphModal.tsx (zoom.enabled is false at line 66), ForecastGraphModal.jsx and CombinedForecastGraphModal.jsx, make zoom, pan and the zoom toolbar work consistently on all graphs.\n\nFollow AGENTS.md: explicit imports, var for locals, helper functions at the end of test files. Run the full UI test suite afterwards and make sure it is green, without weakening any test.",
+  "blockers": [],
+  "items": [
+    {
+      "commentId": "PRRC_kwDONKZ9LM8AAAABAU2pMg",
+      "author": "marcalcocer",
+      "excerpt": "Investement Details is in white, while dark mode is enabled ... profit (non monetary values) should be maintained ... review all the dark mode implementation everywhere ... can't zoom in some graphs",
+      "category": "CODE_CHANGE_REQUEST",
+      "assignTo": "developer",
+      "reasoning": "Dark mode is the PR's stated goal, so the remaining white surfaces are defects, not new scope. Many components still use hardcoded light classes (bg-white, text-slate/gray): Details, InvestmentStats, entries table and mobile list, forecast section, the modals, BaseModal and ModalHeader. Summary.jsx:62 passes the profit ratio through formatPercentForPrivacy, which returns '******' in privacy mode (currencyAdapter.js:48-50). That contradicts the intended behaviour of hiding money only. InvestmentGraphModal.tsx:66 sets zoom.enabled to false, and the other graph modals configure zoom differently, so zoom is a bug fix as well.",
+      "reply": "Thanks for the detailed findings. The next run will: (1) replace all remaining hardcoded light colours (bg-white, text-slate-*, text-gray-*, etc.) with the design tokens across the investment details, stats, entries table and mobile list, forecast section, the investment page and every modal (including Update Entry), plus the 404 and About pages; (2) keep percentage and profit values visible in privacy mode, so only monetary values are masked (Summary.jsx uses formatPercentForPrivacy, which currently masks them); (3) enable zoom on the charts where it is disabled or inconsistent (InvestmentGraphModal.tsx has zoom disabled) and make the chart colours follow the theme. Tests will be updated for the privacy change.",
+      "filesInvolved": [
+        "ui/src/components/investments/Summary.jsx",
+        "ui/src/lib/currencyAdapter.js",
+        "ui/src/lib/__tests__/currencyAdapter.test.js",
+        "ui/src/components/investments/Details.jsx",
+        "ui/src/components/investments/InvestmentStats.jsx",
+        "ui/src/components/investments/Investment.jsx",
+        "ui/src/components/investments/InvestmentSection/InvestmentEntriesTable.jsx",
+        "ui/src/components/investments/InvestmentSection/InvestmentEntriesMobile.jsx",
+        "ui/src/components/investments/InvestmentSection/InvestmentForecastSection.jsx",
+        "ui/src/components/investments/InvestmentsDetailsSection/InvestmentsDetailsListItem.jsx",
+        "ui/src/components/modals/BaseModal.jsx",
+        "ui/src/components/modals/ModalHeader.jsx",
+        "ui/src/components/modals/UpdateEntryModal.jsx",
+        "ui/src/components/modals/CreateEntryModal.jsx",
+        "ui/src/components/modals/CreateInvestmentModal.jsx",
+        "ui/src/components/modals/EditInvestmentModal.jsx",
+        "ui/src/components/modals/CreateForecastModal.jsx",
+        "ui/src/components/modals/EditForecastModal.jsx",
+        "ui/src/components/modals/ConfirmDeleteModal.jsx",
+        "ui/src/components/modals/InvestmentGraphModal.tsx",
+        "ui/src/components/modals/ForecastGraphModal.jsx",
+        "ui/src/components/modals/CombinedForecastGraphModal.jsx",
+        "ui/src/components/Home.jsx",
+        "ui/src/components/NotFound.jsx",
+        "ui/src/pages/about.astro"
+      ]
+    },
+    {
+      "commentId": "PRRC_kwDONKZ9LM8AAAABAU21Ag",
+      "author": "marcalcocer",
+      "excerpt": "I'm not clear if this is the only phase we'll do, or you modified everything on this PR for the task",
+      "category": "QUESTION",
+      "assignTo": "none",
+      "reasoning": "The reviewer asks about PR scope. The diff shows the foundation (design tokens, theme toggle, header shell, UI primitives, Summary KPI cards) but many components still carry hardcoded light classes, so the PR is only a first phase. No code change is implied by the question itself; the remaining coverage is handled by comment 1.",
+      "reply": "This PR currently covers only the foundation: the design tokens and dark theme, the theme and privacy toggles, the new header shell, the UI primitives, and the Summary cards. It did not migrate every component, which is why you still see white areas. The follow-up run triggered by your other comment will extend dark mode to the rest of the app (details, entries, modals, graphs) in this same PR.",
+      "filesInvolved": [
+        "ui/src/components/investments/Summary.jsx"
+      ]
+    }
+  ],
+  "comments": [
+    {
+      "id": "PRRC_kwDONKZ9LM8AAAABAU2pMg",
+      "threadId": "PRRT_kwDONKZ9LM6uB6s5",
+      "source": "REVIEW_THREAD",
+      "author": "marcalcocer",
+      "body": "Some findings I see testing the UI:\n- Investement Details is in white, while dark mode is enabled\n- When hide values (click on the eye)  profit (non monetary values) shoiuld be maintained, hide values is just to hide money, not %\n- Testing -> http://apps.home/invest-track/investment?id=4 I on black mode I still see some parts in white (e.g. this part Entries: 61\nAvg Profit: 1,11%\nLast update: 26-09-2026 16:36 , table headers, and for the entriesthe half of them\nthis modal is eveything in white:\n\nUpdate Entry #71\nDate/Time\n\n02/03/2025, 04:46 PM\nTotal Invested\n9673\nProfitability (%)\n0.28\nComments\nCancel\nUpdate\n\nso review all the dark mode implementation everywhere\n\n- in the actual graphs, I can't do zoom in some of them",
+      "createdAt": "2026-10-19T17:32:09Z",
+      "path": "ui/src/components/investments/Summary.jsx",
+      "category": "CODE_CHANGE_REQUEST",
+      "reply": "Thanks for the detailed findings. The next run will: (1) replace all remaining hardcoded light colours (bg-white, text-slate-*, text-gray-*, etc.) with the design tokens across the investment details, stats, entries table and mobile list, forecast section, the investment page and every modal (including Update Entry), plus the 404 and About pages; (2) keep percentage and profit values visible in privacy mode, so only monetary values are masked (Summary.jsx uses formatPercentForPrivacy, which currently masks them); (3) enable zoom on the charts where it is disabled or inconsistent (InvestmentGraphModal.tsx has zoom disabled) and make the chart colours follow the theme. Tests will be updated for the privacy change."
+    },
+    {
+      "id": "PRRC_kwDONKZ9LM8AAAABAU21Ag",
+      "threadId": "PRRT_kwDONKZ9LM6uB7Jv",
+      "source": "REVIEW_THREAD",
+      "author": "marcalcocer",
+      "body": "I'm not clear if this is the only phase we'll do, or you modified everything on this PR for the task",
+      "createdAt": "2026-10-19T17:32:30Z",
+      "path": "ui/src/components/investments/Summary.jsx",
+      "line": 2,
+      "category": "QUESTION",
+      "reply": "This PR currently covers only the foundation: the design tokens and dark theme, the theme and privacy toggles, the new header shell, the UI primitives, and the Summary cards. It did not migrate every component, which is why you still see white areas. The follow-up run triggered by your other comment will extend dark mode to the rest of the app (details, entries, modals, graphs) in this same PR."
+    }
+  ],
+  "finishedAt": "2026-10-19T17:34:54.295Z"
+}

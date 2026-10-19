@@ -1,0 +1,39 @@
+{
+  "step": "documentation",
+  "attempt": 1,
+  "status": "COMPLETED",
+  "model": "dry-run-stub",
+  "durationMs": 0,
+  "writtenAt": "2026-10-14T18:25:45.909Z",
+  "data": {
+    "status": "COMPLETED",
+    "summary": "[dry-run] Changelog entry added and the pull-request description generated.",
+    "updatedFiles": [
+      {
+        "path": "CHANGELOG.md",
+        "changeType": "MODIFIED",
+        "description": "[dry-run] Added an entry under Fixed."
+      }
+    ],
+    "changelogEntry": {
+      "section": "Fixed",
+      "entries": [
+        "[dry-run] Half-cent amounts round correctly."
+      ]
+    },
+    "openApiUpdated": false,
+    "openApiNotes": "[dry-run] No HTTP contract changed.",
+    "pullRequest": {
+      "title": "feat(example): dry-run change",
+      "body": "## Summary\n\n[dry-run] Smoke test the factory graph for the \"happy\" scenario.\n\n## Changes\n\n- [dry-run] Feature code and unit tests.\n\n## Test plan\n\n- `npm test` -> exit 0\n\n## Quality gates\n\n- QA: PASS\n- Code review: APPROVED\n- Security: PASS\n\n## Risks & rollback\n\n[dry-run] Low risk. Revert branch `factory/smoke-test-the-factory-graph-for-hby1`.",
+      "labels": [
+        "dry-run"
+      ],
+      "breakingChanges": false,
+      "testPlan": [
+        "npm test"
+      ]
+    },
+    "followUps": []
+  }
+}

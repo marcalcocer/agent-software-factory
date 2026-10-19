@@ -1,0 +1,48 @@
+{
+  "step": "escalation",
+  "attempt": 1,
+  "status": "ACKNOWLEDGE",
+  "model": null,
+  "durationMs": null,
+  "writtenAt": "2026-10-14T18:25:46.362Z",
+  "data": {
+    "attempt": 2,
+    "maxAttempts": 2,
+    "reason": "[dry-run] Two attempts failed identically; the requirement is ambiguous.",
+    "question": "[dry-run] Which rounding mode is authoritative for half-cent amounts?",
+    "humanDecision": "ACKNOWLEDGE",
+    "humanGuidance": null,
+    "rootCause": {
+      "category": "INFINITE_LOOP",
+      "explanation": "[dry-run] The same assertion failed in two consecutive attempts.",
+      "evidence": [
+        "[dry-run] attempt 1 and 2 share the same failure signature"
+      ]
+    },
+    "history": [
+      {
+        "attempt": 1,
+        "developerStatus": "COMPLETED",
+        "qaVerdict": "FAIL",
+        "qaFailureSignature": "2f3f4e26d4f4",
+        "reviewStatus": null,
+        "securityStatus": null,
+        "triageDecision": "RETRY_DEVELOPER",
+        "triageRootCause": "PRODUCTION_CODE",
+        "notes": "QA failure triaged as RETRY_DEVELOPER"
+      },
+      {
+        "attempt": 2,
+        "developerStatus": "COMPLETED",
+        "qaVerdict": "FAIL",
+        "qaFailureSignature": "2f3f4e26d4f4",
+        "reviewStatus": null,
+        "securityStatus": null,
+        "triageDecision": "ESCALATE_HUMAN",
+        "triageRootCause": "INFINITE_LOOP",
+        "notes": "QA failure triaged as ESCALATE_HUMAN"
+      }
+    ],
+    "resumeCommand": "npm run factory -- resume --run-id 20261014-182546-smoke-escalate-t8fb --decision ACKNOWLEDGE --guidance \"<your answer>\""
+  }
+}

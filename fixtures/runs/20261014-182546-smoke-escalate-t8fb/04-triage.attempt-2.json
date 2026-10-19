@@ -1,0 +1,35 @@
+{
+  "step": "triage",
+  "attempt": 2,
+  "status": "ESCALATE_HUMAN",
+  "model": "dry-run-stub",
+  "durationMs": 1,
+  "writtenAt": "2026-10-14T18:25:46.354Z",
+  "data": {
+    "source": "QA",
+    "modelDecision": "ESCALATE_HUMAN",
+    "effectiveDecision": "ESCALATE_HUMAN",
+    "guardrailOverrides": [],
+    "report": {
+      "decision": "ESCALATE_HUMAN",
+      "rootCause": {
+        "category": "INFINITE_LOOP",
+        "explanation": "[dry-run] The same assertion failed in two consecutive attempts.",
+        "evidence": [
+          "[dry-run] attempt 1 and 2 share the same failure signature"
+        ]
+      },
+      "confidence": 0.9,
+      "loopDetected": true,
+      "loopEvidence": "[dry-run] Identical failure signature across attempts 1 and 2.",
+      "developerHints": [],
+      "filesToInspect": [
+        "src/main/example.ts"
+      ],
+      "infraActions": [],
+      "humanQuestion": "[dry-run] Which rounding mode is authoritative for half-cent amounts?",
+      "escalationSummary": "[dry-run] Two attempts failed identically; the requirement is ambiguous.",
+      "summary": "[dry-run] Escalating: loop detected."
+    }
+  }
+}

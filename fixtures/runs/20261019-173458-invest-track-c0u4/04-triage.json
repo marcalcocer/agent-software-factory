@@ -1,0 +1,52 @@
+{
+  "step": "triage",
+  "attempt": 1,
+  "status": "RETRY_DEVELOPER",
+  "model": "claude-sonnet-5-5",
+  "durationMs": 12999,
+  "writtenAt": "2026-10-19T17:40:15.451Z",
+  "data": {
+    "source": "QA",
+    "modelDecision": "RETRY_DEVELOPER",
+    "effectiveDecision": "RETRY_DEVELOPER",
+    "guardrailOverrides": [],
+    "report": {
+      "decision": "RETRY_DEVELOPER",
+      "rootCause": {
+        "category": "PRODUCTION_CODE",
+        "explanation": "Privacy masking is not wired through the investment page. Entries table, mobile cards, forecast table and the graph modal call currencyAdapter directly and never receive isPrivate, so monetary values are shown unmasked when privacy mode is on. Task item 2 explicitly required checking these places. The developer listed this as a follow-up instead of doing it.",
+        "evidence": [
+          "QA bug: InvestmentEntriesTable.jsx:35 uses currencyAdapter(entry.totalInvestedAmount,...) with no isPrivate",
+          "InvestmentEntriesMobile.jsx:21 and InvestmentForecastSection.jsx:58 do the same",
+          "Investment.jsx ~line 262 renders InvestmentGraphModal without isPrivate",
+          "Build and tests are green (66 pass), so only the behavioural gap remains"
+        ]
+      },
+      "confidence": 0.9,
+      "loopDetected": false,
+      "loopEvidence": "First attempt of this revision round. There are no earlier triage hints to compare against, and this failure is new.",
+      "developerHints": [
+        "In Investment.jsx, find where privacy state is available (the same source Home.jsx or Summary uses, e.g. the privacyMode localStorage value / PrivacyToggle event) and pass an isPrivate prop to InvestmentEntriesTable, InvestmentEntriesMobile, InvestmentForecastSection, InvestmentStats if it shows money, and InvestmentGraphModal (~line 262). If Investment.jsx has no such state, add it by following how Home.jsx obtains isPrivate, including reacting to toggle changes.",
+        "In InvestmentEntriesTable.jsx:35, InvestmentEntriesMobile.jsx:21 and InvestmentForecastSection.jsx:58, replace each money-rendering currencyAdapter(...) call with formatValueForPrivacy(value, currency, isPrivate). Grep those files for every other monetary cell (profit amount, contributions, totals) and convert them too. Leave percentage cells using formatPercent.",
+        "Inside InvestmentGraphModal.tsx, ForecastGraphModal.jsx and CombinedForecastGraphModal.jsx, check that the y-axis labels, tooltips and data labels mask money when isPrivate is true. Percentages must stay visible. Do not mask via a blanket approach.",
+        "Add a unit test in ui/src/lib/__tests__ (node:test, explicit imports, helpers at the end of the file, var for locals). It should assert formatValueForPrivacy(value, currency, true) returns '******' while formatPercent still returns the real value. If you extract a pure formatting helper for the table rows, test that too. Do not remove or loosen any existing test.",
+        "Replace the bg-yellow-500 / border-yellow-700 Edit button in InvestmentsDetailsListItem.jsx:51 with a token, or give it explicit dark: variants. Consider bg-primary or bg-muted with text-foreground.",
+        "Run npm test and npm run build in ui/ if you have command access. Report the actual output. Do not claim success without it."
+      ],
+      "filesToInspect": [
+        "ui/src/components/investments/Investment.jsx",
+        "ui/src/components/investments/InvestmentSection/InvestmentEntriesTable.jsx",
+        "ui/src/components/investments/InvestmentSection/InvestmentEntriesMobile.jsx",
+        "ui/src/components/investments/InvestmentSection/InvestmentForecastSection.jsx",
+        "ui/src/components/modals/InvestmentGraphModal.tsx",
+        "ui/src/components/investments/InvestmentsDetailsSection/InvestmentsDetailsListItem.jsx",
+        "ui/src/lib/currencyAdapter.js",
+        "ui/src/components/Home.jsx"
+      ],
+      "infraActions": [],
+      "humanQuestion": "",
+      "escalationSummary": "",
+      "summary": "Build and tests are green. The QA failure is a real production gap: privacy masking is not applied to the investment page's entries table, mobile cards, forecast table and graph modal. I'm routing back to the developer with concrete wiring hints. The \"no chart component modified\" acceptance criterion in the old plan conflicts with the task and can be ignored, since the task requires chart modal changes."
+    }
+  }
+}

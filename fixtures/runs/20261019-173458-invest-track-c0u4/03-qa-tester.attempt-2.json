@@ -1,0 +1,101 @@
+{
+  "step": "qa-tester",
+  "attempt": 2,
+  "status": "PASS",
+  "model": "claude-haiku-5-5",
+  "durationMs": 35958,
+  "writtenAt": "2026-10-19T17:41:58.093Z",
+  "data": {
+    "verdict": "PASS",
+    "passed": true,
+    "summary": "Attempt 2 is green. The factory-executed `npm test` exited 0 with 67 tests, 67 passing, 0 failing and 0 skipped, and the factory-executed `npm run build` exited 0. I could not run commands myself, so the two executions are the factory's evidence. Static inspection confirms the privacy masking is money-only, the chart modals use `withChartDefaults` (zoom forced on), no light-only colour classes remain, and Home renders skeletons while loading. Browser-level checks (theme persistence without flash, the mobile menu, modal Escape/backdrop behaviour) were not executed.",
+    "executedCommands": [
+      {
+        "command": "npm test (cwd ui/, factory-executed)",
+        "exitCode": 0,
+        "durationMs": 290,
+        "timedOut": false
+      },
+      {
+        "command": "npm run build (cwd ui/, factory-executed)",
+        "exitCode": 0,
+        "durationMs": 2010,
+        "timedOut": false
+      }
+    ],
+    "totals": {
+      "tests": 67,
+      "passed": 67,
+      "failed": 0,
+      "skipped": 0
+    },
+    "failures": [],
+    "e2eChecks": [
+      {
+        "name": "No formatPercentForPrivacy references remain",
+        "request": "grep ui/src for formatPercentForPrivacy",
+        "expected": "no remaining references outside history",
+        "actual": "no matches; currencyAdapter.js exports formatPercent (no privacy argument)",
+        "passed": true
+      },
+      {
+        "name": "Summary profit percentage is not masked",
+        "request": "static read of Summary.jsx",
+        "expected": "profit uses formatPercent, money cards use formatValueForPrivacy",
+        "actual": "Summary.jsx:62 value={formatPercent(profit)}; invested/obtained/benefit use formatValueForPrivacy",
+        "passed": true
+      },
+      {
+        "name": "Chart zoom enabled on all three graph modals",
+        "request": "static read of chart modals",
+        "expected": "withChartDefaults applied, forcing chart.zoom.enabled true",
+        "actual": "InvestmentGraphModal.tsx (3 charts), ForecastGraphModal.jsx and CombinedForecastGraphModal.jsx all wrap options in withChartDefaults; getZoomOptions sets zoom.enabled true and toolbar.show true, overriding the old zoom.enabled false",
+        "passed": true
+      },
+      {
+        "name": "No light-only colour classes remain",
+        "request": "ripgrep bg-/text-/border- gray|slate|stone|zinc|white at -50/-100/-200 over ui/src excluding tests",
+        "expected": "no matches",
+        "actual": "no matches",
+        "passed": true
+      },
+      {
+        "name": "Home renders skeletons while loading",
+        "request": "static read of Home.jsx",
+        "expected": "HomeSkeleton returned while isLoading",
+        "actual": "Home.jsx:69-70 returns <HomeSkeleton/>, built from ui/Skeleton",
+        "passed": true
+      },
+      {
+        "name": "BaseModal dialog semantics",
+        "request": "static read of BaseModal.jsx",
+        "expected": "role=dialog and aria-modal=true",
+        "actual": "BaseModal.jsx:25-26 sets role=\"dialog\" and aria-modal=\"true\"",
+        "passed": true
+      },
+      {
+        "name": "Header mobile menu aria-expanded toggling",
+        "request": "static read of Header.astro",
+        "expected": "button aria-expanded flips on click",
+        "actual": "Header.astro:77-80 toggles aria-expanded and the menu class",
+        "passed": true
+      },
+      {
+        "name": "Theme persistence and no-flash",
+        "request": "static read of Layout.astro and ThemeToggle.jsx",
+        "expected": "inline pre-paint script reads localStorage and toggles html.dark; toggle persists",
+        "actual": "Layout.astro:20-24 pre-paint script toggles dark class; ThemeToggle calls applyTheme with localStorage. Not executed in a browser.",
+        "passed": true
+      }
+    ],
+    "weakenedVerification": {
+      "detected": false,
+      "evidence": [
+        "The currencyAdapter test asserting that percentages are masked was removed, but it encoded the old behaviour the task explicitly asks to drop; the replacement tests still assert real percentage formatting and money masking.",
+        "No test was skipped, disabled or loosened in the diff. chartTheme.test.js and the new theme tests add coverage."
+      ]
+    },
+    "bugReports": [],
+    "recommendation": "Before merge, run the dev server and check in a browser: toggle theme and reload (no flash), open and close each modal with Escape and backdrop click, and confirm zoom and pan on /investment?id=4. Optionally mask the CreateEntryModal preview money, as noted in the developer follow-ups. The acceptance criterion 'no chart component modified except the theme utility' conflicts with the task's own zoom/theme requirements and should be clarified in the PR description."
+  }
+}

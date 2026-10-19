@@ -1,0 +1,38 @@
+{
+  "runId": "20261019-173458-invest-track-c0u4",
+  "task": "In the ui/ app (Astro + React + Tailwind) finish the dark-mode work started in PR #8 and fix the privacy and chart issues found in review.\n\n1) Dark mode everywhere. Search ui/src for hardcoded light-theme classes (bg-white, bg-slate-*, bg-gray-*, text-slate-*, text-gray-*, text-stone-*, border-slate-*, border-gray-*, etc.) and replace them with the design tokens defined in ui/tailwind.config.mjs and ui/src/styles/global.css (bg-background, bg-card, bg-muted, text-foreground, text-muted-foreground, border-border, text-primary, text-success, text-danger). Cover at least: investments/Details.jsx (\"Investment Details\"), InvestmentStats.jsx (Entries, Avg Profit, Last update), Investment.jsx, InvestmentEntriesTable.jsx (table headers and every entry row; currently only some rows are themed), InvestmentEntriesMobile.jsx, InvestmentForecastSection.jsx, InvestmentsDetailsListItem.jsx, Home.jsx, NotFound.jsx, pages/about.astro, and all modals (BaseModal, ModalHeader, UpdateEntryModal, CreateEntryModal, CreateInvestmentModal, EditInvestmentModal, CreateForecastModal, EditForecastModal, ConfirmDeleteModal). Form inputs, labels and buttons in modals must be readable in dark mode. Chart modals (InvestmentGraphModal.tsx, ForecastGraphModal.jsx, CombinedForecastGraphModal.jsx) must use a theme-aware ApexCharts theme (text, grid and tooltip colours) based on the current dark class. Acceptance: no hardcoded light-only colour classes remain without a dark counterpart or token; the investment page (/investment?id=4) and the Update Entry modal render with dark backgrounds and legible text in dark mode.\n\n2) Privacy mode must hide only monetary values. In ui/src/components/investments/Summary.jsx stop masking the profit percentage (it currently uses formatPercentForPrivacy, which returns '******'). Percentages and profitability must always display. Remove or repurpose formatPercentForPrivacy in ui/src/lib/currencyAdapter.js, and update ui/src/lib/__tests__/currencyAdapter.test.js accordingly. Check that other places (entries table, stats, details, graphs) mask only money, not percentages.\n\n3) Chart zoom. In InvestmentGraphModal.tsx (zoom.enabled is false at line 66), ForecastGraphModal.jsx and CombinedForecastGraphModal.jsx, make zoom, pan and the zoom toolbar work consistently on all graphs.\n\nFollow AGENTS.md: explicit imports, var for locals, helper functions at the end of test files. Run the full UI test suite afterwards and make sure it is green, without weakening any test.",
+  "repoPath": "/home/dev/workspace/invest-track",
+  "repoName": "invest-track",
+  "branch": "factory/i-want-to-do-a-big-refactor-on-t-61e6",
+  "baseBranch": "master",
+  "models": {
+    "pm-architect": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "developer": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "qa-tester": "claude-cli/haiku -> claude-cli/sonnet",
+    "triage": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "security": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "reviewer": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "documentation": "claude-cli/haiku -> claude-cli/sonnet",
+    "feedback-triage": "claude-cli/sonnet -> claude-cli/opus -> claude-cli/haiku",
+    "merge-summary": "claude-cli/haiku -> claude-cli/sonnet",
+    "pr-writer": "claude-cli/haiku -> claude-cli/sonnet"
+  },
+  "pipeline": {
+    "qa": true,
+    "review": true,
+    "security": true,
+    "documentation": true
+  },
+  "kind": "revision",
+  "rootRunId": "20261019-171016-invest-track-61e6",
+  "round": 2,
+  "parentRunId": "20261019-171016-invest-track-61e6",
+  "pullRequest": {
+    "number": 8,
+    "url": "https://github.com/marcalcocer/invest-track/pull/8",
+    "headBranch": "factory/i-want-to-do-a-big-refactor-on-t-61e6",
+    "baseBranch": "master"
+  },
+  "dryRun": false,
+  "startedAt": "2026-10-19T17:34:58.989Z"
+}

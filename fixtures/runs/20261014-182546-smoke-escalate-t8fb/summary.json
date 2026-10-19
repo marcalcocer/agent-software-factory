@@ -1,0 +1,174 @@
+{
+  "runId": "20261014-182546-smoke-escalate-t8fb",
+  "status": "ESCALATED_TO_HUMAN",
+  "task": "Smoke test the factory graph for the \"escalate\" scenario.",
+  "repository": "/home/dev/workspace/agent-software-factory/factory",
+  "branch": "factory/smoke-test-the-factory-graph-for-t8fb",
+  "startedAt": "2026-10-14T18:25:46.332Z",
+  "finishedAt": "2026-10-14T18:25:46.365Z",
+  "durationMs": 33,
+  "attempts": 2,
+  "pullRequestUrl": null,
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "reasoning": 0,
+    "cached": 0,
+    "total": 0
+  },
+  "agentCalls": 7,
+  "toolCalls": 0,
+  "modelsUsed": [
+    {
+      "role": "pm-architect",
+      "requestedModel": "anthropic/claude-sonnet-4-6",
+      "servedByModel": "dry-run-stub",
+      "calls": 1,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 0,
+      "durationMs": 0,
+      "failovers": 0
+    },
+    {
+      "role": "developer",
+      "requestedModel": "anthropic/claude-sonnet-4-6",
+      "servedByModel": "dry-run-stub",
+      "calls": 2,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 0,
+      "durationMs": 0,
+      "failovers": 0
+    },
+    {
+      "role": "qa-tester",
+      "requestedModel": "anthropic/claude-haiku-4-5",
+      "servedByModel": "dry-run-stub",
+      "calls": 2,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 0,
+      "durationMs": 0,
+      "failovers": 0
+    },
+    {
+      "role": "triage",
+      "requestedModel": "anthropic/claude-sonnet-4-6",
+      "servedByModel": "dry-run-stub",
+      "calls": 2,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 0,
+      "durationMs": 0,
+      "failovers": 0
+    }
+  ],
+  "steps": [
+    {
+      "step": "pm-architect",
+      "attempt": 1,
+      "status": "COMPLETED",
+      "durationMs": 0,
+      "artifact": "01-pm-architect.json"
+    },
+    {
+      "step": "developer",
+      "attempt": 1,
+      "status": "COMPLETED",
+      "durationMs": 0,
+      "artifact": "02-developer.json"
+    },
+    {
+      "step": "qa-tester",
+      "attempt": 1,
+      "status": "FAIL",
+      "durationMs": 0,
+      "artifact": "03-qa-tester.json"
+    },
+    {
+      "step": "triage",
+      "attempt": 1,
+      "status": "RETRY_DEVELOPER",
+      "durationMs": 0,
+      "artifact": "04-triage.json"
+    },
+    {
+      "step": "developer",
+      "attempt": 2,
+      "status": "COMPLETED",
+      "durationMs": 0,
+      "artifact": "02-developer.attempt-2.json"
+    },
+    {
+      "step": "qa-tester",
+      "attempt": 2,
+      "status": "FAIL",
+      "durationMs": 0,
+      "artifact": "03-qa-tester.attempt-2.json"
+    },
+    {
+      "step": "triage",
+      "attempt": 2,
+      "status": "ESCALATE_HUMAN",
+      "durationMs": 1,
+      "artifact": "04-triage.attempt-2.json"
+    },
+    {
+      "step": "escalation",
+      "attempt": 1,
+      "status": "ACKNOWLEDGE",
+      "durationMs": 0,
+      "artifact": "09-escalation.json"
+    }
+  ],
+  "artifacts": [
+    "01-pm-architect.json",
+    "02-developer.attempt-2.json",
+    "02-developer.json",
+    "03-qa-tester.attempt-2.json",
+    "03-qa-tester.json",
+    "04-triage.attempt-2.json",
+    "04-triage.json",
+    "09-escalation.json",
+    "run.json"
+  ],
+  "escalation": {
+    "reason": "[dry-run] Two attempts failed identically; the requirement is ambiguous.",
+    "question": "[dry-run] Which rounding mode is authoritative for half-cent amounts?",
+    "humanDecision": "ACKNOWLEDGE",
+    "humanGuidance": null,
+    "resumeCommand": "npm run factory -- resume --run-id 20261014-182546-smoke-escalate-t8fb --decision ACKNOWLEDGE --guidance \"<your answer>\""
+  },
+  "gates": {
+    "qa": "FAIL",
+    "codeReview": null,
+    "security": null,
+    "documentation": null
+  },
+  "history": [
+    {
+      "attempt": 1,
+      "developerStatus": "COMPLETED",
+      "qaVerdict": "FAIL",
+      "qaFailureSignature": "2f3f4e26d4f4",
+      "reviewStatus": null,
+      "securityStatus": null,
+      "triageDecision": "RETRY_DEVELOPER",
+      "triageRootCause": "PRODUCTION_CODE",
+      "notes": "QA failure triaged as RETRY_DEVELOPER"
+    },
+    {
+      "attempt": 2,
+      "developerStatus": "COMPLETED",
+      "qaVerdict": "FAIL",
+      "qaFailureSignature": "2f3f4e26d4f4",
+      "reviewStatus": null,
+      "securityStatus": null,
+      "triageDecision": "ESCALATE_HUMAN",
+      "triageRootCause": "INFINITE_LOOP",
+      "notes": "QA failure triaged as ESCALATE_HUMAN"
+    }
+  ],
+  "dryRun": true
+}
