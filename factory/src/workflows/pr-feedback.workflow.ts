@@ -19,7 +19,8 @@ import path from 'node:path';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
 
-import { getDiff } from '../tools/git-tools.ts';
+import { viewDiff } from '../tools/diff-view.ts';
+import { getFullDiff } from '../tools/git-tools.ts';
 import { markCommentsHandled, pullRequestKey } from '../tools/pr-registry.ts';
 import { ANSWERED_AT_TRIAGE } from '../tools/pr-reply.ts';
 import {
@@ -32,6 +33,7 @@ import {
   appendEvent,
   createRunTrace,
   generateRunId,
+  traceDirFor,
   writeArtifact,
   writeContextBlock,
   writeSummary,
@@ -208,12 +210,17 @@ const triageFeedbackStep = createStep({
       };
     }
 
-    const diff = await getDiff(context.repoPath, {
-      baseRef: context.baseBranch,
-      maxChars: 120_000,
-    });
+    // The whole diff of the branch against its base, saved complete. What the agent is shown of it is
+    // condensed to the budget, with a manifest of what was left out (see `diff-view.ts`): this used to
+    // be cut at 24,062 characters by the process output cap, and the agent was not told.
+    const diff = await getFullDiff(context.repoPath, { baseRef: context.baseBranch });
+    const patchFile = path.join(traceDirFor(context.runId), 'context', 'pr-diff');
     writeContextBlock(context.runId, 'pr-diff', diff.diff);
     writeContextBlock(context.runId, 'pr-comments', renderComments(context.comments));
+    const changes = viewDiff(diff.diff, {
+      budgetChars: getFactoryConfig().diffBudgetChars,
+      patchFile: getFactoryConfig().provider === 'claude-cli' ? patchFile : null,
+    });
 
     const prompt = composePrompt(
       '# Pull request under review',
@@ -223,7 +230,7 @@ const triageFeedbackStep = createStep({
       `- Branch: ${context.headBranch} -> ${context.baseBranch}`,
       `- Repository: ${context.repoPath}`,
       '',
-      promptSection('Diff of the branch against its base', diff.diff),
+      promptSection('Changes of the branch against its base', changes.text),
       '',
       '# Unresolved reviewer feedback',
       '',

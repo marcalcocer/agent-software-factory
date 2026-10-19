@@ -897,6 +897,7 @@ All variables are optional unless stated. See `.env.example`.
 | `FACTORY_MAX_ATTEMPTS` | `3` | Iterations before human escalation |
 | `FACTORY_COMMAND_TIMEOUT_MS` | `900000` | Per-command timeout |
 | `FACTORY_MAX_OUTPUT_CHARS` | `24000` | Captured output per stream |
+| `FACTORY_DIFF_BUDGET_CHARS` | `120000` | Characters of a change's diff one agent is shown (about 4 per token). A larger change is condensed, never cut silently: the agent gets a manifest of every changed file and what was left out, and can read the complete patch from the run's `context/` directory. QA is shown at most 60000, tests first |
 | `FACTORY_EXTRA_ALLOWED_COMMANDS` | — | Extra executables (comma separated) |
 | `FACTORY_ALLOW_PUSH` / `FACTORY_ALLOW_PR` | `true` | Gate push / PR creation |
 | `FACTORY_NON_INTERACTIVE` | `false` | Never suspend (CI mode) |

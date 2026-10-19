@@ -9,6 +9,9 @@
  *   - a dry-run mode that replays canned results so the whole graph can be exercised
  *     without API keys or LLM cost.
  */
+import fs from 'node:fs';
+import path from 'node:path';
+
 import type { Agent } from '@mastra/core/agent';
 import { RequestContext } from '@mastra/core/request-context';
 import type { TracingContext } from '@mastra/core/observability';
@@ -16,7 +19,7 @@ import type { z } from 'zod';
 
 import { z as zod } from 'zod';
 
-import { appendEvent, type ArtifactStep } from '../tools/logger-tools.ts';
+import { appendEvent, traceDirFor, type ArtifactStep } from '../tools/logger-tools.ts';
 import { getFactoryConfig } from './factory-config.ts';
 import { REQUEST_CONTEXT_KEYS } from './context-loader.ts';
 import {
@@ -138,6 +141,15 @@ function instructionsToText(instructions: unknown): string {
     if (typeof record.content === 'string') return record.content;
   }
   return String(instructions ?? '');
+}
+
+/**
+ * The run's `context/` directory (the complete patch, the raw suite logs), when it exists. Read-only
+ * roles may read it: the diff they are shown can be a condensed one, and this is where the rest is.
+ */
+function traceReadDirs(runId: string): string[] {
+  const dir = path.join(traceDirFor(runId), 'context');
+  return fs.existsSync(dir) ? [dir] : [];
 }
 
 /** Converts a Zod schema to the JSON Schema consumed by `claude --json-schema`. */
@@ -292,6 +304,7 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
       fallbackModels,
       cwd: options.repoPath,
       toolPolicy,
+      readDirs: traceReadDirs(options.runId),
     });
 
     const durationMs = Date.now() - startedAt;

@@ -99,6 +99,12 @@ export interface ClaudeCliRequest {
   cwd: string;
   /** Filesystem access granted for this call, scoped to `cwd`. Defaults to `none`. */
   toolPolicy?: ClaudeCliToolPolicy;
+  /**
+   * Further directories the call may read, besides `cwd`. Honoured for `read-only` calls only: a
+   * reviewer reads the complete patch of the change from the run's trace directory, which lies outside
+   * the repository. Nothing here can be written - the mutating tools are denied for that policy.
+   */
+  readDirs?: string[];
   timeoutMs?: number;
   maxBudgetUsd?: number;
 }
@@ -325,7 +331,7 @@ function buildArgs(request: ClaudeCliRequest): string[] {
   } else {
     // Scope the file tools to the target repository and pre-approve them so the headless call
     // never blocks on an interactive permission prompt.
-    args.push('--add-dir', request.cwd);
+    args.push('--add-dir', request.cwd, ...(policy === 'read-only' ? (request.readDirs ?? []) : []));
     args.push('--permission-mode', 'acceptEdits');
     args.push(
       '--allowed-tools',

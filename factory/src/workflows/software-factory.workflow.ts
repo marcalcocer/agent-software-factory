@@ -53,12 +53,14 @@ import {
   getBranchSha,
   getCommitMessage,
   getDiff,
+  getFullDiff,
   inspectBranchPublication,
   isWorkingTreeClean,
   pushBranch,
   recentCommitSubjects,
   renameBranch,
 } from '../tools/git-tools.ts';
+import { describeCoverage, isTestFile, viewDiff, type DiffCoverage, type DiffView } from '../tools/diff-view.ts';
 import { condenseDiff, explainAgentFailure } from '../tools/pr-merge-rules.ts';
 import { fallbackPrText, normalizePrWriterOutput, type PrTextContext } from '../tools/pr-text.ts';
 import {
@@ -70,6 +72,8 @@ import {
   artifactFileName,
   listArtifacts,
   readArtifact,
+  readEvents,
+  traceDirFor,
   updateRunMeta,
   writeArtifact,
   writeContextBlock,
@@ -350,6 +354,80 @@ function appendHistory(state: CycleState, notes: string): AttemptHistory[] {
   };
   const history = state.history.filter((item) => item.attempt !== state.attempt);
   return [...history, entry].sort((a, b) => a.attempt - b.attempt);
+}
+
+/* ========================================================================== */
+/* What the gates are shown of the change                                      */
+/* ========================================================================== */
+
+/** The three readers of the diff. QA looks for weakened tests, so it is shown the tests first. */
+type DiffAudience = 'qa' | 'review' | 'security';
+
+const DIFF_PRIORITY: Record<DiffAudience, ((path: string) => boolean) | undefined> = {
+  qa: isTestFile,
+  review: undefined,
+  security: undefined,
+};
+
+/** QA does not need the production diff in the prompt: it reads the code it checks with its tools. */
+const QA_DIFF_BUDGET_CHARS = 60_000;
+
+/**
+ * The change as one gate sees it: a condensed view of the COMPLETE diff, with a manifest of what is
+ * and is not shown, and the complete patch saved for the agent to read (once per attempt - the three
+ * gates look at the same working tree).
+ *
+ * This used to be `getDiff` as it came, cut in the middle by the process output cap without a word:
+ * a 31-file, 107,409-character round reached QA, the reviewer and the security agent as 12 files and
+ * 24,040 characters, and they could not tell.
+ */
+// Exported so the wiring (what is saved, what is recorded) can be exercised directly.
+export async function loadDiffView(
+  run: RunContext,
+  attempt: number,
+  audience: DiffAudience,
+): Promise<{ files: string[]; view: DiffView | null }> {
+  if (run.dryRun) return { files: [], view: null };
+
+  const full = await getFullDiff(run.repoPath);
+  const config = getFactoryConfig();
+
+  const patchFile = path.join(traceDirFor(run.runId), 'context', `diff-attempt-${attempt}.patch`);
+  if (!fs.existsSync(patchFile) || fs.statSync(patchFile).size !== Buffer.byteLength(full.diff)) {
+    writeContextBlock(run.runId, `diff-attempt-${attempt}.patch`, full.diff);
+  }
+
+  const budget = audience === 'qa' ? Math.min(QA_DIFF_BUDGET_CHARS, config.diffBudgetChars) : config.diffBudgetChars;
+  const view = viewDiff(full.diff, {
+    budgetChars: budget,
+    ...(DIFF_PRIORITY[audience] ? { priority: DIFF_PRIORITY[audience]! } : {}),
+    // Only the CLI backend gives its read-only agents access to the trace directory.
+    patchFile: config.provider === 'claude-cli' && config.claudeCliFileTools ? patchFile : null,
+  });
+
+  appendEvent(run.runId, {
+    type: 'diff_view',
+    attempt,
+    audience,
+    chars: full.diff.length,
+    budget,
+    ...view.coverage,
+  });
+  return { files: full.files, view };
+}
+
+/** What the reviewer and the security agent could not see, per gate, as the pull request should say it. */
+export function diffCoverageNotes(runId: string): Partial<Record<DiffAudience, string>> {
+  const notes: Partial<Record<DiffAudience, string>> = {};
+  for (const event of readEvents(runId)) {
+    if (event.type !== 'diff_view') continue;
+    const view = event as unknown as { audience: DiffAudience } & DiffCoverage;
+    const note = describeCoverage(view);
+    // The last view of each gate is the one that judged the final code.
+    if (note) notes[view.audience] = note;
+    else delete notes[view.audience];
+  }
+  return notes;
 }
 
 /* ========================================================================== */
@@ -929,10 +1007,10 @@ const qaTesterStep = createStep({
       );
     }
 
-    // The full patch is embedded in the prompt rather than left to a tool round-trip: the QA
-    // agent must be able to spot deleted or weakened tests from primary evidence, and that
-    // must not depend on which tools the active backend happens to expose.
-    const diff = run.dryRun ? { files: [], diff: '' } : await getDiff(run.repoPath);
+    // The patch is embedded in the prompt rather than left to a tool round-trip: the QA agent must
+    // be able to spot deleted or weakened tests from primary evidence, and that must not depend on
+    // which tools the active backend happens to expose. The tests' diff comes first.
+    const { view: changes } = await loadDiffView(run, attempt, 'qa');
 
     const prompt = composePrompt(
       '# Quality gate',
@@ -943,8 +1021,7 @@ const qaTesterStep = createStep({
       promptSection('Acceptance criteria', plan.acceptanceCriteria),
       promptSection('Test strategy from the plan', plan.testStrategy),
       promptSection('Developer report', state.developerReport),
-      promptSection('Changed files', diff.files),
-      promptSection('Diff under test', diff.diff),
+      promptSection('Changes under test', changes?.text),
       promptSection('PRE-EXECUTED TEST SUITE', preExecutedTest),
       promptSection('PRE-EXECUTED BUILD', preExecutedBuild),
       promptSection('Previous attempt failures', state.history),
@@ -955,7 +1032,8 @@ const qaTesterStep = createStep({
         '1. Trust only commands you actually executed; report their real exit codes.',
         '2. Verify every acceptance criterion; use `http-probe` for API/E2E criteria.',
         '3. Inspect the diff for deleted, skipped, disabled or loosened tests and report it in ' +
-          '`weakenedVerification`.',
+          '`weakenedVerification`. The tests are shown first; if a test file is only partly shown, ' +
+          'open it before you conclude nothing was weakened.',
         '4. Classify every failure (COMPILATION / PRODUCTION_DEFECT / TEST_DEFECT / ' +
           'INFRASTRUCTURE / FLAKY) with the evidence that justifies the label.',
         '',
@@ -1238,10 +1316,7 @@ const codeReviewStep = createStep({
       return { ...state, reviewReport: report };
     }
 
-    const diff = run.dryRun ? { diff: '', files: [] } : await getDiff(run.repoPath);
-    if (!run.dryRun) {
-      writeContextBlock(run.runId, `diff-attempt-${attempt}.patch`, diff.diff);
-    }
+    const { view: changes } = await loadDiffView(run, attempt, 'review');
 
     const prompt = composePrompt(
       '# Code review',
@@ -1257,13 +1332,13 @@ const codeReviewStep = createStep({
         totals: state.qaReport?.totals,
         weakenedVerification: state.qaReport?.weakenedVerification,
       }),
-      promptSection('Changed files', diff.files),
-      promptSection('Diff', diff.diff === '' ? null : `\`\`\`diff\n${diff.diff}\n\`\`\``),
+      promptSection('Changes under review', changes?.text),
       [
         '',
         '## Instructions',
         '',
-        '1. Use `git-diff` yourself if you need more context than the diff above.',
+        '1. If a file is only partly shown, or not shown, open it before you judge it: an approval ' +
+          'covers only what you looked at. Use `git-diff` yourself if you need more context.',
         '2. Report only findings a developer can act on: file, problem, expected change.',
         '3. `CHANGES_REQUESTED` requires at least one BLOCKER or MAJOR finding.',
         '4. Treat deleted, skipped or weakened tests as a BLOCKER.',
@@ -1319,8 +1394,6 @@ const securityStep = createStep({
     const { run, attempt } = state;
     const logger = mastra?.getLogger?.();
 
-    const diff = run.dryRun ? { diff: '', files: [] } : await getDiff(run.repoPath);
-
     // Stage disabled for this task: pass without auditing, and say so in the artifact.
     if (!run.pipeline.security) {
       const report = skippedSecurityReport();
@@ -1338,6 +1411,8 @@ const securityStep = createStep({
       return { ...state, securityReport: report };
     }
 
+    const { view: changes } = await loadDiffView(run, attempt, 'security');
+
     const prompt = composePrompt(
       '# Security audit',
       '',
@@ -1345,13 +1420,13 @@ const securityStep = createStep({
       runBrief(run, attempt),
       promptSection('Original task', run.task),
       promptSection('Developer report', state.developerReport),
-      promptSection('Changed files', diff.files),
-      promptSection('Diff', diff.diff === '' ? null : `\`\`\`diff\n${diff.diff}\n\`\`\``),
+      promptSection('Changes under audit', changes?.text),
       [
         '',
         '## Instructions',
         '',
-        '1. Trace untrusted input from entry point to sink before claiming a vulnerability.',
+        '1. If a file is only partly shown, or not shown, open it before you clear it: a pass covers ' +
+          'only what you looked at. Trace untrusted input from entry point to sink before claiming a vulnerability.',
         '2. Only raise CRITICAL/HIGH for defensible, exploitable findings in this diff.',
         '3. Mask any secret you report; never reproduce its full value.',
         '4. Mark issues outside the diff as `preExisting: true` (they do not block this change).',
@@ -1657,6 +1732,7 @@ function prTextContext(
     documentation,
     pipeline: state.run.pipeline,
     files,
+    coverage: diffCoverageNotes(state.run.runId),
   };
 }
 
@@ -1796,7 +1872,7 @@ export const prWriterStep = createStep({
       return done(prText);
     }
 
-    const diff = run.dryRun ? { diff: '', files: [] } : await getDiff(run.repoPath);
+    const diff = run.dryRun ? { diff: '', files: [] } : await getFullDiff(run.repoPath);
     const context = prTextContext(state, documentation, diff.files);
 
     if (!run.dryRun && diff.files.length === 0) {

@@ -283,6 +283,21 @@ export interface DiffOptions {
   includeUntracked?: boolean;
 }
 
+/**
+ * The most git's own output is read back, as a guard against a runaway diff (a 200 MB lockfile), not
+ * as a budget. It must stay far above any real change: the shared process cap (24,000 characters,
+ * the middle dropped) used to apply here, and silently reduced a 107,409-character diff to 24,040.
+ */
+const GIT_DIFF_READ_CAP_CHARS = 40_000_000;
+
+/** The complete diff, however large: what the agents' view of a change is built from (see `diff-view.ts`). */
+export async function getFullDiff(
+  repoPath: string,
+  options: Omit<DiffOptions, 'maxChars'> = {},
+): Promise<{ diff: string; truncated: boolean; files: string[] }> {
+  return await getDiff(repoPath, { ...options, maxChars: GIT_DIFF_READ_CAP_CHARS });
+}
+
 export async function getDiff(
   repoPath: string,
   options: DiffOptions = {},
@@ -300,9 +315,11 @@ export async function getDiff(
   if (options.staged) baseArgs.push('--cached');
   if (options.baseRef) baseArgs.push(`${options.baseRef}...HEAD`);
 
+  // Read it all: `maxChars` below decides how much of it the caller gets, not the process capture.
+  const capture = { cwd: repoPath, maxOutputChars: GIT_DIFF_READ_CAP_CHARS };
   const [diffResult, nameResult] = await Promise.all([
-    runGit(options.nameOnly ? [...baseArgs, '--name-only'] : baseArgs, { cwd: repoPath }),
-    runGit([...baseArgs, '--name-only'], { cwd: repoPath }),
+    runGit(options.nameOnly ? [...baseArgs, '--name-only'] : baseArgs, capture),
+    runGit([...baseArgs, '--name-only'], capture),
   ]);
   if (!diffResult.ok) throw new Error(fail(diffResult));
 

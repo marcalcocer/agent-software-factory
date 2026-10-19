@@ -41,6 +41,11 @@ export interface PrTextContext {
   pipeline: { qa: boolean; review: boolean; security: boolean; documentation: boolean };
   /** The files the change touches, as git sees them. The developer report only covers the last attempt. */
   files: string[];
+  /**
+   * What the review and the security audit could not see of the change, per gate: empty when they saw
+   * all of it. Their lines say so, instead of presenting a partial look as a full one.
+   */
+  coverage?: Partial<Record<'review' | 'security', string>>;
 }
 
 /** The longest commit subject that is ever kept, whoever wrote it. The agent is asked for 72. */
@@ -80,9 +85,14 @@ function qaLine(ctx: PrTextContext): string {
   return `QA: ${qa.verdict}${counts}`;
 }
 
+/** " - 25 of 31 changed files seen in full", or nothing when the gate saw the whole change. */
+const seen = (note: string | undefined): string => (note ? ` - ${note}` : '');
+
 function reviewLine(ctx: PrTextContext): string {
   if (!ctx.pipeline.review) return `Code review: ${NOT_RUN}`;
-  return ctx.review ? `Code review: ${ctx.review.status.replace(/_/g, ' ')}` : 'Code review: no result was recorded';
+  return ctx.review
+    ? `Code review: ${ctx.review.status.replace(/_/g, ' ')}${seen(ctx.coverage?.review)}`
+    : 'Code review: no result was recorded';
 }
 
 function securityLine(ctx: PrTextContext): string {
@@ -90,7 +100,7 @@ function securityLine(ctx: PrTextContext): string {
   const security = ctx.security;
   if (!security) return 'Security audit: no result was recorded';
   const risk = security.riskLevel === 'NONE' ? 'no risk found' : `risk ${security.riskLevel.toLowerCase()}`;
-  return `Security audit: ${security.status.replace(/_/g, ' ')} (${risk})`;
+  return `Security audit: ${security.status.replace(/_/g, ' ')} (${risk})${seen(ctx.coverage?.security)}`;
 }
 
 function documentationLine(ctx: PrTextContext): string {

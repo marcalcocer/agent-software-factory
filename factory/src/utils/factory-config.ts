@@ -83,6 +83,11 @@ export interface FactoryConfig {
   commandTimeoutMs: number;
   /** Maximum number of characters of stdout/stderr kept per command execution. */
   maxOutputChars: number;
+  /**
+   * How many characters of a change's diff one agent is shown (`FACTORY_DIFF_BUDGET_CHARS`). A larger
+   * change is condensed, never cut silently: see `tools/diff-view.ts`. About four characters a token.
+   */
+  diffBudgetChars: number;
   /** `true` => stub every LLM call and skip all mutating operations. */
   dryRun: boolean;
   /** `true` => never suspend the workflow waiting for a human (CI mode). */
@@ -160,6 +165,7 @@ export function getFactoryConfig(): FactoryConfig {
     maxAttempts: envInteger('FACTORY_MAX_ATTEMPTS', 3),
     commandTimeoutMs: envInteger('FACTORY_COMMAND_TIMEOUT_MS', 15 * 60 * 1000),
     maxOutputChars: envInteger('FACTORY_MAX_OUTPUT_CHARS', 24_000),
+    diffBudgetChars: envInteger('FACTORY_DIFF_BUDGET_CHARS', 120_000),
     dryRun: envBoolean('FACTORY_DRY_RUN', false),
     nonInteractive: envBoolean('FACTORY_NON_INTERACTIVE', false),
     allowPush: envBoolean('FACTORY_ALLOW_PUSH', true),
