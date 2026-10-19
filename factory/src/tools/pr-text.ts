@@ -39,7 +39,7 @@ export interface PrTextContext {
   documentation: DocumentationReport | null;
   /** Which optional stages this task runs. A switched-off stage is reported as "not run". */
   pipeline: { qa: boolean; review: boolean; security: boolean; documentation: boolean };
-  /** The files the change touches, as git sees them (used when the developer report lists none). */
+  /** The files the change touches, as git sees them. The developer report only covers the last attempt. */
   files: string[];
 }
 
@@ -195,16 +195,25 @@ function bullets(items: string[], max: number, noun: [string, string]): string[]
   return hidden > 0 ? [...shown, `- and ${plural(hidden, noun[0], noun[1])}`] : shown;
 }
 
+/**
+ * The files of the change. Git is the truth about *which* files: the developer report belongs to the
+ * last attempt only, so after a retry it lists just what that retry touched (3 files of 22, in a real
+ * run). The report is used for *why* - the purpose of each file it does mention - and as the list only
+ * when git's is not available.
+ */
 function changesSection(ctx: PrTextContext): string[] {
   const reported = ctx.developer?.changedFiles ?? [];
-  if (reported.length > 0) {
-    return bullets(
-      reported.map((file) => `\`${file.path}\`${file.purpose.trim() ? ` - ${clipAtWord(file.purpose.trim().replace(/\s+/g, ' '), 140)}` : ''}`),
-      MAX_LISTED_FILES,
-      ['more file', 'more files'],
-    );
-  }
-  return bullets(ctx.files.map((file) => `\`${file}\``), MAX_LISTED_FILES, ['more file', 'more files']);
+  const purposes = new Map(reported.map((file) => [file.path, file.purpose.trim().replace(/\s+/g, ' ')]));
+  const paths = ctx.files.length > 0 ? ctx.files : reported.map((file) => file.path);
+
+  return bullets(
+    paths.map((path) => {
+      const purpose = purposes.get(path);
+      return `\`${path}\`${purpose ? ` - ${clipAtWord(purpose, 140)}` : ''}`;
+    }),
+    MAX_LISTED_FILES,
+    ['more file', 'more files'],
+  );
 }
 
 function testPlanSection(ctx: PrTextContext): string[] {
