@@ -11,6 +11,8 @@ export { securityAgent } from './security.agent.ts';
 export { reviewerAgent } from './reviewer.agent.ts';
 export { documentationAgent } from './documentation.agent.ts';
 export { feedbackTriageAgent } from './feedback-triage.agent.ts';
+export { mergeSummaryAgent } from './merge-summary.agent.ts';
+export { prWriterAgent } from './pr-writer.agent.ts';
 
 import { pmArchitectAgent } from './pm-architect.agent.ts';
 import { developerAgent } from './developer.agent.ts';
@@ -20,6 +22,8 @@ import { securityAgent } from './security.agent.ts';
 import { reviewerAgent } from './reviewer.agent.ts';
 import { documentationAgent } from './documentation.agent.ts';
 import { feedbackTriageAgent } from './feedback-triage.agent.ts';
+import { mergeSummaryAgent } from './merge-summary.agent.ts';
+import { prWriterAgent } from './pr-writer.agent.ts';
 
 export const factoryAgents = {
   pmArchitectAgent,
@@ -30,4 +34,6 @@ export const factoryAgents = {
   reviewerAgent,
   documentationAgent,
   feedbackTriageAgent,
+  mergeSummaryAgent,
+  prWriterAgent,
 };

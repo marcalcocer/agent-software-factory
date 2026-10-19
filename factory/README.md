@@ -3,7 +3,7 @@
 An asynchronous, multi-agent **software factory** built on [Mastra](https://mastra.ai)
 (`@mastra/core`) and TypeScript. Give it a requirement and a repository inside your workspace,
 and seven specialised agents plan it, implement it, test it, triage the failures, review it,
-audit its security, document it and open a **draft pull request**.
+audit its security, document it and open a **pull request** (ready for review).
 
 ```
 npm run factory -- run --repo invest-track --task "Add pagination to GET /api/positions"
@@ -91,8 +91,8 @@ those failure modes:
                                         │                            │
                        ┌────────────────▼─────────┐     ┌────────────┴──────────┐
                        │ escalation-phase         │     │ delivery-phase        │
-                       │ suspend + 09-escalation  │     │ 07 documentation      │
-                       │ (human in the loop)      │     │ 08 commit/push/draft  │
+                       │ suspend + 09-escalation  │     │ 07 docs, pr-writer    │
+                       │ (human in the loop)      │     │ 08 commit/push/PR     │
                        └────────────────┬─────────┘     └────────────┬──────────┘
                                         └───────────┬────────────────┘
                                                     ▼
@@ -123,7 +123,8 @@ role justifies.
 | 04 | **triage** | Sonnet-class → GPT-4o | *Director/Evaluator.* Determines root cause, detects loops by comparing run artifacts across attempts, and routes the workflow. | none |
 | 05 | **reviewer** | Sonnet-class → GPT-4o-mini | Reviews the `git diff` against the convention cascade, architecture, maintainability and test honesty. Severity-calibrated findings. | none |
 | 06 | **security** | Sonnet-class → GPT-4o | OWASP Top 10 audit of the diff: injection, secrets, access control, misconfiguration, dependency/supply-chain risk. | none |
-| 07 | **documentation** | Haiku-class → GPT-4o-mini | Updates `CHANGELOG.md`, `docs/**`, OpenAPI specs and writes the pull-request description. | documentation files only |
+| 07 | **documentation** | Haiku-class → GPT-4o-mini | *Optional.* Decides whether the change makes any documentation stale - `README.md`, `CHANGELOG.md`, `docs/**`, OpenAPI specs, `AGENTS.md` (facts only, never rules) - and updates exactly that; reports "nothing needs updating" when that is true. It no longer writes the pull-request text. | documentation files only |
+| 07 | **pr-writer** | Haiku-class → GPT-4o-mini | **Mandatory** (no switch). Writes the commit message, the pull-request title and the pull-request description from the final diff and the stages' reports. The "Quality gates" section is written by the factory itself from the real results, never by the model. No tools. | none |
 
 The developer is the only agent that can modify source code; the documentation agent's write
 tools reject anything that is not a documentation file; everybody else is read-only. No agent
@@ -150,15 +151,16 @@ The factory needs **one credential**. Failover is cross-tier inside Anthropic
 | 04 | Root-cause analysis on failure | `triage` | reasoning | `sonnet` | `claude-sonnet-4-6` |
 | 05 | Code review | `reviewer` | reasoning | `sonnet` | `claude-sonnet-4-6` |
 | 06 | Security review | `security` | reasoning | `sonnet` | `claude-sonnet-4-6` |
-| 07 | Update documentation | `documentation` | **fast** | **`haiku`** | **`claude-haiku-4-5`** |
-| 08 | Commit / push / draft PR | — | *deterministic, no LLM* | — | — |
+| 07 | Update documentation (optional) | `documentation` | **fast** | **`haiku`** | **`claude-haiku-4-5`** |
+| 07 | Write the commit message and pull-request text (**mandatory**) | `pr-writer` | **fast** | **`haiku`** | **`claude-haiku-4-5`** |
+| 08 | Commit / push / PR | — | *deterministic, no LLM* | — | — |
 
-**Why only QA and documentation are on the cheap tier.** Both consume evidence rather than
+**Why only QA, documentation and the PR writer are on the cheap tier.** Both consume evidence rather than
 produce judgment: the factory has already executed the test suite and hands over the real exit
 code, the parsed totals and the full patch, so QA is reading and classifying. Documentation
 writes prose from a diff that already exists. Everything that decides *what to build*, *whether
 code is correct*, or *whether to retry or escalate* stays on the reasoning tier — a weak triage
-model makes bad loop decisions, which is the single most expensive failure mode.
+model makes bad loop decisions, which is the single most expensive failure mode. The PR writer is on that tier too: it summarises a diff and reports it is handed (the documentation agent wrote this text on the same tier before), and a human reads it before anything is published.
 
 **Overriding any of it.** Per role, comma-separated, primary first:
 
@@ -430,6 +432,7 @@ logs/20251008-234512-invest-track-a1b2/
 ├── 05-code-review.json
 ├── 06-security.json
 ├── 07-documentation.json
+├── 07-pr-writer.json         # commit message, PR title + description (always written; status COMPLETED | FALLBACK | SKIPPED)
 ├── 08-pull-request.json          # commit sha, push result, PR url, pending manual actions
 ├── 09-escalation.json            # only when a human is required
 ├── context/                      # packed repository context, diffs, raw suite logs
@@ -492,7 +495,7 @@ prompts:
 ## Installation
 
 Requirements: **Node.js ≥ 20.11**, `git`, and (optionally) the
-[GitHub CLI](https://cli.github.com/) `gh` authenticated for draft pull requests.
+[GitHub CLI](https://cli.github.com/) `gh` authenticated for pull requests.
 
 ```bash
 cd ~/workspace/agent-software-factory
@@ -550,6 +553,56 @@ npm run factory -- run \
 Exit codes: `0` delivered, `1` failed or escalated, `2` bad usage/configuration,
 `3` suspended waiting for a human.
 
+#### Choosing which stages run
+
+Prepare, PM Architect, Developer, the PR writer and Delivery always run. The quality gates can be switched off
+per task - useful for a docs-only change or a spike, and they cost no tokens when off:
+
+```bash
+npm run factory -- run --repo invest-track --task "Fix the typo in the README" \
+  --no-qa --no-review --no-security --no-docs
+```
+
+| Flag | Skips |
+|---|---|
+| `--no-qa` | The build/test run and the QA agent (also disables the triage retry loop) |
+| `--no-review` | The code review agent |
+| `--no-security` | The security audit agent |
+| `--no-docs` | The documentation agent (README / CHANGELOG / docs updates). The commit message and pull-request text are **not** affected: the PR writer always runs |
+
+A skipped stage still writes a `SKIPPED` artifact (and counts as satisfied, never as failed), and
+the stages a run used are recorded in its `run.json` under `pipeline`. `summary.json` reports a stage that
+did not run as `SKIPPED` under `gates` - never as the passing verdict its placeholder report carries.
+
+#### The commit message and the pull-request text
+
+Two different jobs, two different agents:
+
+| | **documentation** (optional) | **pr-writer** (mandatory) |
+|---|---|---|
+| Question it answers | Does this change make any documentation wrong or incomplete? | How should this change be described? |
+| Writes | `README.md`, `CHANGELOG.md`, `docs/**`, OpenAPI specs, `AGENTS.md` facts | the commit message, the PR title, the PR description |
+| Can be switched off | yes (`--no-docs`) | no |
+| Needs the diff | reads the repository | is handed the final diff (no tools) |
+
+The PR writer runs after the documentation step (so it can say what was documented) and before the
+commit, so the commit carries its message rather than the planner's guess - which was made before any
+code existed. It reads the **final diff**; where the task, the plan or a report disagrees with it, the
+diff wins.
+
+- **The "Quality gates" section is the factory's, not the model's.** It is built from the stages' real
+  results, so a stage you switched off reads `not run (disabled for this task)` and no description can
+  claim a gate that did not run. A section of that name written by the model is replaced.
+- **It never blocks a delivery.** If the model cannot answer (signed out, usage limit, timeout), the same
+  text is built from the run's reports (summary, changed files, QA commands, gates) instead; the artifact
+  is `FALLBACK`, and the delivery gate shows a note asking you to read it with care.
+- **A round on an existing pull request** does not call it: the title and description are already on
+  GitHub (perhaps edited by a person), and the round's commit message says what was asked. The artifact is
+  `SKIPPED` and the Studio lists the step as skipped, with the reason.
+- You can still change the commit message, title and description at the delivery gate before anything is
+  published. Override the model with `FACTORY_CLI_MODEL_PR_WRITER` / `FACTORY_MODEL_PR_WRITER`.
+
+
 ### Resume a suspended run
 
 The architect asked a question:
@@ -569,6 +622,153 @@ npm run factory -- resume --run-id 20251008-234512-invest-track-a1b2 --decision 
 ```
 
 The exact command is always printed when the run suspends and stored in `09-escalation.json`.
+
+The delivery gate asks whether to push and open the pull request, and lets the human change what
+is about to be published first - the commit message, the branch name, and the pull request's title
+and description (the values sent are the final ones, not a diff):
+
+```bash
+npm run factory -- resume --run-id 20251008-234512-invest-track-a1b2 \
+  --approve-push true --approve-pr true \
+  --edits '{"pullRequestTitle":"Add cursor pagination","commitMessage":"feat(api): cursor pagination"}'
+```
+
+Published history is never rewritten: once the commit is on the remote its message is locked (it
+would need a force-push), and once the branch is on the remote it cannot be renamed. Those edits
+are refused with a note in the delivery report; the title and description can always be changed.
+Pull requests are opened **ready for review**, not as drafts.
+
+A run restarted after a failure (`resume` on a failed run re-enters at the failed step) and then
+answered at a human gate used to finish its work but never write `summary.json` - a Mastra quirk
+the CLI now detects and repairs by continuing at the first step that did not complete. Running
+`resume --run-id <id>` on a run that is stuck that way just closes it out; nothing is redone.
+
+### Acting on review comments
+
+A pull request the factory opens is **watched**. When a reviewer comments, the factory notices,
+reads the comments and - if they ask for code changes - runs a further **round** of the *same task*:
+the same branch, the same plan, the reviewer's words handed to the developer, then QA, review,
+security and docs as before. It stops at the delivery gate like any run, so nothing is pushed
+without approval, and the push **updates the existing pull request** (no second one is opened).
+
+```
+ run delivers PR #5 ──register──▶ watched ──every minute──▶ comments? ──▶ triage ──▶ round 2 ──▶ push
+   (round 1)         (the "notify")      + right after any run ends        (1 agent call)  (linked to round 1)
+```
+
+A round is a run of its own (its own trace, so round 1's results are never overwritten) that is
+*linked* to the run it continues: `parentRunId`, `rootRunId` and `round` are recorded in its
+`run.json` and `summary.json`, and the Studio shows the rounds of a task together.
+
+| Step | Cost | Changes anything? |
+|---|---|---|
+| Detect (`pr-check`, every interval) | a few `gh` reads | no |
+| Triage (`pr-feedback`) | one agent call | no (unless replies are on) |
+| Round (`revise`) | a full run | local commits only, until you approve the push |
+| Replies (opt-in) | `gh` writes | yes - visible to everyone on GitHub |
+
+Which comments count: human comments that are **submitted**, unresolved, not from a bot, not the
+factory's own replies, and not already handled (answered, dismissed, or fixed by a round). A review
+you are still drafting is *not* feedback yet - GitHub shows your pending comments to you alone, and
+the factory ignores them until you submit the review; they are picked up on the next check after
+that. Comments written **before** the factory started watching a pull request are listed but never
+acted on by themselves - only a new comment starts work; you can still triage the old ones by hand.
+
+The same steps from the command line:
+
+```bash
+npm run factory -- pr-check                                  # which open PRs have unhandled comments?
+npm run factory -- pr-feedback --repo invest-track --pr 5    # classify them (add --post-replies to answer questions)
+npm run factory -- revise --repo invest-track --pr 5         # round 2: same task, same branch, same plan
+npm run factory -- revise --repo invest-track --pr 5 --action RERUN_PLANNING   # plan again first
+npm run factory -- pr-reply   --repo invest-track --pr 5     # post the drafted answers to questions
+npm run factory -- pr-dismiss --repo invest-track --pr 5 --comments <id,id>   # never act on these
+# CI: triage and, when the PR is one the factory opened, chain into a linked round
+npm run factory -- pr-feedback --repo invest-track --pr 5 --auto-rerun
+```
+
+**Replies on GitHub** are off by default because they are public. When on: questions and notes are
+answered right after triage; for requested changes the round replies "addressed in `<commit>`"
+*after* it is pushed - never "I'll do that" before anything exists. A disagreement is left to a
+human. Inline comments are answered in their own thread.
+
+Replies go out through *your* GitHub account (`gh` is signed in as you), so every one of them starts
+with a visible line - `🤖 AI software factory · automated reply, posted through this account` - and
+ends with a hidden marker the factory uses to never triage its own words. If you have a review in
+progress, a reply is **not** added to the thread (GitHub would put it inside your draft, invisible to
+everyone until you submit): it goes out as a conversation comment that quotes what it answers.
+
+A round commits with a message that describes the round - `chore: address review feedback on PR #5
+(round 2)` plus what was asked - rather than repeating round 1's. When a round reuses the plan, the
+PM Architect step is shown as *skipped* (the architect was not called again).
+
+A comment asking to delete or weaken a test is never acted on: it is reported as a blocker for a
+human to decide. The pull requests are tracked in `logs/pr-registry.json` (written only by the
+factory); pull requests from runs made before this existed are discovered from their delivery
+reports. In the Studio all of this is the **Pull requests** panel. The check interval and the
+automatic steps are in **Settings → Pull requests**, with an override per repository (for example:
+read comments and start rounds in one repository, detect only in another).
+
+### Merging a pull request
+
+When a pull request has no unhandled comments and no round in progress, the Studio's **Pull
+requests** panel asks the one question a machine cannot answer - *"Do you approve this pull
+request?"* - and only then offers the merge:
+
+```
+ read it on GitHub ──▶ "Yes - I reviewed it and I have no comments" ──▶ Merge with squash... ──▶ check the message ──▶ Squash and merge
+                        (bound to one commit)                           (an agent writes it)     (editable)          (squash, delete branch, back to master)
+```
+
+- **The approval belongs to one commit.** It is the commit GitHub reported when you were shown the
+  pull request. If anything is pushed afterwards - a round, a suggestion committed on GitHub - the
+  approval no longer counts and the question is asked again. At merge time GitHub itself enforces
+  it (`gh pr merge --match-head-commit`), so even a race cannot merge code you did not see.
+- **Nothing is trusted from the screen.** Just before merging, the factory asks GitHub again: is it
+  still mergeable (no conflicts, not a draft, no blocking rule), and has a review comment arrived
+  that nobody has dealt with?
+- **The squash message is written from the net diff.** After a few review rounds the title, the
+  description and the individual commits describe a path that no longer matches the result, so the
+  `merge-summary` agent reads the final diff (what will really land), the pull request description,
+  the commit messages and the style of the base branch's recent commits, and writes a subject and a
+  body. Lockfiles and minified files are left out of what it reads, and it has no tools. It runs once
+  per merge, on the cheap tier (`FACTORY_CLI_MODEL_MERGE_SUMMARY` / `FACTORY_MODEL_MERGE_SUMMARY`
+  override it). If it cannot answer, the pull request's own title and summary are used, and the screen
+  says so. You always see - and can edit - the message before anything is merged.
+- **Afterwards it tidies up.** The branch is deleted (on GitHub, and locally when nothing would be
+  lost: a local commit that was never pushed keeps its branch; a branch another open pull request is
+  based on is kept), and your working copy goes back to the base branch, fast-forwarded - but only if
+  it was on the merged branch, has no uncommitted changes and no run is using it. Whatever was *not*
+  done is listed in plain words next to the result.
+
+The same from the command line (both print one marker line, `PR_MERGE_DRAFT_JSON` / `PR_MERGE_JSON`):
+
+```bash
+npm run factory -- pr-merge-draft --repo invest-track --pr 5      # the commit message a squash would have; changes nothing
+npm run factory -- pr-merge --repo invest-track --pr 5 \
+  --head-sha <the commit you approved> --subject="Use const in ForecastUtils (#5)" --body="..." \
+  [--delete-branch false] [--return-to-base false] [--dry-run]
+```
+
+`pr-merge` exits 0 when merged (or rehearsed with `--dry-run`), 1 when it did not merge (the reason is
+in the marker line), 2 on a usage error. It also honours `FACTORY_ALLOW_PUSH=false`.
+
+#### Which branch a new task starts from
+
+A task used to start from *whatever branch was checked out*. After a run the factory leaves its own
+branch checked out, so the next task was cut from it and carried that run's commits into its pull
+request (stacked on the first one and tangled up in its review). Now, unless `--base-branch` says
+otherwise:
+
+- the checked-out branch is used, **unless** it is one the factory made earlier (a `factory/...`
+  branch, or the head of a pull request it opened) - then the repository's default branch is used,
+  and the run's events record why (`base_branch_chosen`);
+- the new branch is cut from the **newest** state of the base: GitHub's, when it is ahead of your local
+  one (after a merge on GitHub your local `master` is behind), otherwise your local branch (it may hold
+  commits of yours that are not pushed). If the network is down, the local branch is used.
+
+A branch you chose yourself is still respected as a base - working on top of your own feature branch
+is deliberate.
 
 ### Studio (visual graph, traces, time travel)
 
@@ -601,6 +801,8 @@ npm run check          # tsc --noEmit + smoke
 | Scenario | What it proves |
 | --- | --- |
 | `happy` | plan → develop → QA pass → review + security approve → docs → delivery, 1 attempt |
+| `happy` (docs off) | documentation switched off → the PR writer still writes the commit message and PR text; delivery uses it |
+| `happy` (all stages off) | QA, review, security and docs off → the PR text is still written and its Quality gates section says plainly that nothing ran |
 | `retry` | QA fails → triage `RETRY_DEVELOPER` → attempt 2 green (hints threaded into the prompt) |
 | `infra` | QA fails on environment → triage `RE-RUN_INFRA` → developer step skipped, suite re-run |
 | `review-changes` | QA green but reviewer requests changes → triage → fixed on attempt 2 |
@@ -624,16 +826,16 @@ agent-software-factory/
 ├── src/
 │   ├── prompts/                        # system prompt per agent (precedence 1)
 │   │   ├── pm-architect.md  developer.md  qa-tester.md  triage.md
-│   │   └── security.md  documentation.md  reviewer.md
+│   │   └── security.md  documentation.md  reviewer.md  pr-writer.md
 │   ├── tools/
-│   │   ├── git-tools.ts                # status/diff/log + branch/commit/push/draft PR
+│   │   ├── git-tools.ts                # status/diff/log + branch/commit/push/PR
 │   │   ├── test-runner-tools.ts        # stack detection, command runner, suite parsing, HTTP probe
 │   │   ├── repomix-tools.ts            # tree, search, token-budgeted context packing
 │   │   ├── filesystem-tools.ts         # read/list + write/edit (code vs documentation scoped)
 │   │   └── logger-tools.ts             # trace dirs, artifacts, events, metric aggregation
 │   ├── agents/
 │   │   ├── pm-architect.agent.ts  developer.agent.ts  qa-tester.agent.ts
-│   │   ├── triage.agent.ts  security.agent.ts  documentation.agent.ts
+│   │   ├── triage.agent.ts  security.agent.ts  documentation.agent.ts  pr-writer.agent.ts
 │   │   ├── reviewer.agent.ts
 │   │   └── index.ts                    # registry
 │   ├── workflows/
@@ -696,7 +898,7 @@ All variables are optional unless stated. See `.env.example`.
 | `FACTORY_COMMAND_TIMEOUT_MS` | `900000` | Per-command timeout |
 | `FACTORY_MAX_OUTPUT_CHARS` | `24000` | Captured output per stream |
 | `FACTORY_EXTRA_ALLOWED_COMMANDS` | — | Extra executables (comma separated) |
-| `FACTORY_ALLOW_PUSH` / `FACTORY_ALLOW_PR` | `true` | Gate push / draft PR creation |
+| `FACTORY_ALLOW_PUSH` / `FACTORY_ALLOW_PR` | `true` | Gate push / PR creation |
 | `FACTORY_NON_INTERACTIVE` | `false` | Never suspend (CI mode) |
 | `FACTORY_DRY_RUN` | `false` | Stub every LLM call, mutate nothing |
 | `FACTORY_DRY_RUN_SCENARIO` | `happy` | Scenario for the dry-run fixtures |

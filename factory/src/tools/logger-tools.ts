@@ -35,11 +35,16 @@ export const ARTIFACT_PREFIXES = {
   'code-review': '05-code-review',
   security: '06-security',
   documentation: '07-documentation',
+  // The commit message and pull-request text. Same stage number as documentation: it runs right
+  // after it (so it can say what was documented) and sorts right after it.
+  'pr-writer': '07-pr-writer',
   delivery: '08-pull-request',
   escalation: '09-escalation',
   // Pull-request feedback runs: a separate trace directory, numbered after the main pipeline.
   'feedback-triage': '10-feedback-triage',
   'feedback-delivery': '11-feedback-delivery',
+  // The draft of a squash-merge commit message (written when the user is about to merge).
+  'merge-summary': '12-merge-summary',
 } as const;
 
 export type ArtifactStep = keyof typeof ARTIFACT_PREFIXES;
@@ -79,6 +84,22 @@ export interface RunTraceMeta {
   branch?: string;
   baseBranch?: string;
   models?: Record<string, string>;
+  /**
+   * Which optional stages this run executes (`qa`, `review`, `security`, `documentation`).
+   * Persisted so a UI that re-opens the run later shows the stages it really used rather than
+   * whatever the task form currently has selected.
+   */
+  pipeline?: Record<string, boolean>;
+  /**
+   * How this run relates to others. Every run is round 1 of its own chain unless it is a
+   * revision of a pull request, in which case it points at the run it continues. Persisted so a
+   * UI can group the rounds of one task without opening each run.
+   */
+  kind?: 'run' | 'revision' | 'pr-feedback';
+  parentRunId?: string;
+  rootRunId?: string;
+  round?: number;
+  pullRequest?: { number: number; url: string; headBranch: string; baseBranch: string };
   dryRun: boolean;
   startedAt: string;
 }
@@ -405,3 +426,18 @@ export const loggerTools = {
   readRunArtifactsTool,
   logEventTool,
 };
+
+/**
+ * Merges `patch` into a run's `run.json`. Best effort, like the rest of the tracing: it keeps
+ * the Studio's view of the run (for instance the branch name after a rename) accurate.
+ */
+export function updateRunMeta(runId: string, patch: Partial<RunTraceMeta>): void {
+  try {
+    const file = path.join(traceDirFor(runId), 'run.json');
+    if (!fs.existsSync(file)) return;
+    const current = JSON.parse(fs.readFileSync(file, 'utf8')) as RunTraceMeta;
+    fs.writeFileSync(file, `${JSON.stringify({ ...current, ...patch }, null, 2)}\n`, 'utf8');
+  } catch {
+    // Tracing is best-effort by design.
+  }
+}

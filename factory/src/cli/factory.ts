@@ -17,7 +17,26 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 
-type FlagValue = string | boolean;
+import { parsePipelineFlags, type FlagValue } from './pipeline-flags.ts';
+import { parseDeliveryEditsJson } from '../utils/delivery-edits.ts';
+import { followUpRunFlags } from './pr-feedback-followup.ts';
+import {
+  composeRevision,
+  findLatestTriage,
+  isRevisionAction,
+  lookupPullRequest,
+  readRunMeta,
+  readTriageSummary,
+} from './revision.ts';
+import { pullRequestKey } from '../tools/pr-registry.ts';
+import { revisionSchema } from '../utils/schemas.ts';
+import {
+  continueIfStuck,
+  continuationStep,
+  isStuckSuspended,
+  type StepResults,
+  type WorkflowResultLike,
+} from './run-recovery.ts';
 
 interface ParsedArgs {
   command: string;
@@ -70,6 +89,7 @@ function asInteger(value: FlagValue | undefined): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+
 const HELP = `
 agent-software-factory - multi-agent software factory powered by Mastra
 
@@ -80,6 +100,12 @@ Commands:
   run         Execute the factory against a target repository
   resume      Resume a suspended run, or restart a failed one from its last step
   pr-feedback Triage human review comments on a pull request and route them back into the factory
+  pr-check    List the pull requests the factory opened that have unhandled review comments
+  revise      Address a pull request's review comments as a further round of the original run
+  pr-dismiss  Set review comments aside so they are never acted on
+  pr-reply    Post the replies a triage drafted for questions and notes
+  pr-merge-draft  Write the commit message a squash merge of a pull request would have
+  pr-merge    Squash-merge a pull request the human approved, then tidy up
   list        List recent runs and their status
   show        Print the summary.json of a run
   doctor      Check configuration, credentials and external tooling
@@ -88,14 +114,22 @@ Commands:
 run flags:
   --repo <name|path>        Target repository (folder inside the workspace root, or absolute)
   --task "<requirement>"    The requirement to implement (English)
-  --base-branch <branch>    Branch to start from (default: current HEAD)
+  --base-branch <branch>    Branch to start from (default: the checked-out branch - or the
+                            repository's default branch when that one is a branch the factory
+                            made for an earlier task, so tasks never stack on each other)
   --branch <branch>         Work branch name (default: factory/<slug>-<id>)
   --max-attempts <n>        Develop/QA/review iterations before escalation (default: 3)
   --test-command "<cmd>"    Override the auto-detected test command
   --criteria "<c1;c2>"      Extra acceptance criteria, separated by ';'
   --clarifications "<text>" Pre-answer the architect's questions / human guidance
   --no-commit               Do not commit the result
-  --no-pr                   Do not open a draft pull request
+  --no-pr                   Do not open a pull request
+  --no-qa                   Skip the QA stage (no build / test run; also disables triage retries)
+  --no-review               Skip the code review stage
+  --no-security             Skip the security audit stage
+  --no-docs                 Skip the documentation stage (README / CHANGELOG / docs updates).
+                            The commit message and pull-request text are written by the PR writer,
+                            which always runs.
   --non-interactive         Never suspend: escalations end the run (CI mode)
   --dry-run                 Execute the full graph with stubbed LLM calls (no cost, no writes)
   --scenario <name>         Dry-run scenario: happy | retry | infra | review-changes |
@@ -107,7 +141,10 @@ resume flags:
   --decision <ABORT|ACKNOWLEDGE>  Decision for a human escalation
   --guidance "<text>"       Guidance recorded with the decision
   --approve-push <true|false>     Delivery gate: push the work branch to the remote
-  --approve-pr <true|false>       Delivery gate: open the draft pull request after pushing
+  --approve-pr <true|false>       Delivery gate: open the pull request after pushing
+  --edits '<json>'                Delivery gate: the human's final choices, e.g.
+                                  '{"pullRequestTitle":"...","pullRequestBody":"...",
+                                    "commitMessage":"...","branchName":"..."}'
 
 pr-feedback flags:
   --repo <name|path>        Target repository (required)
@@ -117,6 +154,23 @@ pr-feedback flags:
   --auto-rerun              Immediately start the follow-up run when code changes are needed
   --step <stepId>           Explicit step to re-enter (optional; failed runs restart
                             from their failed step automatically)
+
+pr-merge-draft flags:
+  --repo <name|path>        Target repository (required)
+  --pr <number>             Pull request to describe (required)
+                            Prints PR_MERGE_DRAFT_JSON {subject, body, source, ...}. Changes nothing.
+
+pr-merge flags:
+  --repo <name|path>        Target repository (required)
+  --pr <number>             Pull request to merge (required)
+  --head-sha <sha>          The commit the human approved (required): if the branch has moved
+                            since, nothing is merged
+  --subject=<text>          Subject of the squash commit (required)
+  --body=<text>             Body of the squash commit
+  --delete-branch <bool>    Delete the branch afterwards (default: true)
+  --return-to-base <bool>   Switch the working copy back to the base branch (default: true)
+  --dry-run                 Check everything, merge nothing
+                            Prints PR_MERGE_JSON {merged, reason, notes, ...}.
 
 Examples:
   npm run factory -- run --repo invest-track --task "Add pagination to GET /api/positions"
@@ -197,12 +251,34 @@ async function commandRun(flags: Record<string, FlagValue>): Promise<number> {
   const repoPath = resolveRepoPath(repo, { requireGit: !config.dryRun });
   const runId = generateRunId(path.basename(repoPath));
   const criteria = asString(flags.criteria);
+  const explicitPipeline = parsePipelineFlags(flags);
+
+  // A further round on an existing pull request (see `revise`). Validated here, at the edge:
+  // a malformed revision must stop the run before it touches the repository.
+  let revision: ReturnType<typeof revisionSchema.parse> | undefined;
+  const revisionFlag = asString(flags.revision);
+  if (revisionFlag) {
+    const parsed = revisionSchema.safeParse(safeJson(revisionFlag));
+    if (!parsed.success) {
+      process.stderr.write(`--revision is not a valid revision: ${parsed.error.issues[0]?.message ?? 'unreadable JSON'}\n`);
+      return 2;
+    }
+    revision = parsed.data;
+  }
+  // A round keeps the stage selection of the run it continues, unless one was given explicitly.
+  const pipeline =
+    explicitPipeline ?? (revision ? inheritedPipeline(revision.parentRunId) : undefined);
 
   const inputData = {
     task,
     repo: repoPath,
-    ...(asString(flags['base-branch']) ? { baseBranch: asString(flags['base-branch'])! } : {}),
-    ...(asString(flags.branch) ? { branchName: asString(flags.branch)! } : {}),
+    ...(asString(flags['base-branch']) || revision
+      ? { baseBranch: asString(flags['base-branch']) ?? revision!.pullRequest.baseBranch }
+      : {}),
+    // A round continues on the pull request's own branch, so the new commit updates that PR.
+    ...(asString(flags.branch) || revision
+      ? { branchName: asString(flags.branch) ?? revision!.pullRequest.headBranch }
+      : {}),
     ...(asInteger(flags['max-attempts']) ? { maxAttempts: asInteger(flags['max-attempts'])! } : {}),
     ...(asString(flags['test-command']) ? { testCommand: asString(flags['test-command'])! } : {}),
     ...(criteria ? { acceptanceCriteria: criteria.split(';').map((entry) => entry.trim()).filter(Boolean) } : {}),
@@ -210,6 +286,9 @@ async function commandRun(flags: Record<string, FlagValue>): Promise<number> {
     ...(asBoolean(flags.commit) === false ? { autoCommit: false } : {}),
     ...(asBoolean(flags.pr) === false ? { createPullRequest: false } : {}),
     ...(config.nonInteractive ? { interactive: false } : {}),
+    // Only the stages the user switched off; the workflow keeps every other one enabled.
+    ...(pipeline ? { pipeline } : {}),
+    ...(revision ? { revision } : {}),
   };
 
   // Fail fast: if no test command is available and not in dry-run, error before spending agent calls
@@ -303,9 +382,11 @@ async function commandRun(flags: Record<string, FlagValue>): Promise<number> {
 
 /**
  * Write a minimal `summary.json` for runs that fail before the workflow reaches
- * its finalize step (e.g. prepare-run rejects a dirty working tree). Without this
- * the run has no trace dir, so the CLI/studio cannot show *why* it failed.
- * Never overwrites an existing summary.
+ * its finalize step (e.g. prepare-run rejects a dirty working tree, or the delivery step
+ * fails after a human approved it). Without this the run has no record of *why* it failed.
+ *
+ * A real (non-failed) summary is never overwritten; a previous FAILED one is replaced so a
+ * retry that fails again reports its own, current error.
  */
 async function writeFailureSummary(
   runId: string,
@@ -315,11 +396,20 @@ async function writeFailureSummary(
     startedAt: string;
     error: unknown;
     dryRun: boolean;
+    branch?: string | null;
+    failedStep?: string | null;
   },
 ): Promise<void> {
   const { traceDirFor, writeSummary } = await import('../tools/logger-tools.ts');
   const summaryPath = path.join(traceDirFor(runId), 'summary.json');
-  if (fs.existsSync(summaryPath)) return;
+  if (fs.existsSync(summaryPath)) {
+    try {
+      const existing = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { status?: string };
+      if (existing.status !== 'FAILED') return;
+    } catch {
+      // Unreadable summary: replace it with an accurate one.
+    }
+  }
 
   const error = meta.error as { message?: string; stack?: string } | undefined;
   const finishedAt = new Date().toISOString();
@@ -328,7 +418,8 @@ async function writeFailureSummary(
     status: 'FAILED',
     task: meta.task,
     repository: meta.repository,
-    branch: null,
+    branch: meta.branch ?? null,
+    failedStep: meta.failedStep ?? null,
     startedAt: meta.startedAt,
     finishedAt,
     durationMs: new Date(finishedAt).getTime() - new Date(meta.startedAt).getTime(),
@@ -361,14 +452,78 @@ function findResumeStep(state: unknown): string | undefined {
     .sort((a, b) => b.split('.').length - a.split('.').length || b.localeCompare(a))[0];
 }
 
-function reportResumeResult(
+/** Normalises whatever Mastra reports as a failure (Error, string, serialised object). */
+function errorMessageOf(error: unknown): string {
+  if (!error) return '';
+  if (typeof error === 'string') return error;
+  const message = (error as { message?: unknown }).message;
+  if (typeof message === 'string' && message.trim() !== '') return message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+/** Extracts the failure from a Mastra workflow result: the top-level error, else the failed step's. */
+function describeFailure(result: { error?: unknown; steps?: StepResults }): {
+  error: unknown;
+  message: string;
+  failedStep: string | null;
+} {
+  const steps = result.steps ?? {};
+  const failedStep = findResumeStep({ steps }) ?? null;
+  const stepError = failedStep ? steps[failedStep]?.error : undefined;
+  const error = result.error ?? stepError ?? new Error('The run failed without reporting an error.');
+  return { error, message: errorMessageOf(error), failedStep };
+}
+
+/**
+ * Persists why a started / resumed run failed.
+ *
+ * `run` already did this for failures during the first execution, but the resume path only
+ * dumped JSON to stdout: a step that failed *after* a human approved something (delivery, for
+ * instance) left no summary, so the Studio could only say "interrupted or crashed".
+ */
+async function recordRunFailure(
   runId: string,
-  result: {
-    status: string;
-    result?: { status?: string; traceDir?: string; summaryPath?: string };
-    suspendPayload?: unknown;
-  },
-): number {
+  error: unknown,
+  failedStep: string | null,
+): Promise<void> {
+  const { traceDirFor, appendEvent } = await import('../tools/logger-tools.ts');
+
+  let meta: Record<string, unknown> = {};
+  try {
+    meta = JSON.parse(fs.readFileSync(path.join(traceDirFor(runId), 'run.json'), 'utf8'));
+  } catch {
+    // run.json is best effort: the failure itself is what matters.
+  }
+
+  await writeFailureSummary(runId, {
+    task: String(meta.task ?? ''),
+    repository: String(meta.repoPath ?? ''),
+    startedAt: String(meta.startedAt ?? new Date().toISOString()),
+    error,
+    dryRun: Boolean(meta.dryRun),
+    branch: typeof meta.branch === 'string' ? meta.branch : null,
+    failedStep,
+  });
+  appendEvent(runId, { type: 'run_failed', step: failedStep, error: errorMessageOf(error) });
+}
+
+/** Drops a stale FAILED summary so a retry in progress is not shown as still failed. */
+async function clearFailureSummary(runId: string): Promise<void> {
+  const { traceDirFor } = await import('../tools/logger-tools.ts');
+  const summaryPath = path.join(traceDirFor(runId), 'summary.json');
+  try {
+    const existing = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { status?: string };
+    if (existing.status === 'FAILED') fs.rmSync(summaryPath, { force: true });
+  } catch {
+    // No summary (or unreadable): nothing to clear.
+  }
+}
+
+async function reportResumeResult(runId: string, result: WorkflowResultLike): Promise<number> {
   if (result.status === 'success') {
     heading(`Run ${runId}: ${result.result?.status ?? 'COMPLETED'}`);
     printJson('Result', result.result);
@@ -379,8 +534,12 @@ function reportResumeResult(
     printJson('Suspend payload', result.suspendPayload);
     return 3;
   }
+
   heading(`Run ${runId} FAILED`);
-  printJson('Result', result);
+  const failure = describeFailure(result);
+  await recordRunFailure(runId, failure.error, failure.failedStep);
+  if (failure.failedStep) process.stderr.write(`Failed step: ${failure.failedStep}\n`);
+  process.stderr.write(`${failure.message}\n`);
   return 1;
 }
 
@@ -405,6 +564,29 @@ async function commandResume(flags: Record<string, FlagValue>): Promise<number> 
   const explicitStep = asString(flags.step);
   const run = await workflow.createRun({ runId });
 
+  // A run an earlier retry left "suspended" with nothing suspended: its work is done but it was
+  // never closed out. There is no gate to answer - just continue where it stopped.
+  if (isStuckSuspended(state as Parameters<typeof isStuckSuspended>[0])) {
+    const next = continuationStep(state as Parameters<typeof continuationStep>[0]);
+    if (next) {
+      heading(`Completing run ${runId}`);
+      process.stdout.write(
+        'Every step of this run finished, but it was never closed out.\n' +
+          `Continuing at "${next}" - nothing that already ran is repeated.\n`,
+      );
+      await clearFailureSummary(runId);
+      try {
+        const result = await run.timeTravel({ step: next });
+        return await reportResumeResult(runId, result as WorkflowResultLike);
+      } catch (error) {
+        heading(`Run ${runId} FAILED`);
+        await recordRunFailure(runId, error, next);
+        process.stderr.write(`${errorMessageOf(error)}\n`);
+        return 1;
+      }
+    }
+  }
+
   // A failed run is re-entered from the step that failed. Mastra's timeTravel re-runs
   // the graph from that step while reusing every persisted step result before it, so
   // the planner's work, earlier attempts and the git branch are all preserved.
@@ -418,12 +600,20 @@ async function commandResume(flags: Record<string, FlagValue>): Promise<number> 
     }
     heading(`Restarting failed run ${runId}`);
     process.stdout.write(`Re-entering the workflow at step "${resumeStep}".\n`);
+    // The previous failure no longer describes the run while it is being retried.
+    await clearFailureSummary(runId);
     try {
       const result = await run.timeTravel({ step: resumeStep });
-      return reportResumeResult(runId, result);
+      return await reportResumeResult(
+        runId,
+        await continueIfStuck(runId, workflow, result as WorkflowResultLike, (message) =>
+          process.stdout.write(message),
+        ),
+      );
     } catch (error) {
       heading(`Run ${runId} FAILED`);
-      process.stderr.write(`${(error as Error)?.message ?? String(error)}\n`);
+      await recordRunFailure(runId, error, resumeStep);
+      process.stderr.write(`${errorMessageOf(error)}\n`);
       return 1;
     }
   }
@@ -447,6 +637,8 @@ async function commandResume(flags: Record<string, FlagValue>): Promise<number> 
     resumeData = {
       approvePush: approvePush !== 'false',
       approvePullRequest: approvePullRequest !== 'false',
+      // Optional edits to the commit message / PR title and description / branch name.
+      ...parseDeliveryEditsJson(asString(flags.edits)),
     };
   } else if (clarifications) {
     resumeData = { clarifications };
@@ -463,12 +655,23 @@ async function commandResume(flags: Record<string, FlagValue>): Promise<number> 
   const { clearPendingInput } = await import('../tools/logger-tools.ts');
   clearPendingInput(runId);
 
-  const result = await run.resume({
-    resumeData: resumeData as never,
-    ...(explicitStep ? { step: explicitStep } : {}),
-  });
-
-  return reportResumeResult(runId, result);
+  try {
+    const result = await run.resume({
+      resumeData: resumeData as never,
+      ...(explicitStep ? { step: explicitStep } : {}),
+    });
+    return await reportResumeResult(
+      runId,
+      await continueIfStuck(runId, workflow, result as WorkflowResultLike, (message) =>
+          process.stdout.write(message),
+        ),
+    );
+  } catch (error) {
+    heading(`Run ${runId} FAILED`);
+    await recordRunFailure(runId, error, null);
+    process.stderr.write(`${errorMessageOf(error)}\n`);
+    return 1;
+  }
 }
 
 async function commandList(flags: Record<string, FlagValue>): Promise<number> {
@@ -639,11 +842,18 @@ async function commandPrFeedback(flags: Record<string, FlagValue>): Promise<numb
   }
 
   const { mastra } = await import('../mastra/index.ts');
+  const { resolveRepoPath } = await import('../utils/factory-config.ts');
+  // What the factory already dealt with (answered, dismissed, fixed by a round) is not triaged again.
+  const alreadyHandled = lookupPullRequest(resolveRepoPath(repo, { requireGit: false }), pullRequest)?.handledCommentIds ?? [];
+  const requestedSkips = (asString(flags['skip-comments']) ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+  const skipCommentIds = [...new Set([...alreadyHandled, ...requestedSkips])];
+
   const inputData = {
     repo,
     pullRequest,
     postReplies: flags['post-replies'] === true || asString(flags['post-replies']) === 'true',
     includeResolved: flags['include-resolved'] === true,
+    ...(skipCommentIds.length > 0 ? { skipCommentIds } : {}),
   };
 
   heading(`Pull-request feedback triage #${pullRequest}`);
@@ -677,14 +887,268 @@ async function commandPrFeedback(flags: Record<string, FlagValue>): Promise<numb
 
   if (flags['auto-rerun'] !== true) {
     process.stdout.write(
-      `\nStart it with:\n  npm run factory -- run --repo ${repo} --task "<the task above>"\n`,
+      `\nStart it on the pull request's branch with:\n  npm run factory -- run --repo ${repo} --branch ${output.headBranch} --base-branch ${output.baseBranch} --task "<the task above>"\n`,
     );
     return 0;
   }
 
-  // Chain straight into a normal factory run so CI can close the loop unattended.
-  process.stdout.write('\n--auto-rerun: starting the follow-up factory run.\n');
-  return await commandRun({ ...flags, task: output.followUpTask });
+  // Chain straight into the follow-up so CI can close the loop unattended.
+  if (lookupPullRequest(resolveRepoPath(repo, { requireGit: false }), pullRequest)) {
+    // The factory opened this pull request: continue its task as a linked round.
+    process.stdout.write(`\n--auto-rerun: starting the next round of pull request #${pullRequest}.\n`);
+    return await commandRevise({ ...flags, pr: String(pullRequest), 'triage-run': output.runId });
+  }
+  // Not one of ours (no run to continue): still work on the PR's own branch so the PR updates.
+  process.stdout.write(
+    `\n--auto-rerun: starting the follow-up factory run on ${output.headBranch}.\n`,
+  );
+  return await commandRun(followUpRunFlags(flags, output));
+}
+
+/** JSON.parse that yields `undefined` instead of throwing. */
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The stages the previous round used, as the "only what is switched off" selection `run` expects. */
+function inheritedPipeline(parentRunId: string): ReturnType<typeof parsePipelineFlags> {
+  const stages = readRunMeta(parentRunId)?.pipeline;
+  if (!stages) return undefined;
+  const off = Object.fromEntries(Object.entries(stages).filter(([, enabled]) => enabled === false));
+  return Object.keys(off).length > 0 ? (off as ReturnType<typeof parsePipelineFlags>) : undefined;
+}
+
+/* -------------------------------------------------------------------------- */
+/* revise                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Starts a further round on a pull request the factory opened, from a triage of its review
+ * comments: the same task, the same branch and (unless re-planning is called for) the same plan,
+ * with the reviewer's words handed to the developer. It is linked to the run it continues.
+ */
+async function commandRevise(flags: Record<string, FlagValue>): Promise<number> {
+  const repoFlag = asString(flags.repo);
+  const prFlag = asString(flags.pr);
+  if (!repoFlag || !prFlag) {
+    process.stderr.write('Both --repo and --pr are required.\n');
+    return 2;
+  }
+  const number = Number.parseInt(prFlag, 10);
+  if (!Number.isInteger(number) || number <= 0) {
+    process.stderr.write(`--pr must be a positive integer (got "${prFlag}").\n`);
+    return 2;
+  }
+
+  const { resolveRepoPath } = await import('../utils/factory-config.ts');
+  const repoPath = resolveRepoPath(repoFlag, { requireGit: false });
+
+  const entry = lookupPullRequest(repoPath, number);
+  if (!entry) {
+    process.stderr.write(
+      `Pull request #${number} is not one the factory opened (or is not registered yet). Run ` +
+        '`pr-check` first, or use `run --branch ... --base-branch ...` for an arbitrary branch.\n',
+    );
+    return 2;
+  }
+
+  const triageRun = asString(flags['triage-run']);
+  const triage = triageRun ? readTriageSummary(triageRun) : findLatestTriage(repoPath, number);
+  if (!triage) {
+    process.stderr.write(
+      `No triage of pull request #${number} found. Triage the comments first: ` +
+        `npm run factory -- pr-feedback --repo ${repoFlag} --pr ${number}\n`,
+    );
+    return 2;
+  }
+
+  const requested = asString(flags.action)?.toUpperCase();
+  if (requested && !isRevisionAction(requested)) {
+    process.stderr.write('--action must be RERUN_IMPLEMENTATION or RERUN_PLANNING.\n');
+    return 2;
+  }
+
+  const composed = composeRevision({
+    entry,
+    triage,
+    ...(requested && isRevisionAction(requested) ? { action: requested } : {}),
+    replyOnGitHub: asBoolean(flags.reply) === true,
+  });
+  if (!composed.ok) {
+    process.stderr.write(`${composed.reason}\n`);
+    return 2;
+  }
+
+  // An edited task wins over the triage agent's draft.
+  const task = asString(flags.task) ?? composed.task;
+  heading(`Round ${composed.revision.round} of pull request #${number}`);
+  process.stdout.write(
+    `Continues run ${composed.revision.parentRunId} on ${entry.headBranch}; ` +
+      `${composed.revision.comments.length} review comment(s) to address (${composed.revision.action}).\n`,
+  );
+
+  return await commandRun({
+    ...flags,
+    repo: repoPath,
+    task,
+    revision: JSON.stringify(composed.revision),
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* pr-dismiss / pr-reply                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** Prints a machine-readable result line the Studio looks for (stray log lines cannot break it). */
+function printMarker(marker: string, payload: unknown): void {
+  process.stdout.write(`${marker} ${JSON.stringify(payload)}\n`);
+}
+
+/** Sets review comments aside: they stop counting as pending and are never acted on. */
+async function commandPrDismiss(flags: Record<string, FlagValue>): Promise<number> {
+  const repoFlag = asString(flags.repo);
+  const prFlag = asString(flags.pr);
+  const ids = (asString(flags.comments) ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+  if (!repoFlag || !prFlag || ids.length === 0) {
+    process.stderr.write('--repo, --pr and --comments <id,id,...> are required.\n');
+    return 2;
+  }
+  const { resolveRepoPath } = await import('../utils/factory-config.ts');
+  const { markCommentsHandled } = await import('../tools/pr-registry.ts');
+  const repoPath = resolveRepoPath(repoFlag, { requireGit: false });
+  const number = Number.parseInt(prFlag, 10);
+  if (!lookupPullRequest(repoPath, number)) {
+    process.stderr.write(`Pull request #${number} is not registered; nothing to dismiss.\n`);
+    return 2;
+  }
+  await markCommentsHandled(pullRequestKey(repoPath, number), ids);
+  printMarker('PR_DISMISS_JSON', { dismissed: ids.length });
+  return 0;
+}
+
+/** Posts the replies a triage drafted for questions and notes (never promises about unmade changes). */
+async function commandPrReply(flags: Record<string, FlagValue>): Promise<number> {
+  const repoFlag = asString(flags.repo);
+  const prFlag = asString(flags.pr);
+  if (!repoFlag || !prFlag) {
+    process.stderr.write('Both --repo and --pr are required.\n');
+    return 2;
+  }
+  const { resolveRepoPath } = await import('../utils/factory-config.ts');
+  const { postTriageReplies } = await import('../tools/pr-reply.ts');
+  const repoPath = resolveRepoPath(repoFlag, { requireGit: false });
+  const number = Number.parseInt(prFlag, 10);
+
+  const triageRun = asString(flags['triage-run']);
+  const triage = triageRun ? readTriageSummary(triageRun) : findLatestTriage(repoPath, number);
+  if (!triage) {
+    process.stderr.write(`No triage of pull request #${number} found.\n`);
+    return 2;
+  }
+  const handled = new Set(lookupPullRequest(repoPath, number)?.handledCommentIds ?? []);
+  const result = await postTriageReplies(repoPath, number, triage.comments.filter((c) => !handled.has(c.id)));
+  printMarker('PR_REPLY_JSON', result);
+  if (result.failures.length > 0) process.stderr.write(`${result.failures.join('\n')}\n`);
+  return result.failures.length > 0 && result.posted === 0 ? 1 : 0;
+}
+
+/* -------------------------------------------------------------------------- */
+/* pr-check                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Reports the open factory pull requests that have review comments nobody has dealt with.
+ *
+ * Machine-readable by design: one `PR_CHECK_JSON {...}` line on stdout (the Studio runs this every
+ * minute and looks for that marker, so stray log lines cannot break the parse).
+ */
+async function commandPrCheck(flags: Record<string, FlagValue>): Promise<number> {
+  try {
+    const { checkPullRequests } = await import('../tools/pr-watch.ts');
+    const repo = asString(flags.repo);
+    const result = await checkPullRequests(repo ? { repoPath: repo } : {});
+    process.stdout.write(`PR_CHECK_JSON ${JSON.stringify(result)}\n`);
+    return 0;
+  } catch (error) {
+    process.stdout.write(`PR_CHECK_JSON ${JSON.stringify({ error: errorMessageOf(error) })}\n`);
+    return 1;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* pr-merge-draft / pr-merge                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** `--repo` and `--pr`, validated; prints the usage error itself. */
+function repoAndPullRequest(flags: Record<string, FlagValue>): { repo: string; number: number } | null {
+  const repo = asString(flags.repo);
+  const number = Number.parseInt(asString(flags.pr) ?? '', 10);
+  if (!repo || !Number.isInteger(number) || number <= 0) {
+    process.stderr.write('Both --repo and --pr <positive number> are required.\n');
+    return null;
+  }
+  return { repo, number };
+}
+
+/**
+ * Writes the commit message a squash merge of the pull request would have. Changes nothing: it
+ * reads the pull request and asks the merge-summary agent (or falls back to a plain message).
+ * One `PR_MERGE_DRAFT_JSON {...}` line on stdout, for the Studio.
+ */
+async function commandPrMergeDraft(flags: Record<string, FlagValue>): Promise<number> {
+  const target = repoAndPullRequest(flags);
+  if (!target) return 2;
+  try {
+    const { resolveRepoPath } = await import('../utils/factory-config.ts');
+    const { draftSquashMessage } = await import('../tools/pr-merge.ts');
+    const draft = await draftSquashMessage({ repoPath: resolveRepoPath(target.repo, { requireGit: false }), number: target.number });
+    printMarker('PR_MERGE_DRAFT_JSON', draft);
+    return 0;
+  } catch (error) {
+    printMarker('PR_MERGE_DRAFT_JSON', { error: errorMessageOf(error) });
+    return 1;
+  }
+}
+
+/**
+ * Squash-merges a pull request the human approved. `--head-sha` is the commit they approved: if the
+ * branch has moved since, nothing is merged. One `PR_MERGE_JSON {...}` line on stdout.
+ *
+ * Exit codes: 0 merged (or a dry-run rehearsal), 1 not merged, 2 usage.
+ */
+async function commandPrMerge(flags: Record<string, FlagValue>): Promise<number> {
+  const target = repoAndPullRequest(flags);
+  if (!target) return 2;
+
+  const headSha = asString(flags['head-sha']);
+  const subject = asString(flags.subject);
+  if (!headSha || !subject) {
+    process.stderr.write('--head-sha (the approved commit) and --subject are required.\n');
+    return 2;
+  }
+
+  try {
+    const { resolveRepoPath } = await import('../utils/factory-config.ts');
+    const { mergePullRequest } = await import('../tools/pr-merge.ts');
+    const outcome = await mergePullRequest({
+      repoPath: resolveRepoPath(target.repo, { requireGit: false }),
+      number: target.number,
+      expectedHeadSha: headSha,
+      subject,
+      body: typeof flags.body === 'string' ? flags.body : '',
+      deleteBranch: asBoolean(flags['delete-branch']) ?? true,
+      returnToBase: asBoolean(flags['return-to-base']) ?? true,
+    });
+    printMarker('PR_MERGE_JSON', outcome);
+    return outcome.merged || outcome.dryRun ? 0 : 1;
+  } catch (error) {
+    printMarker('PR_MERGE_JSON', { merged: false, reason: errorMessageOf(error), notes: [] });
+    return 1;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -702,6 +1166,18 @@ async function main(): Promise<number> {
       return await commandResume(flags);
     case 'pr-feedback':
       return await commandPrFeedback(flags);
+    case 'pr-check':
+      return await commandPrCheck(flags);
+    case 'revise':
+      return await commandRevise(flags);
+    case 'pr-dismiss':
+      return await commandPrDismiss(flags);
+    case 'pr-reply':
+      return await commandPrReply(flags);
+    case 'pr-merge-draft':
+      return await commandPrMergeDraft(flags);
+    case 'pr-merge':
+      return await commandPrMerge(flags);
     case 'list':
       return await commandList(flags);
     case 'show':

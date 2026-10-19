@@ -41,6 +41,57 @@ export const DEFAULT_PIPELINE: PipelineConfig = {
 /** Stages that always run, surfaced so the UI can render them as locked. */
 export const MANDATORY_STAGES = ['prepare-run', 'pm-architect', 'developer', 'delivery'] as const;
 
+/**
+ * One review comment a revision has to address.
+ *
+ * Carries what is needed to act on it later without asking GitHub again: the thread id to answer
+ * an inline comment in place, and how the triage agent classified it.
+ */
+export const revisionCommentSchema = z.object({
+  id: z.string(),
+  /** Inline comments only: the review thread to reply in. */
+  threadId: z.string().optional(),
+  source: z.enum(['ISSUE_COMMENT', 'REVIEW_BODY', 'REVIEW_THREAD']),
+  author: z.string(),
+  body: z.string(),
+  path: z.string().optional(),
+  line: z.number().int().optional(),
+  /** Triage classification (CODE_CHANGE_REQUEST, QUESTION, ...). */
+  category: z.string().optional(),
+});
+export type RevisionComment = z.infer<typeof revisionCommentSchema>;
+
+/**
+ * A *round*: further work on a pull request the factory already opened, driven by review comments.
+ *
+ * A round is not an unrelated run. It continues the original task: same branch, same plan (unless
+ * the comments call for re-planning), the comments handed to the developer as human feedback, and
+ * the same quality gates. It has its own trace directory so every round stays reviewable, and is
+ * linked to the run it comes from.
+ */
+export const revisionSchema = z.object({
+  /** The round this one continues from (the previous round, or the original run). */
+  parentRunId: z.string(),
+  /** The run that opened the pull request (round 1). */
+  rootRunId: z.string(),
+  round: z.number().int().min(2),
+  /** `RERUN_PLANNING` re-plans with the comments; `RERUN_IMPLEMENTATION` keeps the existing plan. */
+  action: z.enum(['RERUN_IMPLEMENTATION', 'RERUN_PLANNING']),
+  /** The task of the original run - what the pull request is about. */
+  originalTask: z.string(),
+  pullRequest: z.object({
+    number: z.number().int(),
+    url: z.string(),
+    title: z.string().optional(),
+    headBranch: z.string(),
+    baseBranch: z.string(),
+  }),
+  comments: z.array(revisionCommentSchema),
+  /** Answer the reviewer on GitHub once the change is pushed. */
+  replyOnGitHub: z.boolean().optional(),
+});
+export type Revision = z.infer<typeof revisionSchema>;
+
 export const factoryTaskSchema = z.object({
   task: z.string().min(10).describe('The requirement to implement, in English.'),
   pipeline: pipelineConfigSchema
@@ -60,11 +111,14 @@ export const factoryTaskSchema = z.object({
     .optional()
     .describe('Answers to previous clarification questions, or human guidance after escalation.'),
   autoCommit: z.boolean().optional().describe('Commit the work on success (default: true).'),
-  createPullRequest: z.boolean().optional().describe('Open a draft PR on success (default: true).'),
+  createPullRequest: z.boolean().optional().describe('Open a pull request on success (default: true).'),
   interactive: z
     .boolean()
     .optional()
     .describe('Allow the workflow to suspend for human input (default: true).'),
+  revision: revisionSchema
+    .optional()
+    .describe('Set when this run is a further round on an existing pull request.'),
 });
 export type FactoryTask = z.infer<typeof factoryTaskSchema>;
 
@@ -108,6 +162,8 @@ export const runContextSchema = z.object({
   startedAt: z.string(),
   /** Resolved stage selection for this run (defaults merged with the task override). */
   pipeline: pipelineConfigSchema,
+  /** Present when this run is a further round on an existing pull request. */
+  revision: revisionSchema.optional(),
 });
 export type RunContext = z.infer<typeof runContextSchema>;
 
@@ -395,20 +451,78 @@ export const documentationReportSchema = z.object({
   }),
   openApiUpdated: z.boolean(),
   openApiNotes: z.string(),
-  pullRequest: z.object({
-    title: z.string().describe('Conventional Commits style, <= 72 characters.'),
-    body: z.string().describe('Markdown body with Summary, Changes, Test plan, Quality gates.'),
-    labels: z.array(z.string()),
-    breakingChanges: z.boolean(),
-    testPlan: z.array(z.string()),
-  }),
   followUps: z.array(z.string()),
 });
 export type DocumentationReport = z.infer<typeof documentationReportSchema>;
 
 /* -------------------------------------------------------------------------- */
+/* 07 - Pull-request text (commit message, title, description)                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What the PR writer agent returns. The commit message is split in two so the subject can be held
+ * to a line, and put back together by the factory (`composeCommitMessage`).
+ */
+export const prWriterAgentSchema = z.object({
+  commitMessage: z.object({
+    subject: z
+      .string()
+      .min(1)
+      .max(120)
+      .describe('One line, imperative mood, at most 72 characters, no trailing full stop.'),
+    body: z
+      .string()
+      .describe('Why the change was made, in a few short sentences or bullets. Empty for a trivial change.'),
+  }),
+  pullRequest: z.object({
+    title: z.string().min(1).max(160).describe('At most 72 characters; normally the commit subject.'),
+    body: z
+      .string()
+      .min(1)
+      .describe('Markdown: Summary, Changes, Test plan, Quality gates, Risks & rollback, Follow-ups.'),
+    labels: z.array(z.string()).describe('Well-known labels only (bug, enhancement, documentation). Usually empty.'),
+    breakingChanges: z.boolean(),
+  }),
+});
+export type PrWriterAgentOutput = z.infer<typeof prWriterAgentSchema>;
+
+/**
+ * The text that is published with a change, as the delivery step uses it. `source` says where it came
+ * from, so the human who reads it at the delivery gate knows how much to trust it.
+ */
+export const prTextSchema = z.object({
+  /** Subject, blank line, body - what the commit will say. */
+  commitMessage: z.string(),
+  pullRequest: z.object({
+    title: z.string(),
+    body: z.string(),
+    labels: z.array(z.string()),
+    breakingChanges: z.boolean(),
+  }),
+  source: z.enum(['agent', 'fallback']),
+  /** Why the plain fallback text was used, when it was. */
+  note: z.string().optional(),
+});
+export type PrText = z.infer<typeof prTextSchema>;
+
+/* -------------------------------------------------------------------------- */
 /* 08 - Delivery                                                               */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * What the human may change at the delivery approval gate before anything is published.
+ *
+ * Every field is optional and means "use this instead of the proposal". The values sent are
+ * the *final* ones (not a diff), so the last submission always describes the whole choice and a
+ * retry can pre-fill the form from it.
+ */
+export const deliveryEditsSchema = z.object({
+  commitMessage: z.string().optional().describe('Replacement commit message (unpushed commit only).'),
+  pullRequestTitle: z.string().optional().describe('Replacement pull-request title.'),
+  pullRequestBody: z.string().optional().describe('Replacement pull-request description.'),
+  branchName: z.string().optional().describe('New name for the work branch (not yet pushed only).'),
+});
+export type DeliveryEdits = z.infer<typeof deliveryEditsSchema>;
 
 export const deliveryReportSchema = z.object({
   committed: z.boolean(),
@@ -622,3 +736,26 @@ export const feedbackTriageReportSchema = z.object({
 });
 export type FeedbackTriageReport = z.infer<typeof feedbackTriageReportSchema>;
 export type FeedbackItem = z.infer<typeof feedbackItemSchema>;
+
+/* -------------------------------------------------------------------------- */
+/* Squash-merge message                                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The commit message of a squash merge. The pull-request reference (" (#12)") is added by the
+ * factory afterwards, so the agent writes the subject without it.
+ */
+export const mergeSummarySchema = z.object({
+  subject: z
+    .string()
+    .min(1)
+    .max(100)
+    .describe('One line, imperative mood, about 60 characters, no trailing full stop, no "(#N)".'),
+  body: z
+    .string()
+    .describe(
+      'What changed and why, as short paragraphs, then optionally "- " bullets for distinct changes. ' +
+        'Empty only when the subject says everything.',
+    ),
+});
+export type MergeSummary = z.infer<typeof mergeSummarySchema>;

@@ -89,7 +89,7 @@ export interface FactoryConfig {
   nonInteractive: boolean;
   /** Allow `git push` in the pull-request step. */
   allowPush: boolean;
-  /** Allow draft pull-request creation through the GitHub CLI. */
+  /** Allow pull-request creation through the GitHub CLI. */
   allowPullRequest: boolean;
   /** Use the `repomix` CLI when available. */
   enableRepomix: boolean;

@@ -34,6 +34,67 @@ interface ScenarioExpectation {
   resume?: { data: Record<string, unknown>; expect: string };
   expectedAttempts?: number;
   requiredArtifacts: string[];
+  /** Optional stages to switch off for this scenario (what `--no-qa` / `--no-docs` ... do). */
+  pipeline?: { qa?: boolean; review?: boolean; security?: boolean; documentation?: boolean };
+  /** Further assertions on what the run wrote. Each entry is `[name, ok, detail]`. */
+  extraChecks?: (traceDir: string) => Array<[string, boolean, string?]>;
+}
+
+/**
+ * What must hold for the pull-request text of any run that reaches delivery: it was written by the PR
+ * writer (whatever the documentation stage did), the delivery used exactly that text, and the
+ * "Quality gates" section is the factory's own - it states the true outcome of every stage.
+ */
+function prTextChecks(
+  traceDir: string,
+  expected: { documentation: string; expectGates: string[] },
+): Array<[string, boolean, string?]> {
+  const read = (file: string): Record<string, any> | null => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(traceDir, file), 'utf8')) as Record<string, any>;
+    } catch {
+      return null;
+    }
+  };
+  const docs = read('07-documentation.json');
+  const writer = read('07-pr-writer.json');
+  const delivery = read('08-pull-request.json');
+  const body: string = writer?.data?.pullRequest?.body ?? '';
+  const title: string = writer?.data?.pullRequest?.title ?? '';
+  const checks: Array<[string, boolean, string?]> = [
+    ['documentation artifact has the expected status', docs?.status === expected.documentation, `status=${String(docs?.status)}`],
+    ['the PR writer ran and completed', writer?.status === 'COMPLETED', `status=${String(writer?.status)}`],
+    ['the PR writer produced a title, a description and a commit message', title !== '' && body.length > 40 && String(writer?.data?.commitMessage ?? '') !== '', title],
+    ['the title is not the raw task text', title !== '' && !title.startsWith('Smoke test the factory graph'), title],
+    ['delivery used the PR writer\'s title', delivery?.data?.pullRequest?.title === title, String(delivery?.data?.pullRequest?.title)],
+    ['delivery used the PR writer\'s description', delivery?.data?.pullRequest?.body === body],
+    ['the description carries no placeholder about a disabled stage', !/this description was not written/i.test(body)],
+  ];
+  for (const line of expected.expectGates) {
+    checks.push([`the Quality gates section says "${line}"`, body.includes(`- ${line}`)]);
+  }
+  return checks;
+}
+
+/**
+ * What `summary.json` reports for the quality gates. A stage that was switched off did not run, so it
+ * must read `SKIPPED` - never the passing verdict its placeholder report carries.
+ */
+function gateChecks(
+  traceDir: string,
+  expected: { qa: string; codeReview: string; security: string; documentation: string },
+): Array<[string, boolean, string?]> {
+  let gates: Record<string, unknown> = {};
+  try {
+    gates = (JSON.parse(fs.readFileSync(path.join(traceDir, 'summary.json'), 'utf8')) as { gates?: Record<string, unknown> }).gates ?? {};
+  } catch {
+    // reported below
+  }
+  return (Object.keys(expected) as Array<keyof typeof expected>).map((gate) => [
+    `summary.json reports ${gate} as ${expected[gate]}`,
+    gates[gate] === expected[gate],
+    `reported=${String(gates[gate])}`,
+  ]);
 }
 
 const SCENARIOS: ScenarioExpectation[] = [
@@ -50,8 +111,46 @@ const SCENARIOS: ScenarioExpectation[] = [
       '05-code-review.json',
       '06-security.json',
       '07-documentation.json',
+      '07-pr-writer.json',
       '08-pull-request.json',
       'summary.json',
+    ],
+    extraChecks: (dir) => gateChecks(dir, { qa: 'PASS', codeReview: 'APPROVED', security: 'PASS', documentation: 'COMPLETED' }),
+  },
+  {
+    scenario: 'happy',
+    description:
+      'documentation switched OFF: the commit message and PR text are still written (PR writer is mandatory)',
+    interactive: false,
+    expect: 'DELIVERED_WITHOUT_PR',
+    expectedAttempts: 1,
+    pipeline: { documentation: false },
+    requiredArtifacts: ['07-documentation.json', '07-pr-writer.json', '08-pull-request.json', 'summary.json'],
+    extraChecks: (dir) => [
+      ...prTextChecks(dir, { documentation: 'SKIPPED', expectGates: ['Documentation: not run (disabled for this task)'] }),
+      ...gateChecks(dir, { qa: 'PASS', codeReview: 'APPROVED', security: 'PASS', documentation: 'SKIPPED' }),
+    ],
+  },
+  {
+    scenario: 'happy',
+    description:
+      'every optional stage OFF: the PR text is still written, and says plainly that nothing ran',
+    interactive: false,
+    expect: 'DELIVERED_WITHOUT_PR',
+    expectedAttempts: 1,
+    pipeline: { qa: false, review: false, security: false, documentation: false },
+    requiredArtifacts: ['07-pr-writer.json', '08-pull-request.json', 'summary.json'],
+    extraChecks: (dir) => [
+      ...prTextChecks(dir, {
+        documentation: 'SKIPPED',
+        expectGates: [
+          'QA: not run (disabled for this task)',
+          'Code review: not run (disabled for this task)',
+          'Security audit: not run (disabled for this task)',
+          'Documentation: not run (disabled for this task)',
+        ],
+      }),
+      ...gateChecks(dir, { qa: 'SKIPPED', codeReview: 'SKIPPED', security: 'SKIPPED', documentation: 'SKIPPED' }),
     ],
   },
   {
@@ -160,6 +259,7 @@ async function runScenario(expectation: ScenarioExpectation, index: number): Pro
       autoCommit: false,
       createPullRequest: false,
       interactive: expectation.interactive,
+      ...(expectation.pipeline ? { pipeline: expectation.pipeline } : {}),
     },
   });
 
@@ -211,6 +311,10 @@ async function runScenario(expectation: ScenarioExpectation, index: number): Pro
   const present = fs.existsSync(traceDir) ? fs.readdirSync(traceDir) : [];
   const missing = expectation.requiredArtifacts.filter((artifact) => !present.includes(artifact));
   check(`${label} writes the expected artifacts`, missing.length === 0, missing.length > 0 ? `missing: ${missing.join(', ')}` : `${present.length} files`);
+
+  for (const [name, ok, detail] of expectation.extraChecks?.(traceDir) ?? []) {
+    check(`${label} ${name}`, ok, detail ?? '');
+  }
 
   check(
     `${label} writes the run event log`,

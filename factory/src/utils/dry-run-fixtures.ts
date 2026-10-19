@@ -12,6 +12,7 @@ import type {
   DeveloperReport,
   DocumentationReport,
   ExecutionPlan,
+  PrWriterAgentOutput,
   ProjectStack,
   QaReport,
   ReviewReport,
@@ -375,10 +376,10 @@ export function stubSecurityReport(attempt: number): SecurityReport {
 /* 07 - Documentation                                                          */
 /* -------------------------------------------------------------------------- */
 
-export function stubDocumentationReport(task: string, branch: string): DocumentationReport {
+export function stubDocumentationReport(): DocumentationReport {
   return {
     status: 'COMPLETED',
-    summary: '[dry-run] Changelog entry added and the pull-request description generated.',
+    summary: '[dry-run] Changelog entry added.',
     updatedFiles: [
       {
         path: 'CHANGELOG.md',
@@ -389,6 +390,20 @@ export function stubDocumentationReport(task: string, branch: string): Documenta
     changelogEntry: { section: 'Fixed', entries: ['[dry-run] Half-cent amounts round correctly.'] },
     openApiUpdated: false,
     openApiNotes: '[dry-run] No HTTP contract changed.',
+    followUps: [],
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* 07 - Pull-request text (PR writer)                                          */
+/* -------------------------------------------------------------------------- */
+
+export function stubPrWriterOutput(task: string, branch: string): PrWriterAgentOutput {
+  return {
+    commitMessage: {
+      subject: 'feat(example): dry-run change',
+      body: '[dry-run] Canned commit message body.',
+    },
     pullRequest: {
       title: 'feat(example): dry-run change',
       body: [
@@ -404,20 +419,12 @@ export function stubDocumentationReport(task: string, branch: string): Documenta
         '',
         '- `npm test` -> exit 0',
         '',
-        '## Quality gates',
-        '',
-        '- QA: PASS',
-        '- Code review: APPROVED',
-        '- Security: PASS',
-        '',
         '## Risks & rollback',
         '',
         `[dry-run] Low risk. Revert branch \`${branch}\`.`,
       ].join('\n'),
       labels: ['dry-run'],
       breakingChanges: false,
-      testPlan: ['npm test'],
     },
-    followUps: [],
   };
 }

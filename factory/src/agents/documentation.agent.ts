@@ -1,5 +1,8 @@
 /**
- * Documentation agent - updates the documentation and writes the pull-request description.
+ * Documentation agent - decides whether the change invalidates any documentation, and updates it.
+ *
+ * It no longer writes the pull-request text: that is the PR writer's job (a separate, mandatory
+ * step), so a task that switches this stage off still gets a proper title and description.
  *
  * Primary: Haiku-class fast model. Fallback: OpenAI mini.
  * Its write tools are restricted to documentation files (Markdown, docs/**, OpenAPI specs),
@@ -18,8 +21,8 @@ export const documentationAgent = new Agent({
   id: 'documentation',
   name: 'Documentation Agent',
   description:
-    'Updates CHANGELOG.md, technical docs, OpenAPI specs and generates the pull-request ' +
-    'description.',
+    'Decides whether the change invalidates the documentation (README, CHANGELOG, docs, OpenAPI, ' +
+    'AGENTS.md, ADRs) and updates exactly what it does. Writes documentation files only.',
   instructions: ({ requestContext }) =>
     composeInstructions('documentation', repoPathFromRequestContext(requestContext)),
   model: buildModelChain('documentation'),

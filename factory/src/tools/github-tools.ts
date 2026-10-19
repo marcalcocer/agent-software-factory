@@ -8,6 +8,7 @@
  * token handling is needed. Reads are safe; every write is explicit and recorded.
  */
 import { runProcess } from '../utils/shell.ts';
+import { summarizeChecks, type CheckSummary } from './pr-merge-rules.ts';
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -23,6 +24,12 @@ export interface PullRequestComment {
   author: string;
   body: string;
   createdAt: string;
+  /**
+   * Inline comments only: the review *thread* the comment belongs to. Replying and resolving
+   * work on the thread, not on a single comment - using the comment id there silently failed, so
+   * answers to inline comments were never posted.
+   */
+  threadId?: string;
   /** Inline comments only: the file the reviewer commented on. */
   path?: string;
   /** Inline comments only: the line in the diff. */
@@ -41,6 +48,19 @@ export interface PullRequestReview {
   baseBranch: string;
   url: string;
   comments: PullRequestComment[];
+  /**
+   * What decides whether it can be merged. Optional so a reader that only cares about the
+   * comments (and a test double) need not supply them.
+   */
+  headSha?: string;
+  isDraft?: boolean;
+  isCrossRepository?: boolean;
+  /** MERGEABLE | CONFLICTING | UNKNOWN */
+  mergeable?: string;
+  /** CLEAN | UNSTABLE | HAS_HOOKS | BLOCKED | BEHIND | DIRTY | DRAFT | UNKNOWN */
+  mergeState?: string;
+  reviewDecision?: string;
+  checks?: CheckSummary;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -53,7 +73,7 @@ async function hasGh(cwd: string): Promise<boolean> {
 }
 
 /** Runs a `gh` command and parses its stdout as JSON. */
-async function ghJson<T>(cwd: string, args: string[]): Promise<T> {
+export async function ghJson<T>(cwd: string, args: string[]): Promise<T> {
   const result = await runProcess('gh', args, { cwd, trusted: true, timeoutMs: 60_000 });
   if (!result.ok) {
     throw new Error(
@@ -72,8 +92,25 @@ async function ghJson<T>(cwd: string, args: string[]): Promise<T> {
 /** Bot authors whose comments must never be treated as human review feedback. */
 const BOT_AUTHORS = new Set(['github-actions', 'github-actions[bot]', 'dependabot[bot]']);
 
-/** Marker appended to every factory reply, so its own comments are never re-triaged. */
+/** Hidden marker on every factory reply, so its own comments are never re-triaged. */
 export const FACTORY_REPLY_MARKER = '<!-- agent-software-factory -->';
+
+/**
+ * Visible label on everything the factory posts.
+ *
+ * The factory writes through the user's own GitHub account (`gh` is signed in as them), so without
+ * this a reply is indistinguishable from something the user typed. A hidden marker is not enough:
+ * the people reading the pull request have to be able to *see* that an AI wrote it.
+ */
+export const AI_LABEL = '> 🤖 **AI software factory** · automated reply, posted through this account';
+
+/** Marks `body` as written by the factory: visible label on top, hidden marker at the bottom. */
+export function signAsAi(body: string): string {
+  const text = body.trim();
+  // Never sign twice (a retry, or a caller that already did).
+  if (text.includes(FACTORY_REPLY_MARKER)) return text;
+  return `${AI_LABEL}\n\n${text}\n\n${FACTORY_REPLY_MARKER}`;
+}
 
 function isFactoryOwnComment(body: string): boolean {
   return body.includes(FACTORY_REPLY_MARKER);
@@ -110,6 +147,13 @@ export async function fetchPullRequestReview(
     url: string;
     headRefName: string;
     baseRefName: string;
+    headRefOid?: string;
+    isDraft?: boolean;
+    isCrossRepository?: boolean;
+    mergeable?: string;
+    mergeStateStatus?: string;
+    reviewDecision?: string;
+    statusCheckRollup?: unknown;
     comments: Array<{ id: string; author: { login: string } | null; body: string; createdAt: string }>;
     reviews: Array<{
       id: string;
@@ -123,7 +167,7 @@ export async function fetchPullRequestReview(
     'view',
     String(prNumber),
     '--json',
-    'number,title,state,url,headRefName,baseRefName,comments,reviews',
+    'number,title,state,url,headRefName,baseRefName,headRefOid,isDraft,isCrossRepository,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,comments,reviews',
   ]);
 
   const comments: PullRequestComment[] = [];
@@ -142,6 +186,9 @@ export async function fetchPullRequestReview(
 
   for (const review of pr.reviews ?? []) {
     const author = review.author?.login ?? 'unknown';
+    // A PENDING review is a draft: its author is still writing it and nobody else can see it.
+    // Acting on it would answer a review that has not been given yet.
+    if (review.state === 'PENDING') continue;
     // An empty body means the reviewer only left inline comments; those arrive via threads.
     if (BOT_AUTHORS.has(author) || !review.body?.trim() || isFactoryOwnComment(review.body)) continue;
     comments.push({
@@ -174,6 +221,13 @@ export async function fetchPullRequestReview(
     headBranch: pr.headRefName,
     baseBranch: pr.baseRefName,
     comments,
+    ...(pr.headRefOid ? { headSha: pr.headRefOid } : {}),
+    ...(pr.isDraft === undefined ? {} : { isDraft: pr.isDraft }),
+    ...(pr.isCrossRepository === undefined ? {} : { isCrossRepository: pr.isCrossRepository }),
+    ...(pr.mergeable ? { mergeable: pr.mergeable } : {}),
+    ...(pr.mergeStateStatus ? { mergeState: pr.mergeStateStatus } : {}),
+    reviewDecision: pr.reviewDecision ?? '',
+    checks: summarizeChecks(pr.statusCheckRollup),
   };
 }
 
@@ -181,6 +235,29 @@ interface ReviewThread {
   id: string;
   resolved: boolean;
   comments: PullRequestComment[];
+}
+
+/**
+ * `owner/name` of a checkout, cached for the life of the process. The watcher asks about every
+ * open pull request each minute; the owner of a repository does not change between two of them,
+ * so asking GitHub once per repository instead of once per pull request saves a third of the calls.
+ */
+const repoIdentityCache = new Map<string, Promise<{ owner: { login: string }; name: string }>>();
+
+function repoIdentity(repoPath: string): Promise<{ owner: { login: string }; name: string }> {
+  let pending = repoIdentityCache.get(repoPath);
+  if (!pending) {
+    pending = ghJson<{ owner: { login: string }; name: string }>(repoPath, [
+      'repo',
+      'view',
+      '--json',
+      'owner,name',
+    ]);
+    // A failure must not be remembered: the next check should try again.
+    pending.catch(() => repoIdentityCache.delete(repoPath));
+    repoIdentityCache.set(repoPath, pending);
+  }
+  return pending;
 }
 
 /** Reads inline review threads via GraphQL, which is the only API that exposes them. */
@@ -200,7 +277,9 @@ async function fetchReviewThreads(repoPath: string, prNumber: number): Promise<R
                   createdAt
                   path
                   line
+                  state
                   author { login }
+                  pullRequestReview { state }
                 }
               }
             }
@@ -209,12 +288,7 @@ async function fetchReviewThreads(repoPath: string, prNumber: number): Promise<R
       }
     }`;
 
-  const repo = await ghJson<{ owner: { login: string }; name: string }>(repoPath, [
-    'repo',
-    'view',
-    '--json',
-    'owner,name',
-  ]);
+  const repo = await repoIdentity(repoPath);
 
   try {
     const response = await ghJson<{
@@ -232,7 +306,10 @@ async function fetchReviewThreads(repoPath: string, prNumber: number): Promise<R
                     createdAt: string;
                     path: string | null;
                     line: number | null;
+                    /** SUBMITTED, or PENDING while it belongs to a review its author has not submitted. */
+                    state?: string;
                     author: { login: string } | null;
+                    pullRequestReview?: { state: string } | null;
                   }>;
                 };
               }>;
@@ -256,9 +333,13 @@ async function fetchReviewThreads(repoPath: string, prNumber: number): Promise<R
     return (response.data?.repository?.pullRequest?.reviewThreads?.nodes ?? []).map((thread) => ({
       id: thread.id,
       resolved: thread.isResolved,
-      comments: thread.comments.nodes.map((comment) => ({
+      comments: thread.comments.nodes
+        // Draft comments (an unsubmitted review) are not feedback yet - see the reviews loop above.
+        .filter((comment) => comment.state !== 'PENDING' && comment.pullRequestReview?.state !== 'PENDING')
+        .map((comment) => ({
         id: comment.id,
         source: 'REVIEW_THREAD' as const,
+        threadId: thread.id,
         author: comment.author?.login ?? 'unknown',
         body: comment.body,
         createdAt: comment.createdAt,
@@ -277,10 +358,9 @@ async function fetchReviewThreads(repoPath: string, prNumber: number): Promise<R
 /* -------------------------------------------------------------------------- */
 
 /**
- * Posts a comment on the pull-request conversation.
- *
- * The body is tagged with `FACTORY_REPLY_MARKER` so later feedback runs skip it instead of
- * triaging the factory's own words as new reviewer feedback.
+ * Posts a comment on the pull-request conversation, labelled as written by the factory
+ * (see {@link signAsAi}) so it can be told apart from what the account owner types, and tagged so
+ * later feedback runs skip it instead of triaging the factory's own words as reviewer feedback.
  */
 export async function postPullRequestComment(
   repoPath: string,
@@ -291,11 +371,11 @@ export async function postPullRequestComment(
     return { posted: false, reason: 'GitHub CLI (`gh`) not found.' };
   }
 
-  const result = await runProcess(
-    'gh',
-    ['pr', 'comment', String(prNumber), '--body', `${body}\n\n${FACTORY_REPLY_MARKER}`],
-    { cwd: repoPath, trusted: true, timeoutMs: 60_000 },
-  );
+  const result = await runProcess('gh', ['pr', 'comment', String(prNumber), '--body', signAsAi(body)], {
+    cwd: repoPath,
+    trusted: true,
+    timeoutMs: 60_000,
+  });
 
   return result.ok
     ? { posted: true }
@@ -307,12 +387,74 @@ export async function postPullRequestComment(
       };
 }
 
-/** Replies inside an inline review thread, keeping the answer next to the code it concerns. */
+/** What a thread reply needs in order to stay readable if it has to go out as a conversation comment. */
+export interface ThreadReplyContext {
+  author?: string;
+  /** `path:line` of the inline comment being answered. */
+  location?: string;
+  /** First line of the comment being answered. */
+  excerpt?: string;
+}
+
+/**
+ * Which pull request a review thread belongs to, and whether the signed-in user has a pending
+ * (unsubmitted) review on it. A read-only query; `null` when it cannot be answered.
+ */
+async function probeThread(
+  repoPath: string,
+  threadId: string,
+): Promise<{ number: number; hasPendingReview: boolean } | null> {
+  const query = `
+    query($threadId: ID!) {
+      node(id: $threadId) {
+        ... on PullRequestReviewThread {
+          pullRequest {
+            number
+            reviews(states: [PENDING], first: 1) { nodes { id } }
+          }
+        }
+      }
+    }`;
+  try {
+    const response = await ghJson<{
+      data?: { node?: { pullRequest?: { number: number; reviews?: { nodes?: unknown[] } } } | null };
+    }>(repoPath, ['api', 'graphql', '-f', `query=${query}`, '-f', `threadId=${threadId}`]);
+    const pullRequest = response.data?.node?.pullRequest;
+    if (!pullRequest) return null;
+    return { number: pullRequest.number, hasPendingReview: (pullRequest.reviews?.nodes?.length ?? 0) > 0 };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Replies inside an inline review thread, keeping the answer next to the code it concerns, labelled
+ * as written by the factory.
+ *
+ * GitHub attaches a reply made through the API to the signed-in user's *pending* review when they
+ * have one: the reply then stays invisible to everybody else until the user submits their draft,
+ * and lands inside it. (Seen for real: a reply posted while the user was still drafting.) So when
+ * a pending review exists the answer goes out as a conversation comment instead, quoting what it
+ * answers. If the check itself fails, the normal in-thread reply is used.
+ */
 export async function replyToReviewThread(
   repoPath: string,
   threadId: string,
   body: string,
+  context: ThreadReplyContext = {},
 ): Promise<{ posted: boolean; reason?: string }> {
+  const probe = await probeThread(repoPath, threadId);
+  if (probe?.hasPendingReview) {
+    const whose = context.author ? `@${context.author}'s ` : '';
+    const where = context.location ? ` on \`${context.location}\`` : '';
+    const quote = context.excerpt ? `\n> ${context.excerpt}\n` : '';
+    return await postPullRequestComment(
+      repoPath,
+      probe.number,
+      `↪ In reply to ${whose}inline comment${where}:${quote}\n${body}`,
+    );
+  }
+
   const mutation = `
     mutation($threadId: ID!, $body: String!) {
       addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
@@ -320,18 +462,11 @@ export async function replyToReviewThread(
       }
     }`;
 
+  // `-f` (a raw string), not `-F`: `-F` interprets values - one starting with "@" would be read as
+  // a file name, and "true" / "123" would be converted - which a free-text reply must never be.
   const result = await runProcess(
     'gh',
-    [
-      'api',
-      'graphql',
-      '-f',
-      `query=${mutation}`,
-      '-F',
-      `threadId=${threadId}`,
-      '-F',
-      `body=${body}\n\n${FACTORY_REPLY_MARKER}`,
-    ],
+    ['api', 'graphql', '-f', `query=${mutation}`, '-f', `threadId=${threadId}`, '-f', `body=${signAsAi(body)}`],
     { cwd: repoPath, trusted: true, timeoutMs: 60_000 },
   );
 

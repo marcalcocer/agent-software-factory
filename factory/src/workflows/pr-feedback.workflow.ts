@@ -20,6 +20,8 @@ import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
 
 import { getDiff } from '../tools/git-tools.ts';
+import { markCommentsHandled, pullRequestKey } from '../tools/pr-registry.ts';
+import { ANSWERED_AT_TRIAGE } from '../tools/pr-reply.ts';
 import {
   fetchPullRequestReview,
   postPullRequestComment,
@@ -49,6 +51,8 @@ export const prFeedbackTaskSchema = z.object({
   postReplies: z.boolean().optional(),
   /** Re-triage comments in threads already marked resolved. */
   includeResolved: z.boolean().optional(),
+  /** Comments already dealt with in an earlier round: not triaged again. */
+  skipCommentIds: z.array(z.string()).optional(),
 });
 
 const feedbackContextSchema = z.object({
@@ -72,6 +76,10 @@ export const prFeedbackResultSchema = z.object({
   summary: z.string(),
   commentsTriaged: z.number().int(),
   repliesPosted: z.number().int(),
+  /** Branch the pull request is opened from - the follow-up run continues on it. */
+  headBranch: z.string(),
+  /** Branch the pull request targets. */
+  baseBranch: z.string(),
   /** Requirement for the follow-up run. Empty when no re-run is needed. */
   followUpTask: z.string(),
   blockers: z.array(z.string()),
@@ -94,11 +102,14 @@ const fetchFeedbackStep = createStep({
     const repoName = path.basename(repoPath);
     const effectiveRunId = runId ?? generateRunId(`${repoName}-prfeedback`);
 
-    const review = await fetchPullRequestReview(repoPath, inputData.pullRequest, {
+    const fetched = await fetchPullRequestReview(repoPath, inputData.pullRequest, {
       ...(inputData.includeResolved === undefined
         ? {}
         : { includeResolved: inputData.includeResolved }),
     });
+    // Comments an earlier round already dealt with must not be triaged (and acted on) again.
+    const skip = new Set(inputData.skipCommentIds ?? []);
+    const review = { ...fetched, comments: fetched.comments.filter((comment) => !skip.has(comment.id)) };
 
     createRunTrace({
       runId: effectiveRunId,
@@ -108,6 +119,9 @@ const fetchFeedbackStep = createStep({
       branch: review.headBranch,
       baseBranch: review.baseBranch,
       models: {},
+      // Marked from the first moment, so a triage in progress (or one that died) is never mistaken
+      // for a task the user ran.
+      kind: 'pr-feedback',
       dryRun: getFactoryConfig().dryRun,
       startedAt: new Date().toISOString(),
     });
@@ -282,23 +296,37 @@ const postRepliesStep = createStep({
     const commentsById = new Map(context.comments.map((comment) => [comment.id, comment]));
 
     let repliesPosted = 0;
+    const commentCategory = new Map(report.items.map((item) => [item.commentId, item.category]));
+    const commentReply = new Map(report.items.map((item) => [item.commentId, item.reply]));
+
+    // Which replies may be posted now is decided in one place (see `pr-reply.ts`): answers to
+    // questions can; "I'll do that" before the change exists cannot.
+    const answeredIds: string[] = [];
 
     if (context.postReplies && !getFactoryConfig().dryRun) {
       for (const item of report.items) {
-        if (item.reply.trim() === '') continue;
+        if (item.reply.trim() === '' || !ANSWERED_AT_TRIAGE.has(item.category)) continue;
 
         const comment = commentsById.get(item.commentId);
-        // Inline comments are answered in their own thread; everything else in the
-        // conversation, so the reply stays next to the code it is about.
+        // Inline comments are answered in their own thread (by *thread* id - the comment id is
+        // not accepted there, which is why these replies never used to arrive); everything else
+        // in the conversation.
         const outcome =
-          comment?.source === 'REVIEW_THREAD'
-            ? await replyToReviewThread(context.repoPath, item.commentId, item.reply)
+          comment?.source === 'REVIEW_THREAD' && comment.threadId
+            ? await replyToReviewThread(context.repoPath, comment.threadId, item.reply)
             : await postPullRequestComment(context.repoPath, context.pullRequest, item.reply);
 
-        if (outcome.posted) repliesPosted += 1;
-        else logger?.warn?.('[factory] reply not posted', { reason: outcome.reason });
+        if (outcome.posted) {
+          repliesPosted += 1;
+          answeredIds.push(item.commentId);
+        } else {
+          logger?.warn?.('[factory] reply not posted', { reason: outcome.reason });
+        }
       }
     }
+    // An answered question stops counting as pending feedback (the reviewer's comment itself stays
+    // on GitHub, so without this the watcher would triage and answer it again every minute).
+    await markCommentsHandled(pullRequestKey(context.repoPath, context.pullRequest), answeredIds);
 
     const action: PrFeedbackResult['action'] =
       context.comments.length === 0 ? 'NO_FEEDBACK' : report.overallAction;
@@ -312,6 +340,8 @@ const postRepliesStep = createStep({
       summary: report.summary,
       commentsTriaged: report.items.length,
       repliesPosted,
+      headBranch: context.headBranch,
+      baseBranch: context.baseBranch,
       followUpTask: needsRerun ? report.taskForNextRun : '',
       blockers: report.blockers,
       traceDir: '',
@@ -331,6 +361,7 @@ const postRepliesStep = createStep({
       pullRequest: context.pullRequest,
       pullRequestUrl: context.prUrl,
       branch: context.headBranch,
+      baseBranch: context.baseBranch,
       status: action,
       summary: report.summary,
       commentsTriaged: report.items.length,
@@ -338,6 +369,20 @@ const postRepliesStep = createStep({
       followUpTask: result.followUpTask,
       blockers: report.blockers,
       items: report.items,
+      // The comments themselves, with how each was classified: everything a round (or a later
+      // "post the replies") needs, so it does not have to ask GitHub again.
+      comments: context.comments.map((comment) => ({
+        id: comment.id,
+        ...(comment.threadId ? { threadId: comment.threadId } : {}),
+        source: comment.source,
+        author: comment.author,
+        body: comment.body,
+        createdAt: comment.createdAt,
+        ...(comment.path ? { path: comment.path } : {}),
+        ...(comment.line === undefined ? {} : { line: comment.line }),
+        ...(commentCategory.get(comment.id) ? { category: commentCategory.get(comment.id) } : {}),
+        ...(commentReply.get(comment.id) ? { reply: commentReply.get(comment.id) } : {}),
+      })),
       finishedAt: new Date().toISOString(),
     });
 

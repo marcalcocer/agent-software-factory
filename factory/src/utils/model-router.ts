@@ -25,7 +25,9 @@ export type AgentRole =
   | 'security'
   | 'reviewer'
   | 'documentation'
-  | 'feedback-triage';
+  | 'feedback-triage'
+  | 'merge-summary'
+  | 'pr-writer';
 
 export const AGENT_ROLES: AgentRole[] = [
   'pm-architect',
@@ -36,6 +38,8 @@ export const AGENT_ROLES: AgentRole[] = [
   'reviewer',
   'documentation',
   'feedback-triage',
+  'merge-summary',
+  'pr-writer',
 ];
 
 /** Capability tier requested by a role, independent of the concrete model id. */
@@ -50,6 +54,11 @@ const ROLE_TIERS: Record<AgentRole, ModelTier> = {
   reviewer: 'reasoning',
   documentation: 'fast',
   'feedback-triage': 'reasoning',
+  // Summarises a diff it is handed in full; no exploration needed. Runs once per merge.
+  'merge-summary': 'fast',
+  // Writes the commit message and pull-request text from reports and a diff it is handed in full.
+  // The documentation agent wrote this text before and was on this tier too.
+  'pr-writer': 'fast',
 };
 
 interface GenerationModels {
@@ -106,6 +115,8 @@ const CLI_ROLE_ENV_KEYS: Record<AgentRole, string> = {
   reviewer: 'FACTORY_CLI_MODEL_REVIEWER',
   documentation: 'FACTORY_CLI_MODEL_DOCUMENTATION',
   'feedback-triage': 'FACTORY_CLI_MODEL_FEEDBACK_TRIAGE',
+  'merge-summary': 'FACTORY_CLI_MODEL_MERGE_SUMMARY',
+  'pr-writer': 'FACTORY_CLI_MODEL_PR_WRITER',
 };
 
 /**
@@ -143,6 +154,8 @@ const ROLE_ENV_KEYS: Record<AgentRole, string> = {
   reviewer: 'FACTORY_MODEL_REVIEWER',
   documentation: 'FACTORY_MODEL_DOCUMENTATION',
   'feedback-triage': 'FACTORY_MODEL_FEEDBACK_TRIAGE',
+  'merge-summary': 'FACTORY_MODEL_MERGE_SUMMARY',
+  'pr-writer': 'FACTORY_MODEL_PR_WRITER',
 };
 
 /** Retry budget per position in the chain: primary gets the most, last resort the least. */

@@ -180,6 +180,10 @@ const ROLE_TOOL_POLICY: Record<AgentRole, ClaudeCliToolPolicy> = {
   // Reads the PR diff and the repository to classify reviewer feedback; it routes work to
   // other agents rather than editing anything itself.
   'feedback-triage': 'read-only',
+  // Judges only from the diff and descriptions in its prompt: nothing to look up, nothing to touch.
+  'merge-summary': 'none',
+  // Everything it needs (reports, the diff) is in its prompt; it writes text and touches nothing.
+  'pr-writer': 'none',
 };
 
 /**

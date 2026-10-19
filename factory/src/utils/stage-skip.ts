@@ -59,7 +59,7 @@ export function skippedSecurityReport(): SecurityReport {
   };
 }
 
-export function skippedDocumentationReport(task: string, branch: string): DocumentationReport {
+export function skippedDocumentationReport(): DocumentationReport {
   return {
     status: 'SKIPPED',
     summary: `${SKIPPED} No documentation was reviewed or updated.`,
@@ -67,17 +67,6 @@ export function skippedDocumentationReport(task: string, branch: string): Docume
     changelogEntry: { section: 'None', entries: [] },
     openApiUpdated: false,
     openApiNotes: '',
-    pullRequest: {
-      title: task.length > 72 ? `${task.slice(0, 69)}...` : task,
-      body:
-        'This pull request was produced by agent-software-factory.\n\n' +
-        `Work branch: \`${branch}\`\n\n` +
-        '_The documentation stage was disabled for this task, so this description was not ' +
-        'written by the documentation agent._',
-      labels: [],
-      breakingChanges: false,
-      testPlan: [],
-    },
     followUps: [],
   };
 }
