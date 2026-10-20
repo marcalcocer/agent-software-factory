@@ -19,6 +19,7 @@ import path from 'node:path';
 
 import { asBoolean, asInteger, asString, errorMessageOf, printMarker, type FlagValue } from './flags.ts';
 import { commandInitiativeEdit, commandInitiativeList, commandPhaseReconcile } from './initiatives.ts';
+import { commandWorktreeCheckout, commandWorktreeGc, commandWorktreeList, commandWorktreeRemove } from './worktrees.ts';
 import { parsePipelineFlags } from './pipeline-flags.ts';
 import { parseDeliveryEditsJson } from '../utils/delivery-edits.ts';
 import { followUpRunFlags } from './pr-feedback-followup.ts';
@@ -96,6 +97,10 @@ Commands:
   initiative-list  List the projects of a repository: phases, what can start, the backlog
   initiative-edit  Rename, reword, skip or add phases of a project; set backlog items aside
   phase-reconcile  After a phase is merged, compare what it delivered with the phases still to come
+  worktree-list    List the checkouts the factory made for tasks: where, which task, what is in them
+  worktree-remove  Remove one checkout (the branch stays)
+  worktree-gc      Remove the checkouts of tasks whose pull request is over
+  worktree-checkout  Move a task's branch from its checkout to your repository ("check out here")
   list        List recent runs and their status
   show        Print the summary.json of a run
   doctor      Check configuration, credentials and external tooling
@@ -190,6 +195,27 @@ phase-reconcile flags:
   --phase <phaseId>         The merged phase (required)
   --force                   Compare again even if it was done already
                             Prints PHASE_RECONCILE_JSON {report}; report is null when there was nothing to do.
+
+worktree-list flags:
+  --repo <name|path>        Target repository (required)
+                            Prints WORKTREE_LIST_JSON {repoPath, worktrees}.
+
+worktree-remove flags:
+  --repo <name|path>        Target repository (required)
+  --path <folder>           The checkout (required). Only the factory's own are ever removed.
+  --force                   Remove it even if it has changes that are not committed
+                            Prints WORKTREE_REMOVE_JSON {removed, reason?, message?}.
+
+worktree-gc flags:
+  --repo <name|path>        Target repository (required)
+                            Removes the clean checkouts whose pull request was merged or closed.
+                            Prints WORKTREE_GC_JSON {removed, kept}.
+
+worktree-checkout flags:
+  --repo <name|path>        Target repository (required)
+  --path <folder>           The task's checkout (required). It must have no uncommitted changes, and
+                            neither may your repository: the branch is checked out there, over it.
+                            Prints WORKTREE_CHECKOUT_JSON {ok, branch?, error?}.
 
 Examples:
   npm run factory -- run --repo invest-track --task "Add pagination to GET /api/positions"
@@ -1274,6 +1300,14 @@ async function main(): Promise<number> {
       return await commandInitiativeEdit(flags);
     case 'phase-reconcile':
       return await commandPhaseReconcile(flags);
+    case 'worktree-list':
+      return await commandWorktreeList(flags);
+    case 'worktree-remove':
+      return await commandWorktreeRemove(flags);
+    case 'worktree-gc':
+      return await commandWorktreeGc(flags);
+    case 'worktree-checkout':
+      return await commandWorktreeCheckout(flags);
     case 'list':
       return await commandList(flags);
     case 'show':

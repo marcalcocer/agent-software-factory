@@ -74,7 +74,7 @@ const canonical = (target: string): string => {
     return path.resolve(target);
   }
 };
-const samePath = (a: string, b: string): boolean => canonical(a) === canonical(b);
+export const samePath = (a: string, b: string): boolean => canonical(a) === canonical(b);
 
 /* -------------------------------------------------------------------------- */
 /* What git knows                                                              */
@@ -435,4 +435,56 @@ export async function removeWorktree(options: { mainRepoPath: string; path: stri
   const removed = await runGit(['worktree', 'remove', ...(options.force ? ['--force'] : []), options.path], { cwd: mainRepoPath });
   if (!removed.ok) return { removed: false, reason: 'failed', message: `Could not remove the checkout at ${options.path}: ${firstLine(removed.stderr)}` };
   return { removed: true };
+}
+
+/* -------------------------------------------------------------------------- */
+/* "Check out here"                                                            */
+/* -------------------------------------------------------------------------- */
+
+export type CheckoutHereResult = { ok: true; branch: string } | { ok: false; error: string };
+
+/**
+ * Moves a task's branch from its own checkout to the user's repository, so they can run it where they
+ * work. A branch is checked out in one place only, so the checkout goes first. Refuses before touching
+ * anything when either side has changes that would be lost or mixed up; if the checkout in the user's
+ * repository then fails, the task's checkout is put back.
+ */
+export async function checkoutHere(options: { mainRepoPath: string; path: string }): Promise<CheckoutHereResult> {
+  const { mainRepoPath } = options;
+  if (!isFactoryWorktree(options.path)) return { ok: false, error: `${options.path} is not a checkout the factory made.` };
+
+  // Only a checkout git knows is inspected: `git status` in any other folder would answer for whatever
+  // repository happens to contain it.
+  const known = (await listWorktrees(mainRepoPath)).find((entry) => !entry.main && samePath(entry.path, options.path));
+  if (!known) return { ok: false, error: `${options.path} is not a checkout of ${path.basename(mainRepoPath)} (any more), so it was left alone.` };
+  const state = await inspectWorktree(options.path);
+  if (!state.exists) return { ok: false, error: `The checkout at ${options.path} is gone. The branch is still in your repository: git checkout it there.` };
+  if (!state.branch || state.branch === 'HEAD') return { ok: false, error: `The checkout at ${options.path} is not on a branch.` };
+  if (state.changedFiles > 0) {
+    return {
+      ok: false,
+      error: `The checkout at ${options.path} has ${state.changedFiles} file${state.changedFiles === 1 ? '' : 's'} with changes that are not committed, and they cannot come along. Commit or discard them there first.`,
+    };
+  }
+  if (!(await isWorkingTreeClean(mainRepoPath))) {
+    return { ok: false, error: `Your repository has changes that are not committed. Commit or stash them, then try again: the branch will be checked out over them.` };
+  }
+
+  const removal = await removeWorktree({ mainRepoPath, path: options.path });
+  if (!removal.removed) return { ok: false, error: removal.message ?? `Could not remove the checkout at ${options.path}.` };
+
+  const switched = await runGit(['checkout', state.branch], { cwd: mainRepoPath });
+  if (switched.ok) return { ok: true, branch: state.branch };
+
+  // Put the task's checkout back: nothing should be lost because the user's repository said no.
+  const restored = await ensureWorktree({ mainRepoPath, taskId: path.basename(options.path), branch: state.branch, baseBranch: state.branch }).then(
+    () => true,
+    () => false,
+  );
+  return {
+    ok: false,
+    error:
+      `Could not check out ${state.branch} in your repository: ${firstLine(switched.stderr)}. ` +
+      (restored ? "The task's checkout was put back." : `The branch is intact; the task's checkout could not be put back (it is made again the next time the task runs).`),
+  };
 }
