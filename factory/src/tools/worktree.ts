@@ -341,7 +341,9 @@ export async function ensureWorktree(options: EnsureWorktreeOptions): Promise<En
 
     fs.mkdirSync(path.dirname(target), { recursive: true });
     let args: string[];
+    let existedLocally = false;
     if (await refSha(mainRepoPath, `refs/heads/${branch}`)) {
+      existedLocally = true;
       args = ['worktree', 'add', target, branch];
     } else if (options.adoptRemote && (await fetchRemoteBranch(mainRepoPath, branch)) && (await refSha(mainRepoPath, `refs/remotes/origin/${branch}`))) {
       args = ['worktree', 'add', '--track', '-b', branch, target, `origin/${branch}`];
@@ -354,6 +356,12 @@ export async function ensureWorktree(options: EnsureWorktreeOptions): Promise<En
     const added = await runGit(args, { cwd: mainRepoPath });
     if (!added.ok) throw new WorktreeError(`Could not make the checkout at ${target}: ${firstLine(added.stderr) || firstLine(added.stdout)}`);
     notes.push(`Made a checkout of ${branch} at ${target}.`);
+    // A branch that already existed may be behind GitHub's (a reviewer pushed while the checkout was gone):
+    // bring it up to date when that is a plain fast-forward, as for a checkout that is reused.
+    if (options.adoptRemote && existedLocally) {
+      const forwarded = await fastForwardFromRemote(target, branch);
+      if (forwarded) notes.push(forwarded);
+    }
   }
 
   notes.push(...(await provideDependencies({ mainRepoPath, treePath: target, ...(options.dependencyDirs ? { dirs: options.dependencyDirs } : {}), ...(options.onProgress ? { onProgress: options.onProgress } : {}) })));

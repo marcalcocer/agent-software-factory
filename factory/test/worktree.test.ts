@@ -251,6 +251,35 @@ describe('ensureWorktree: coming back to a task', () => {
     expect(fs.readFileSync(path.join(back.path, 'done.txt'), 'utf8')).toBe('committed\n');
   });
 
+  it('brings in what a reviewer pushed while the checkout was gone - the branch is behind GitHub\'s', async () => {
+    const first = await start();
+    ws.gitIn(first.path, 'push', '-q', '-u', 'origin', 'factory/f0001/feat-x');
+    ws.pushFromElsewhere('factory/f0001/feat-x', 'src/suggestion.js', 'module.exports = "suggested";\n');
+    fs.rmSync(first.path, { recursive: true, force: true });
+
+    const back = await start({ adoptRemote: true });
+
+    expect(back.reused).toBe(false);
+    expect(fs.existsSync(path.join(back.path, 'src', 'suggestion.js'))).toBe(true);
+    expect(back.notes.join(' ')).toContain('fast-forwarded');
+  });
+
+  it('leaves a branch that has diverged from GitHub\'s as it is - someone\'s work is not merged silently', async () => {
+    const first = await start();
+    ws.gitIn(first.path, 'push', '-q', '-u', 'origin', 'factory/f0001/feat-x');
+    ws.pushFromElsewhere('factory/f0001/feat-x', 'src/theirs.js', 'x\n');
+    fs.writeFileSync(path.join(first.path, 'src', 'ours.js'), 'y\n');
+    ws.gitIn(first.path, 'add', '-A');
+    ws.gitIn(first.path, 'commit', '-q', '-m', 'ours');
+    fs.rmSync(first.path, { recursive: true, force: true });
+
+    const back = await start({ adoptRemote: true });
+
+    expect(fs.existsSync(path.join(back.path, 'src', 'ours.js'))).toBe(true);
+    expect(fs.existsSync(path.join(back.path, 'src', 'theirs.js'))).toBe(false);
+    expect(back.notes.join(' ')).toContain('has diverged');
+  });
+
   it('takes a branch that only GitHub has - a pull request opened from another machine', async () => {
     ws.pushFromElsewhere('feature/from-github', 'src/feature.js', 'module.exports = "feature";\n');
 
