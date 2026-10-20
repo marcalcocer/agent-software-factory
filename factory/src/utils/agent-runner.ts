@@ -152,11 +152,14 @@ function instructionsToText(instructions: unknown): string {
 }
 
 /**
- * The run's `context/` directory (the complete patch, the raw suite logs), when it exists. Read-only
- * roles may read it: the diff they are shown can be a condensed one, and this is where the rest is.
+ * The run's trace directory, when it exists: the complete patch and the raw suite logs under
+ * `context/`, and the reports of every earlier step and attempt next to it. Read-only roles may read
+ * it. The diff they are shown can be a condensed one and this is where the rest is, and the triage
+ * agent compares attempts through the earlier reports - which its prompt says to do with a tool
+ * (`read-run-artifacts`) that does not exist under this backend.
  */
 function traceReadDirs(runId: string): string[] {
-  const dir = path.join(traceDirFor(runId), 'context');
+  const dir = traceDirFor(runId);
   return fs.existsSync(dir) ? [dir] : [];
 }
 
@@ -216,10 +219,11 @@ const ROLE_TOOL_POLICY: Record<AgentRole, ClaudeCliToolPolicy> = {
  * BLOCKED rather than judging the evidence it already had. Neither is a real failure - command
  * execution is deliberately withheld, and the factory runs the suite itself.
  */
-function executionEnvironmentNote(
+export function executionEnvironmentNote(
   policy: ClaudeCliToolPolicy,
   role: AgentRole,
   repoPath: string,
+  options: { traceDir?: string } = {},
 ): string {
   const lines = ['', '## Execution environment', ''];
 
@@ -235,6 +239,24 @@ function executionEnvironmentNote(
     '- You have NO command execution: you cannot run builds, tests, linters or git.',
     '- The factory executes the test suite itself and supplies the real exit code and output.',
   );
+
+  // The prompts are written for both backends and name the factory's own tools. This list is the truth
+  // for this run: without it an agent looks for `run-test-suite` or `git-diff`, finds neither, and
+  // reports itself blocked or unable to verify.
+  lines.push(
+    '- This list is authoritative. Your instructions may name tools that do not exist in this run: ' +
+      '`read-file` is Read, `list-directory` and `repository-tree` are Glob, `search-repository` is Grep' +
+      (policy === 'read-write' ? ', `write-file` and `edit-file` are Write and Edit' : '') +
+      '. `git-diff`, `git-status`, `git-log`, `run-command`, `run-test-suite`, `http-probe`, ' +
+      '`pack-repository` and `detect-project-stack` are not available: what they would have told you is in ' +
+      'this request (the diff, the test and build results, the reports of the earlier steps).',
+  );
+  if (policy === 'read-only' && options.traceDir) {
+    lines.push(
+      `- The reports of every earlier step and attempt of this run are files you can read in \`${options.traceDir}\` ` +
+        '(for example `03-qa-tester.attempt-2.json`); that replaces `read-run-artifacts`.',
+    );
+  }
 
   if (role === 'developer') {
     lines.push(
@@ -278,8 +300,10 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
     ? ROLE_TOOL_POLICY[options.role]
     : 'none';
 
+  const traceDir = traceReadDirs(options.runId)[0];
   const basePrompt =
-    options.prompt + executionEnvironmentNote(toolPolicy, options.role, options.repoPath);
+    options.prompt +
+    executionEnvironmentNote(toolPolicy, options.role, options.repoPath, traceDir ? { traceDir } : {});
 
   /*
    * Escalation ladder for a cheap-tier role:

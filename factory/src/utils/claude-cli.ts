@@ -300,8 +300,8 @@ function classifyFailure(
   };
 }
 
-/** Builds the argv for a headless Claude Code invocation. */
-function buildArgs(request: ClaudeCliRequest): string[] {
+/** Builds the argv for a headless Claude Code invocation. Exported so the tool grants can be checked. */
+export function buildClaudeCliArgs(request: ClaudeCliRequest): string[] {
   const args = [
     '--print',
     '--verbose',
@@ -373,7 +373,7 @@ export async function runClaudeCli(request: ClaudeCliRequest): Promise<ClaudeCli
 
   let result: CommandResult;
   try {
-    result = await runProcess('claude', buildArgs(request), {
+    result = await runProcess('claude', buildClaudeCliArgs(request), {
       cwd: request.cwd,
       stdin: request.prompt,
       // `claude` is an internal factory backend, like `git`: invoked with shell:false and a
