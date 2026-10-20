@@ -209,6 +209,8 @@ const ROLE_TOOL_POLICY: Record<AgentRole, ClaudeCliToolPolicy> = {
   'pr-writer': 'none',
   // Names a task from the words of the request alone.
   'run-namer': 'none',
+  // Everything it needs (the roadmap, what each run delivered) is in its prompt.
+  'phase-reconciler': 'none',
 };
 
 /**

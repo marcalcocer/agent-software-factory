@@ -28,7 +28,8 @@ export type AgentRole =
   | 'feedback-triage'
   | 'merge-summary'
   | 'pr-writer'
-  | 'run-namer';
+  | 'run-namer'
+  | 'phase-reconciler';
 
 export const AGENT_ROLES: AgentRole[] = [
   'pm-architect',
@@ -42,6 +43,7 @@ export const AGENT_ROLES: AgentRole[] = [
   'merge-summary',
   'pr-writer',
   'run-namer',
+  'phase-reconciler',
 ];
 
 /** Capability tier requested by a role, independent of the concrete model id. */
@@ -63,6 +65,8 @@ const ROLE_TIERS: Record<AgentRole, ModelTier> = {
   'pr-writer': 'fast',
   // Names a task from its text: a title, a slug, a type. The cheapest call in the factory.
   'run-namer': 'fast',
+  // Compares a merged phase with the roadmap from a digest it is handed in full. Once per merge.
+  'phase-reconciler': 'fast',
 };
 
 interface GenerationModels {
@@ -122,6 +126,7 @@ const CLI_ROLE_ENV_KEYS: Record<AgentRole, string> = {
   'merge-summary': 'FACTORY_CLI_MODEL_MERGE_SUMMARY',
   'pr-writer': 'FACTORY_CLI_MODEL_PR_WRITER',
   'run-namer': 'FACTORY_CLI_MODEL_RUN_NAMER',
+  'phase-reconciler': 'FACTORY_CLI_MODEL_PHASE_RECONCILER',
 };
 
 /**
@@ -162,6 +167,7 @@ const ROLE_ENV_KEYS: Record<AgentRole, string> = {
   'merge-summary': 'FACTORY_MODEL_MERGE_SUMMARY',
   'pr-writer': 'FACTORY_MODEL_PR_WRITER',
   'run-namer': 'FACTORY_MODEL_RUN_NAMER',
+  'phase-reconciler': 'FACTORY_MODEL_PHASE_RECONCILER',
 };
 
 /** Retry budget per position in the chain: primary gets the most, last resort the least. */

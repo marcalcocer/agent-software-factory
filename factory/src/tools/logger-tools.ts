@@ -49,6 +49,8 @@ export const ARTIFACT_PREFIXES = {
   'feedback-delivery': '11-feedback-delivery',
   // The draft of a squash-merge commit message (written when the user is about to merge).
   'merge-summary': '12-merge-summary',
+  // What the roadmap looks like after a phase was merged.
+  'phase-reconcile': '13-phase-reconcile',
 } as const;
 
 export type ArtifactStep = keyof typeof ARTIFACT_PREFIXES;

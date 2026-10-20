@@ -331,6 +331,18 @@ async function phaseTwo({ label, traceDir }: { label: string; traceDir: string }
 
   // 2. Phase 1 merged (what `pr-merge` and `pr-check` do): now it starts.
   await withStore((store) => store.markMerged(`${initiativeId}-p1`, { sha: 'abc1234' }));
+
+  // 2a. The merged phase is compared with the roadmap. A rehearsal asks no model, so it only records
+  // what the developer said and leaves the phases to come as they were written.
+  const { reconcilePhase } = await import('../initiatives/reconcile.ts');
+  const report = await reconcilePhase({ phaseId: `${initiativeId}-p1` });
+  const afterMerge = (await withStore((store) => store.getInitiative(initiativeId)))!;
+  check(
+    `${label} a merged phase is reconciled with the roadmap (dry run: recorded, the phases to come untouched)`,
+    report?.source === 'none' && Boolean(afterMerge.phases[0]?.summary) && afterMerge.phases.slice(1).every((candidate) => candidate.status === 'PLANNED'),
+    `${report?.source} ${afterMerge.phases.map((candidate) => candidate.status).join(',')}`,
+  );
+  check(`${label} a phase is reconciled once, not on every look`, (await reconcilePhase({ phaseId: `${initiativeId}-p1` })) === null, '');
   const { runId, result } = await start();
   check(`${label} phase 2 runs once phase 1 is merged`, result.status === 'success', result.status);
   if (result.status !== 'success') return;

@@ -878,6 +878,42 @@ export type FeedbackTriageReport = z.infer<typeof feedbackTriageReportSchema>;
 export type FeedbackItem = z.infer<typeof feedbackItemSchema>;
 
 /* -------------------------------------------------------------------------- */
+/* Roadmap reconciliation                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What the phase-reconciler concludes once a phase is merged: what the phase really delivered, and how
+ * that changes the phases that are still to come.
+ */
+export const phaseReconcileSchema = z.object({
+  summary: z.string().describe('What the merged phase delivered, in two or three sentences, from what really changed - not from what was planned.'),
+  phases: z
+    .array(
+      z.object({
+        phaseId: z.string().describe('The id of a remaining phase, exactly as given.'),
+        status: z
+          .enum(['UNCHANGED', 'PARTIAL', 'DONE'])
+          .describe('DONE: everything in it was already delivered. PARTIAL: part of it was. UNCHANGED: untouched.'),
+        note: z.string().describe('What was already delivered, and where (which round), in one or two sentences. Empty when UNCHANGED.'),
+        remainingScope: z
+          .array(z.string())
+          .describe('When PARTIAL: what is still to do, as short bullets, replacing its scope. Otherwise empty.'),
+      }),
+    )
+    .describe('One entry per remaining phase that the delivery changes. Leave out the ones it does not touch.'),
+  backlog: z
+    .array(
+      z.object({
+        text: z.string(),
+        severity: z.enum(['INFO', 'MINOR', 'MAJOR']),
+        suggestedPhaseId: z.string().nullable().describe('The remaining phase it belongs to, or null.'),
+      }),
+    )
+    .describe('Loose ends worth keeping that the delivery left. Only real ones; not what the backlog already has.'),
+});
+export type PhaseReconcile = z.infer<typeof phaseReconcileSchema>;
+
+/* -------------------------------------------------------------------------- */
 /* Squash-merge message                                                        */
 /* -------------------------------------------------------------------------- */
 

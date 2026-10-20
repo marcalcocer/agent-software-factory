@@ -183,7 +183,7 @@ export function buildConventionsBlock(repoPath: string | null): string {
  * namer reads one request and answers with a few words; the Java rules and the repository's
  * `AGENTS.md` would be thousands of tokens on every call of the cheapest agent there is.
  */
-const ROLES_WITHOUT_CONVENTIONS: ReadonlySet<AgentRole> = new Set<AgentRole>(['run-namer']);
+const ROLES_WITHOUT_CONVENTIONS: ReadonlySet<AgentRole> = new Set<AgentRole>(['run-namer', 'phase-reconciler']);
 
 export function composeInstructions(role: AgentRole, repoPath: string | null): string {
   if (ROLES_WITHOUT_CONVENTIONS.has(role)) return loadPrompt(role);
