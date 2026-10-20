@@ -210,6 +210,11 @@ export interface ClassifyInput {
   busy: BusyRun | null;
   /** A round we started that has no record on disk yet (see `StartedRound`). */
   starting?: StartedRound | undefined;
+  /**
+   * A round being started whose process has not announced its run id yet: the factory takes a few
+   * seconds to boot. Until then the card must not keep offering to start it.
+   */
+  launching?: { round: number } | undefined;
   /** The comment set a round was last started for. */
   attemptedRevise: string | undefined;
   settings: PrWatchSettings;
@@ -291,6 +296,14 @@ export function classifyPullRequest(input: ClassifyInput): Classification {
       status: 'revising',
       message: `Round ${input.starting.round} is addressing the review comments.`,
       revisionRunId: input.starting.runId,
+      triage: covering,
+    };
+  }
+
+  if (input.launching) {
+    return {
+      status: 'revising',
+      message: `Starting round ${input.launching.round}...`,
       triage: covering,
     };
   }
@@ -454,6 +467,8 @@ export class PrWatcher {
   private triageQueue: Promise<void> = Promise.resolve();
   /** Pull requests a round is being started for right now (a double click must not start two). */
   private readonly starting = new Set<string>();
+  /** Rounds being launched whose run id is not known yet, by pull request (see `ClassifyInput.launching`). */
+  private readonly launching = new Map<string, { round: number }>();
   /** Pull requests a merge message is being written for, or that are being merged, right now. */
   private readonly mergeWork = new Set<string>();
   /** Rounds started here that have no record on disk yet, by pull request (see `StartedRound`). */
@@ -666,6 +681,7 @@ export class PrWatcher {
           triage: this.deps.latestTriage(pr.repoPath, pr.number),
           busy: this.deps.findBusyRun(pr.repoPath),
           starting: this.unrecordedRound(pr.key, rounds),
+          launching: this.launching.get(pr.key),
           attemptedRevise: this.memory.reviseAttempts[pr.key],
           settings: this.settingsFor(pr.repoPath),
         });
@@ -856,6 +872,10 @@ export class PrWatcher {
       this.memory.reviseAttempts[key] = signature; // recorded before starting: no automatic second attempt
       this.deps.saveMemory(this.memory);
 
+      // From here the card says the round is starting: the process needs a few seconds before it names its run.
+      this.launching.set(key, { round: view.round + 1 });
+      this.rebuild();
+
       try {
         const args = ['revise', '--repo', view.repoPath, '--pr', String(view.number), '--triage-run', triage.runId];
         if (options.action) args.push('--action', options.action);
@@ -874,6 +894,8 @@ export class PrWatcher {
         const message = `Could not start the round: ${(error as Error).message}`;
         this.jobErrors.set(key, { message, signature });
         throw new Error(message);
+      } finally {
+        this.launching.delete(key); // the round is known by its run id now, or it did not start
       }
     } finally {
       this.starting.delete(key);
