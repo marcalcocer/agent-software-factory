@@ -91,8 +91,8 @@ those failure modes:
                                         │                            │
                        ┌────────────────▼─────────┐     ┌────────────┴──────────┐
                        │ escalation-phase         │     │ delivery-phase        │
-                       │ suspend + 09-escalation  │     │ 07 docs, pr-writer    │
-                       │ (human in the loop)      │     │ 08 commit/push/PR     │
+                       │ suspend + 09-escalation  │     │ 06 polish, 07 docs    │
+                       │ (human in the loop)      │     │ 07 pr-writer, 08 PR   │
                        └────────────────┬─────────┘     └────────────┬──────────┘
                                         └───────────┬────────────────┘
                                                     ▼
@@ -435,6 +435,7 @@ logs/20251008-234512-invest-track-a1b2/
 ├── 03-qa-tester.attempt-2.json
 ├── 05-code-review.json
 ├── 06-security.json
+├── 06-polish.json                # the minor findings: asked, fixed, declined, undone (NONE | APPLIED | REVERTED | ...)
 ├── 07-documentation.json
 ├── 07-pr-writer.json         # commit message, PR title + description (always written; status COMPLETED | FALLBACK | SKIPPED)
 ├── 08-pull-request.json          # commit sha, push result, PR url, pending manual actions
@@ -573,10 +574,37 @@ npm run factory -- run --repo invest-track --task "Fix the typo in the README" \
 | `--no-review` | The code review agent |
 | `--no-security` | The security audit agent |
 | `--no-docs` | The documentation agent (README / CHANGELOG / docs updates). The commit message and pull-request text are **not** affected: the PR writer always runs |
+| `--no-polish` | The polish pass: the minor findings of the gates are listed in the pull request instead of fixed (see below). It needs QA, which checks its fixes, so `--no-qa` skips it too |
 
 A skipped stage still writes a `SKIPPED` artifact (and counts as satisfied, never as failed), and
 the stages a run used are recorded in its `run.json` under `pipeline`. `summary.json` reports a stage that
 did not run as `SKIPPED` under `gates` - never as the passing verdict its placeholder report carries.
+
+#### The polish pass: minor findings, fixed once
+
+QA, the reviewer and the security agent report things that do not block a merge. They used to be written
+down and dropped: in a real run QA and the reviewer both named the same one-line fix and it was merged
+unfixed. Findings now have three fates:
+
+| Finding | What happens |
+|---|---|
+| Blocking: BLOCKER / MAJOR review findings, CRITICAL / HIGH security findings, a failed QA | the retry loop (triage, developer, QA again), as always |
+| Minor, introduced by this change, with a concrete fix: review `MINOR`, QA `MINOR` bugs, security `LOW` / `MEDIUM` | **one polish pass** (up to eight findings, security first) |
+| NITs, `INFO`, anything that was already there, a remark with no fix, the rest beyond eight | reported in the pull request's Follow-ups, never acted on |
+
+The pass, after the gates and before the documentation: the factory records the working tree, asks the
+**developer** in patch mode (only the findings, each with an id; it answers `REV-1: what I changed` or
+`REV-2: Not applied - why`), runs the repository's tests and build again, and **keeps the result or puts
+the recorded tree back**. It is undone when the tests or the build fail, when fewer tests pass than
+before, when it removes assertions from a test file, or when it grows past 10 files / 250 lines. QA is not
+called again - that would cost a second full iteration; the deterministic checks and those guards are what
+protect the change.
+
+`06-polish.json` records `NONE | SKIPPED | APPLIED | DECLINED | REVERTED | FAILED`, what was asked, fixed,
+declined (with the developer's reason) and only reported. The pull request says it too: a **Polish** line
+in the quality gates ("fixed 2 of 4 minor findings - 3 files changed after the review, tests and build
+passed again") and every unfixed finding under Follow-ups - written by the factory, not left to the model.
+A failing pass cannot fail the run; the one thing that does is not being able to undo it.
 
 #### How a task is named
 
@@ -812,14 +840,15 @@ Escalations are then recorded and the run ends (exit code `1`) instead of waitin
 
 ## Verifying without spending tokens
 
-`npm run smoke` executes the **entire workflow** eight times with stubbed LLM responses
+`npm run smoke` executes the **entire workflow** once per scenario (twelve runs) with stubbed LLM responses
 (`FACTORY_DRY_RUN=true`), asserting routing, loops, suspension, artifacts and metrics.
 No API key, no network, no repository mutation:
 
 ```bash
 npm run smoke          # all scenarios
 npm run smoke -- --scenario retry
-npm run check          # tsc --noEmit + smoke
+npm test               # the unit tests (Vitest)
+npm run check          # typecheck + unit tests + smoke
 ```
 
 | Scenario | What it proves |
@@ -834,6 +863,8 @@ npm run check          # tsc --noEmit + smoke
 | `escalate` | identical failure twice → loop detected → `suspend()` → resume → `ESCALATED_TO_HUMAN` |
 | `escalate` (CI) | same failure with `--non-interactive` → escalation recorded, no suspension |
 | `clarify` | blocking ambiguity → `suspend()` → resume with answers → delivery |
+| `polish` | the review approves with a minor remark and a nit → the polish pass fixes the first, only reports the second; with polish off, the remark is listed in Follow-ups instead |
+| `happy` (round) | a further round on a pull request → not named again, titled by its triage, the PR writer writes the commit message |
 
 You can also point the real factory at a scratch repository with `--dry-run` to validate the
 repository resolution, stack detection and branch strategy before spending a token.
@@ -895,7 +926,8 @@ requested modules focused and to make the system testable and safe.
 | `npm run factory -- <cmd>` | CLI: `run`, `resume`, `list`, `show`, `doctor` |
 | `npm run smoke` | Full-graph dry run with assertions (no LLM) |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm run check` | typecheck + smoke |
+| `npm test` | Unit tests (Vitest): the pure logic, a real git repository and a real tiny npm project, and the real runs under `../fixtures` replayed |
+| `npm run check` | typecheck + tests + smoke |
 | `npm run dev` | Mastra Studio (`mastra dev`) |
 | `npm run build` | `mastra build` → deployable `.mastra/output` |
 

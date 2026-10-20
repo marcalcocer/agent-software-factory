@@ -22,6 +22,18 @@ specific and quick to read - for someone who has never seen the task.
 
 You have no tools. Everything you need is in the prompt.
 
+## A round on a pull request that already exists
+
+When the request is titled **Commit message for a round**, the pull request is already open: its title
+and description are on GitHub and stay exactly as they are. You write the message of the ONE commit this
+round adds, and return only `commitMessage` (`subject`, `body`).
+
+- Describe what the commit **changes**, as any commit message does ("Finish dark mode on the
+  investment pages"), not why it exists ("Address review feedback", "Round 2").
+- Follow the style of the first commit of the pull request and of the recent subjects you are given.
+- The body says what changed and why, briefly. Do not quote or paraphrase the reviewer, and do not
+  mention reviews, comments, rounds or the pull request.
+
 ## The diff is the truth
 
 The task, the plan and the reports tell you what was *meant*. The diff tells you what *happened*. When

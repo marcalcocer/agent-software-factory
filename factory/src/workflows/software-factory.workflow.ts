@@ -66,8 +66,8 @@ import {
 } from '../tools/git-tools.ts';
 import { describeCoverage, isTestFile, viewDiff, type DiffCoverage, type DiffView } from '../tools/diff-view.ts';
 import { runPolishPass } from './polish-pass.ts';
-import { condenseDiff, explainAgentFailure } from '../tools/pr-merge-rules.ts';
-import { fallbackPrText, normalizePrWriterOutput, polishNote, type PrTextContext } from '../tools/pr-text.ts';
+import { cleanSubject, condenseDiff, explainAgentFailure } from '../tools/pr-merge-rules.ts';
+import { composeCommitMessage, fallbackPrText, normalizePrWriterOutput, polishNote, type PrTextContext } from '../tools/pr-text.ts';
 import { branchNameFor, fallbackRunName, normalizeRunName, roundTitle, withTaskTrailer, type RunName } from '../tools/run-naming.ts';
 import {
   appendEvent,
@@ -120,6 +120,7 @@ import {
   stubPrWriterOutput,
   stubQaReport,
   stubReviewReport,
+  stubRoundCommit,
   stubRunName,
   stubSecurityReport,
   stubTriageReport,
@@ -139,6 +140,7 @@ import {
   prTextSchema,
   prWriterAgentSchema,
   qaReportSchema,
+  roundCommitSchema,
   reviewReportSchema,
   runContextSchema,
   runNameSchema,
@@ -270,7 +272,12 @@ export function reviewFeedback(revision: Revision): Feedback {
  * reverted a keyword the reviewer asked about. This names the round and lists what was asked.
  */
 export function revisionCommitMessage(revision: Revision): string {
-  const subject = `chore: address review feedback on PR #${revision.pullRequest.number} (round ${revision.round})`;
+  // The plain stand-in, used when the PR writer cannot answer. A round the triage named says what it is
+  // about; one it did not is "address review feedback on PR #N".
+  const named = revision.title ? cleanSubject(revision.title) : '';
+  const subject = named
+    ? `chore: ${named.charAt(0).toLowerCase()}${named.slice(1)}`
+    : `chore: address review feedback on PR #${revision.pullRequest.number} (round ${revision.round})`;
   const asked = revision.comments.filter(asksForChange).slice(0, 5);
   const lines = asked.map((comment) => {
     const where = comment.path ? ` (${comment.path}${comment.line ? `:${comment.line}` : ''})` : '';
@@ -1985,6 +1992,115 @@ function buildPrWriterPrompt(input: {
   );
 }
 
+/** The briefing for the commit message of a round: what it was asked, what changed, and the style around it. */
+function buildRoundCommitPrompt(input: {
+  state: CycleState;
+  revision: Revision;
+  files: string[];
+  diff: DiffView | null;
+  recentSubjects: string[];
+}): string {
+  const { state, revision, diff } = input;
+  const asked = revision.comments.some(asksForChange) ? revision.comments.filter(asksForChange) : revision.comments;
+
+  return composePrompt(
+    '# Commit message for a round',
+    '',
+    `Pull request #${revision.pullRequest.number} is already open. This is round ${revision.round}: it adds one commit to the branch. ` +
+      'Write that commit\'s message from the change below.',
+    promptSection('What this round was asked to do', state.run.task),
+    promptSection('Review comments it answers (context - do not quote them)', asked.map(describeReviewComment)),
+    promptSection('The developer report', {
+      summary: state.developerReport?.summary,
+      changedFiles: state.developerReport?.changedFiles,
+      appliedFeedback: state.developerReport?.appliedFeedback,
+    }),
+    promptSection('Changes of this round (the commits of the earlier rounds are not part of it)', diff?.text),
+    promptSection(
+      `Recent commit subjects on ${state.run.baseBranch} (match this style)`,
+      input.recentSubjects.map((line) => `- ${line}`).join('\n'),
+    ),
+    ['', '## Instructions', '', '1. The diff is the source of truth: describe what it shows.', '2. Return only `commitMessage`.', ''].join('\n'),
+  );
+}
+
+/**
+ * The message of the commit a round adds, written by the PR writer from this round's diff. The pull
+ * request's title and description are not touched (they are empty here and delivery does not send them).
+ *
+ * If the writer cannot answer, the message is built from the round itself (`revisionCommitMessage`) -
+ * what the commit said before this step existed - and the artifact says so. It never blocks a round.
+ */
+async function writeRoundCommit(
+  state: CycleState,
+  logger: { info?: (...args: any[]) => void; warn?: (...args: any[]) => void } | undefined,
+): Promise<PrText> {
+  const { run, attempt } = state;
+  const revision = run.revision!;
+  const noPullRequestText = { title: '', body: '', labels: [] as string[], breakingChanges: false };
+  const standIn = (note: string): PrText => ({
+    commitMessage: revisionCommitMessage(revision),
+    pullRequest: noPullRequestText,
+    source: 'fallback',
+    note,
+  });
+
+  const diff = run.dryRun ? { diff: '', files: [] as string[] } : await getFullDiff(run.repoPath);
+  if (!run.dryRun && diff.files.length === 0) {
+    const prText = standIn('The round changed no files, so there was nothing to describe.');
+    writeArtifact({ runId: run.runId, step: 'pr-writer', attempt, status: 'SKIPPED', data: { reason: 'NO_CHANGES', ...prText } });
+    logger?.info?.('[factory] pr-writer skipped: the round changed nothing', { runId: run.runId });
+    return prText;
+  }
+
+  const started = Date.now();
+  try {
+    const view = run.dryRun ? null : viewDiff(diff.diff, { budgetChars: 60_000 });
+    const recentSubjects = run.dryRun ? [] : await recentCommitSubjects(run.repoPath, run.baseBranch);
+    const result = await invokeAgent({
+      agent: prWriterAgent,
+      role: 'pr-writer',
+      step: 'pr-writer',
+      runId: run.runId,
+      attempt,
+      repoPath: run.repoPath,
+      repoName: run.repoName,
+      prompt: buildRoundCommitPrompt({ state, revision, files: diff.files, diff: view, recentSubjects }),
+      schema: roundCommitSchema,
+      dryRunResult: stubRoundCommit(),
+    });
+
+    const { subject, body } = result.object.commitMessage;
+    const message = composeCommitMessage(subject, body);
+    const prText: PrText = message.trim() === '' ? standIn('The writer gave an empty message.') : { commitMessage: message, pullRequest: noPullRequestText, source: 'agent' };
+    writeArtifact({
+      runId: run.runId,
+      step: 'pr-writer',
+      attempt,
+      status: prText.source === 'agent' ? 'COMPLETED' : 'FALLBACK',
+      durationMs: Date.now() - started,
+      model: result.servedByModel,
+      data: { reason: 'ROUND', round: revision.round, ...prText },
+    });
+    logger?.info?.('[factory] pr-writer wrote the commit message of the round', { runId: run.runId, round: revision.round });
+    return prText;
+  } catch (error) {
+    const message = (error as Error).message ?? String(error);
+    const prText = standIn(`The AI could not write this message (${explainAgentFailure(message)}). It was built from the round instead - read it, and edit it if you like.`);
+    appendEvent(run.runId, { type: 'pr_writer_fallback', error: message });
+    writeArtifact({
+      runId: run.runId,
+      step: 'pr-writer',
+      attempt,
+      status: 'FALLBACK',
+      durationMs: Date.now() - started,
+      data: { reason: 'ROUND', round: revision.round, ...prText, error: message },
+    });
+    logger?.warn?.(`[factory] pr-writer fell back to the plain message for the round: ${message}`, { runId: run.runId });
+    return prText;
+  }
+}
+
 /**
  * Step 07b - the commit message, the pull-request title and the pull-request description.
  *
@@ -2019,18 +2135,9 @@ export const prWriterStep = createStep({
     const logger = mastra?.getLogger?.();
     const done = (prText: PrText) => ({ cycle: state, documentation, prText });
 
-    // A further round on an open pull request: its title and description already exist.
-    if (run.revision) {
-      const prText: PrText = {
-        commitMessage: revisionCommitMessage(run.revision),
-        pullRequest: { title: '', body: '', labels: [], breakingChanges: false },
-        source: 'fallback',
-        note: `Round ${run.revision.round} on pull request #${run.revision.pullRequest.number}: its title and description stay as they are.`,
-      };
-      writeArtifact({ runId: run.runId, step: 'pr-writer', attempt, status: 'SKIPPED', data: { reason: 'ROUND', ...prText } });
-      logger?.info?.('[factory] pr-writer skipped: a round on an existing pull request', { runId: run.runId });
-      return done(prText);
-    }
+    // A further round on an open pull request: its title and description already exist, so the writer
+    // is asked for the message of the one commit the round adds - and for nothing else.
+    if (run.revision) return done(await writeRoundCommit(state, mastra?.getLogger?.()));
 
     const diff = run.dryRun ? { diff: '', files: [] } : await getFullDiff(run.repoPath);
     const context = prTextContext(state, documentation, diff.files);
@@ -2264,7 +2371,9 @@ export const pullRequestStep = createStep({
     let publicationState: Awaited<ReturnType<typeof inspectBranchPublication>> | null = null;
     // The commit leads back to its task: `Factory-Task: f0042` (a round carries its task's id).
     const plannedCommitMessage = withTaskTrailer(
-      run.revision ? revisionCommitMessage(run.revision) : text.commitMessage,
+      // A round: the message the PR writer wrote for it (or the stand-in built from the round). A run
+      // suspended before that existed has none, and gets the stand-in.
+      run.revision ? (inputData.prText?.commitMessage || revisionCommitMessage(run.revision)) : text.commitMessage,
       run.taskId,
     );
 

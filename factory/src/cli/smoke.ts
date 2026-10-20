@@ -51,6 +51,8 @@ interface ScenarioExpectation {
   requiredArtifacts: string[];
   /** Optional stages to switch off for this scenario (what `--no-qa` / `--no-docs` ... do). */
   pipeline?: { qa?: boolean; review?: boolean; security?: boolean; documentation?: boolean; polish?: boolean };
+  /** Run as a further round on a pull request, the way `revise` starts one. */
+  round?: boolean;
   /** Further assertions on what the run wrote. Each entry is `[name, ok, detail]`. */
   extraChecks?: (traceDir: string) => Array<[string, boolean, string?]>;
 }
@@ -201,6 +203,58 @@ function polishChecks(
   ];
 }
 
+/** What `revise` hands the workflow, in miniature: round 2 of a pull request, with one review comment. */
+const SMOKE_REVISION = {
+  parentRunId: 'smoke-root',
+  rootRunId: 'smoke-root',
+  round: 2,
+  action: 'RERUN_IMPLEMENTATION' as const,
+  originalTask: 'Original task of the smoke pull request.',
+  pullRequest: { number: 8, url: 'https://github.com/o/r/pull/8', headBranch: 'factory/f0001/feat-smoke', baseBranch: 'master' },
+  comments: [
+    {
+      id: 'c1',
+      source: 'REVIEW_THREAD' as const,
+      author: 'marc',
+      body: 'Some findings I see testing the UI:\n- the dark mode is incomplete',
+      path: 'src/main/example.ts',
+      line: 3,
+      category: 'CODE_CHANGE_REQUEST',
+    },
+  ],
+  title: 'Finish dark mode on the investment pages',
+};
+
+/**
+ * What must hold for a round: it is not named again (it belongs to its task), it keeps the pull
+ * request's branch, it is titled by what the triage said it is about, and the PR writer wrote the message
+ * of its commit - and only that.
+ */
+function roundChecks(traceDir: string): Array<[string, boolean, string?]> {
+  const read = (file: string): Record<string, any> | null => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(traceDir, file), 'utf8')) as Record<string, any>;
+    } catch {
+      return null;
+    }
+  };
+  const meta = read('run.json');
+  const writer = read('07-pr-writer.json');
+  return [
+    ['a round is not named again', !fs.existsSync(path.join(traceDir, '00-run-namer.json')), ''],
+    ['the round keeps the pull request branch', meta?.branch === 'factory/f0001/feat-smoke', String(meta?.branch)],
+    ['the round is recorded as round 2 of its task', meta?.kind === 'revision' && meta?.round === 2 && meta?.rootRunId === 'smoke-root', `${meta?.kind} ${meta?.round}`],
+    ['the round is titled by its triage', meta?.title === 'Finish dark mode on the investment pages' && meta?.titleSource === 'round', `${meta?.title} (${meta?.titleSource})`],
+    ['the round takes no new task id', meta?.taskId === undefined, String(meta?.taskId)],
+    [
+      'the PR writer wrote the message of the round\'s commit',
+      writer?.status === 'COMPLETED' && writer?.data?.reason === 'ROUND' && String(writer?.data?.commitMessage).startsWith('fix(example): dry-run follow-up'),
+      `${writer?.status} ${String(writer?.data?.commitMessage).split('\n')[0]}`,
+    ],
+    ['the round leaves the pull request title and description alone', writer?.data?.pullRequest?.title === '' && writer?.data?.pullRequest?.body === '', ''],
+  ];
+}
+
 const SCENARIOS: ScenarioExpectation[] = [
   {
     scenario: 'happy',
@@ -225,6 +279,16 @@ const SCENARIOS: ScenarioExpectation[] = [
       ...polishChecks(dir, { status: 'NONE', gateLine: /- Polish: no minor findings to fix/ }),
       ...gateChecks(dir, { qa: 'PASS', codeReview: 'APPROVED', security: 'PASS', documentation: 'COMPLETED' }),
     ],
+  },
+  {
+    scenario: 'happy',
+    description: 'a further round on a pull request: titled by its triage, no new name, the PR writer writes the commit message',
+    interactive: false,
+    round: true,
+    expect: 'DELIVERED_WITHOUT_PR',
+    expectedAttempts: 1,
+    requiredArtifacts: ['01-pm-architect.json', '02-developer.json', '07-pr-writer.json', '08-pull-request.json', 'summary.json'],
+    extraChecks: (dir) => roundChecks(dir),
   },
   {
     scenario: 'polish',
@@ -399,6 +463,9 @@ async function runScenario(expectation: ScenarioExpectation, index: number): Pro
       createPullRequest: false,
       interactive: expectation.interactive,
       ...(expectation.pipeline ? { pipeline: expectation.pipeline } : {}),
+      ...(expectation.round
+        ? { revision: SMOKE_REVISION, baseBranch: 'master', branchName: SMOKE_REVISION.pullRequest.headBranch }
+        : {}),
     },
   });
 

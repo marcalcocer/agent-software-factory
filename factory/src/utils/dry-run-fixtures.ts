@@ -16,6 +16,7 @@ import type {
   ProjectStack,
   QaReport,
   ReviewReport,
+  RoundCommitOutput,
   RunNameOutput,
   SecurityReport,
   TriageReport,
@@ -465,4 +466,9 @@ export function stubPrWriterOutput(task: string, branch: string): PrWriterAgentO
 /** What the run namer answers in a dry run: fixed, so the branch of a smoke run is predictable. */
 export function stubRunName(): RunNameOutput {
   return { title: '[dry-run] Exercise the factory graph', slug: 'dry-run-exercise-graph', type: 'chore' };
+}
+
+/** What the PR writer answers for a round in a dry run. */
+export function stubRoundCommit(): RoundCommitOutput {
+  return { commitMessage: { subject: 'fix(example): dry-run follow-up', body: '[dry-run] Canned message for the commit of a round.' } };
 }

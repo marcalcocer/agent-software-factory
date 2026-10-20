@@ -553,6 +553,15 @@ export const prWriterAgentSchema = z.object({
 export type PrWriterAgentOutput = z.infer<typeof prWriterAgentSchema>;
 
 /**
+ * What the PR writer returns for a further round on a pull request: the commit message only. The title
+ * and the description of the pull request are already on GitHub, and may have been edited by a person.
+ */
+export const roundCommitSchema = z.object({
+  commitMessage: prWriterAgentSchema.shape.commitMessage,
+});
+export type RoundCommitOutput = z.infer<typeof roundCommitSchema>;
+
+/**
  * The text that is published with a change, as the delivery step uses it. `source` says where it came
  * from, so the human who reads it at the delivery gate knows how much to trust it.
  */
