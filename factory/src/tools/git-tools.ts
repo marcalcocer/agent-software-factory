@@ -96,7 +96,7 @@ export async function createBranch(
 }
 
 /** Best-effort `git fetch origin <branch>`; never prompts for credentials, never throws. */
-async function fetchRemoteBranch(repoPath: string, branch: string, timeoutMs?: number): Promise<boolean> {
+export async function fetchRemoteBranch(repoPath: string, branch: string, timeoutMs?: number): Promise<boolean> {
   try {
     const remotes = await runGit(['remote'], { cwd: repoPath });
     if (!remotes.ok || remotes.stdout.trim() === '') return false;
@@ -249,7 +249,7 @@ async function adoptRemoteBranch(repoPath: string, branch: string): Promise<bool
  * (a reviewer committed suggestions on top). A diverged branch is left exactly as it is: merging
  * or rebasing someone's work is not a decision to take silently.
  */
-async function fastForwardFromRemote(repoPath: string, branch: string): Promise<string | undefined> {
+export async function fastForwardFromRemote(repoPath: string, branch: string): Promise<string | undefined> {
   if (!(await fetchRemoteBranch(repoPath, branch))) return undefined;
   const remoteRef = `origin/${branch}`;
   const behind = await runGit(['rev-list', '--count', `${branch}..${remoteRef}`], { cwd: repoPath });

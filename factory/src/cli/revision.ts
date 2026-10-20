@@ -82,6 +82,13 @@ export interface RunMeta {
   task?: string;
   taskId?: string;
   title?: string;
+  /** The user's repository (the key a run is filed under), whatever folder the work happens in. */
+  repoPath?: string;
+  branch?: string;
+  baseBranch?: string;
+  /** Where the work happens: a checkout of its own, or the user's repository. Absent on runs from before checkouts existed (they ran in place). */
+  isolation?: 'worktree' | 'in-place';
+  workPath?: string;
   pipeline?: Partial<PipelineConfig>;
   kind?: string;
   rootRunId?: string;

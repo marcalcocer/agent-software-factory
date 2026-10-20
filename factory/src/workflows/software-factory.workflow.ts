@@ -65,6 +65,7 @@ import {
   snapshotWorkingTree,
 } from '../tools/git-tools.ts';
 import { describeCoverage, isTestFile, viewDiff, type DiffCoverage, type DiffView } from '../tools/diff-view.ts';
+import { assertCleanWorktree, chooseIsolation, ensureWorktree } from '../tools/worktree.ts';
 import { runPolishPass } from './polish-pass.ts';
 import { cleanSubject, condenseDiff, explainAgentFailure } from '../tools/pr-merge-rules.ts';
 import { composeCommitMessage, fallbackPrText, normalizePrWriterOutput, polishNote, type PrTextContext } from '../tools/pr-text.ts';
@@ -114,7 +115,7 @@ import { allocateTaskId } from '../utils/task-ids.ts';
 import { backlogFromRun } from '../initiatives/harvest.ts';
 import { linkToInitiative, loadRoadmapView, renameInitiative, startPhase, type InitiativeLink } from '../initiatives/link.ts';
 import { renderInitiativeContext, roadmapFromPlan, type RoadmapView } from '../initiatives/phasing.ts';
-import { withStore } from '../initiatives/store.ts'; 
+import { withStore } from '../initiatives/store.ts';
 import { AGENT_ROLES, describeModelChain } from '../utils/model-router.ts';
 import {
   blockedQaReport,
@@ -194,6 +195,12 @@ function qaFailureSignature(report: QaReport): string | null {
 function reportedGate(enabled: boolean, status: string | null | undefined): string | null {
   return enabled ? (status ?? null) : 'SKIPPED';
 }
+
+/**
+ * The user's repository: what a run is filed under (the pull-request registry, the project, the summary).
+ * `run.repoPath` is where the work happens, which is a checkout of its own unless the task runs in place.
+ */
+const mainRepoOf = (run: Pick<RunContext, 'repoPath' | 'mainRepoPath'>): string => run.mainRepoPath ?? run.repoPath;
 
 function runBrief(run: RunContext, attempt: number): string {
   return promptSection('Run context', {
@@ -527,7 +534,7 @@ const prepareRunStep = createStep({
   id: 'prepare-run',
   description:
     'Resolves and validates the target repository, detects the stack, creates the work branch ' +
-    'and opens the run trace directory.',
+    '(in a checkout of its own, unless the task runs in place) and opens the run trace directory.',
   inputSchema: factoryTaskSchema,
   outputSchema: z.object({ run: runContextSchema }),
   execute: async ({ inputData, runId, mastra }) => {
@@ -546,7 +553,22 @@ const prepareRunStep = createStep({
       inputData.baseBranch !== undefined ? { base: inputData.baseBranch } : await chooseBaseBranch(repoPath);
     const baseBranch = baseChoice.base;
 
-    if (!config.dryRun && !(await isWorkingTreeClean(repoPath))) {
+    // Where this task works. A round keeps the place its task started in; runs from before checkouts
+    // existed have no record of it and ran in place.
+    const revision = inputData.revision;
+    const rootRecord = revision
+      ? (readArtifact(revision.rootRunId, 'run.json') as { taskId?: string; title?: string; initiativeId?: string; phaseId?: string; isolation?: 'worktree' | 'in-place' } | null)
+      : null;
+    const isolation = chooseIsolation({
+      requested: inputData.isolation,
+      inherited: revision ? (rootRecord?.isolation ?? 'in-place') : undefined,
+      fallback: config.isolation,
+      dryRun: config.dryRun,
+    });
+
+    // Working in the user's own repository needs it clean: the diff must be the task's alone. A checkout of
+    // its own is made clean, so what the user has open in theirs does not matter.
+    if (!config.dryRun && isolation === 'in-place' && !(await isWorkingTreeClean(repoPath))) {
       throw new Error(
         `Target repository "${repoPath}" has uncommitted changes. Commit or stash them before ` +
           'starting a factory run: the factory needs a clean baseline to produce a reviewable diff.',
@@ -558,10 +580,6 @@ const prepareRunStep = createStep({
 
     // Who this task is. A new task gets the next id; a round keeps the id and the name of its task.
     // The CLI may have recorded the run already (it does, the moment it starts one).
-    const revision = inputData.revision;
-    const rootRecord = revision
-      ? (readArtifact(revision.rootRunId, 'run.json') as { taskId?: string; title?: string; initiativeId?: string; phaseId?: string } | null)
-      : null;
     // A retry of a prepare that failed halfway keeps the id it had: ids are not spent twice.
     const earlier = readArtifact(effectiveRunId, 'run.json') as { taskId?: string; phaseId?: string } | null;
     const taskId = revision ? rootRecord?.taskId : (earlier?.taskId ?? (await allocateTaskId()));
@@ -599,6 +617,7 @@ const prepareRunStep = createStep({
       ...(taskId ? { taskId } : {}),
       title: provisionalTitle,
       ...(inputData.phasing ? { phasingMode: inputData.phasing } : {}),
+      isolation,
     };
 
     const { traceDir, startedAt } = openRunTrace({
@@ -687,7 +706,34 @@ const prepareRunStep = createStep({
       appendEvent(run.runId, { type: 'base_branch_chosen', base: baseBranch, note: baseChoice.note });
     }
 
-    if (!config.dryRun) {
+    if (!config.dryRun && isolation === 'worktree') {
+      // The task's own checkout: from here on `run.repoPath` is where the work happens, and the user's
+      // repository (`run.mainRepoPath`) is only what the run is filed under.
+      const tree = await ensureWorktree({
+        mainRepoPath: repoPath,
+        taskId: taskId ?? revision?.rootRunId ?? effectiveRunId,
+        branch: run.workBranch,
+        baseBranch,
+        freshStart: true,
+        adoptRemote: inputData.branchName !== undefined,
+        ...(stack.cwd && stack.cwd !== '.' ? { dependencyDirs: [stack.cwd] } : {}),
+        copyFiles: config.worktreeCopy,
+        onProgress: (message) => {
+          logger?.info?.(`[factory] ${message}`, { runId: run.runId });
+          appendEvent(run.runId, { type: 'worktree_progress', message });
+        },
+      });
+      // A checkout that is reused is the baseline of this diff: what an earlier run left in it would be mixed in.
+      if (tree.reused) await assertCleanWorktree(tree.path);
+
+      run.mainRepoPath = repoPath;
+      run.repoPath = tree.path;
+      run.branchCreated = tree.branchCreated;
+      run.workBranch = tree.branch;
+      run.conventions = getConventionSources(tree.path);
+      appendEvent(run.runId, { type: 'worktree_ready', path: tree.path, branch: tree.branch, reused: tree.reused, notes: tree.notes });
+      for (const note of tree.notes) logger?.info?.(`[factory] ${note}`, { runId: run.runId, branch: tree.branch });
+    } else if (!config.dryRun) {
       const branch = await createBranch(repoPath, run.workBranch, baseBranch, {
         adoptRemote: inputData.branchName !== undefined,
         freshStart: true,
@@ -699,6 +745,8 @@ const prepareRunStep = createStep({
         appendEvent(run.runId, { type: 'branch_synced', branch: branch.branch, note: branch.note });
       }
     }
+    // Where the work happens, for the screens: the checkout, or the user's own folder.
+    updateRunMeta(run.runId, { isolation, workPath: run.repoPath });
 
     // The run has its name and its branch: file it under an initiative, and start its phase.
     if (mode === 'new') link = await tryLink(run.title ?? provisionalTitle);
@@ -714,6 +762,8 @@ const prepareRunStep = createStep({
     logger?.info?.('[factory] run prepared', {
       runId: run.runId,
       repository: repoPath,
+      workPath: run.repoPath,
+      isolation,
       branch: run.workBranch,
       stack: stack.type,
       dryRun: config.dryRun,
@@ -722,6 +772,8 @@ const prepareRunStep = createStep({
       type: 'step_completed',
       step: 'prepare-run',
       branch: run.workBranch,
+      isolation,
+      workPath: run.repoPath,
       stack: stack.type,
       ...(run.taskId ? { taskId: run.taskId } : {}),
       ...(run.title ? { title: run.title } : {}),
@@ -2367,7 +2419,7 @@ async function announcePullRequest(input: {
     if (!number) return;
 
     const entry = await registerPullRequest({
-      repoPath: run.repoPath,
+      repoPath: mainRepoOf(run),
       number,
       url: input.url,
       title: input.title,
@@ -2389,7 +2441,7 @@ async function announcePullRequest(input: {
     const revision = run.revision;
     if (!revision) return;
 
-    await markCommentsHandled(pullRequestKey(run.repoPath, number), revision.comments.map((comment) => comment.id));
+    await markCommentsHandled(pullRequestKey(mainRepoOf(run), number), revision.comments.map((comment) => comment.id));
     appendEvent(run.runId, { type: 'comments_handled', count: revision.comments.length, ids: revision.comments.map((c) => c.id) });
 
     if (!revision.replyOnGitHub) return;
@@ -3116,7 +3168,7 @@ const finalizeStep = createStep({
       ...(run.taskId ? { taskId: run.taskId } : {}),
       ...(run.title ? { title: run.title } : {}),
       ...(run.initiative ? { initiativeId: run.initiative.id, phaseId: run.initiative.phaseId } : {}),
-      repository: run.repoPath,
+      repository: mainRepoOf(run),
       branch: run.workBranch,
       startedAt: run.startedAt,
       finishedAt: finishedAt.toISOString(),
@@ -3162,7 +3214,7 @@ const finalizeStep = createStep({
     return {
       runId: run.runId,
       status: outcome.status,
-      repository: run.repoPath,
+      repository: mainRepoOf(run),
       branch: run.workBranch,
       attempts: outcome.attempts,
       pullRequestUrl,

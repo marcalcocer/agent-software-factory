@@ -88,6 +88,13 @@ export interface FactoryConfig {
    * change is condensed, never cut silently: see `tools/diff-view.ts`. About four characters a token.
    */
   diffBudgetChars: number;
+  /**
+   * Where a task works unless it says otherwise (`FACTORY_ISOLATION`): `worktree`, a checkout of its own
+   * under `<workspace>/.factory/worktrees`, or `in-place`, the user's repository.
+   */
+  isolation: 'worktree' | 'in-place';
+  /** Files (relative to the repository) copied into each checkout - only ones git ignores (`FACTORY_WORKTREE_COPY`). */
+  worktreeCopy: string[];
   /** `true` => stub every LLM call and skip all mutating operations. */
   dryRun: boolean;
   /** `true` => never suspend the workflow waiting for a human (CI mode). */
@@ -166,6 +173,11 @@ export function getFactoryConfig(): FactoryConfig {
     commandTimeoutMs: envInteger('FACTORY_COMMAND_TIMEOUT_MS', 15 * 60 * 1000),
     maxOutputChars: envInteger('FACTORY_MAX_OUTPUT_CHARS', 24_000),
     diffBudgetChars: envInteger('FACTORY_DIFF_BUDGET_CHARS', 120_000),
+    isolation: envString('FACTORY_ISOLATION', 'worktree').toLowerCase() === 'in-place' ? 'in-place' : 'worktree',
+    worktreeCopy: envString('FACTORY_WORKTREE_COPY', '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean),
     dryRun: envBoolean('FACTORY_DRY_RUN', false),
     nonInteractive: envBoolean('FACTORY_NON_INTERACTIVE', false),
     allowPush: envBoolean('FACTORY_ALLOW_PUSH', true),

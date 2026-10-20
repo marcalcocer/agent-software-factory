@@ -110,6 +110,11 @@ run flags:
                             builds on is not merged.
   --phasing <auto|on|off>   Whether the architect may split a big request into phases (default: auto -
                             only when it is too big for one reviewable pull request)
+  --isolation <worktree|in-place>
+                            Where the task works: a checkout of its own under
+                            <workspace>/.factory/worktrees (default; your repository is not touched and
+                            may have uncommitted changes), or your repository itself. A further round
+                            keeps the place its task started in. FACTORY_ISOLATION sets the default.
   --base-branch <branch>    Branch to start from (default: the checked-out branch - or the
                             repository's default branch when that one is a branch the factory
                             made for an earlier task, so tasks never stack on each other)
@@ -231,6 +236,11 @@ async function commandRun(flags: Record<string, FlagValue>): Promise<number> {
     process.stderr.write('--phasing must be auto, on or off.\n');
     return 2;
   }
+  const isolation = asString(flags.isolation);
+  if (isolation !== undefined && !['worktree', 'in-place'].includes(isolation)) {
+    process.stderr.write('--isolation must be worktree or in-place.\n');
+    return 2;
+  }
 
   // A run of one phase of a roadmap: the phase is the request, and the roadmap's repository the repo.
   let phase: { initiativeId: string; phaseId: string } | undefined;
@@ -327,6 +337,7 @@ async function commandRun(flags: Record<string, FlagValue>): Promise<number> {
     ...(criteria ? { acceptanceCriteria: criteria.split(';').map((entry) => entry.trim()).filter(Boolean) } : {}),
     ...(asString(flags.clarifications) ? { clarifications: asString(flags.clarifications)! } : {}),
     ...(phasing ? { phasing: phasing as 'auto' | 'on' | 'off' } : {}),
+    ...(isolation ? { isolation: isolation as 'worktree' | 'in-place' } : {}),
     ...(phase ? { phase } : {}),
     ...(asBoolean(flags.commit) === false ? { autoCommit: false } : {}),
     ...(asBoolean(flags.pr) === false ? { createPullRequest: false } : {}),
@@ -629,6 +640,20 @@ async function commandResume(flags: Record<string, FlagValue>): Promise<number> 
       `Run "${runId}" was not found in storage. Use \`npm run factory -- list\` to see known runs.\n`,
     );
     return 2;
+  }
+
+  // A run that works in a checkout of its own needs it to be there. One that was removed comes back
+  // from the task's branch, which holds everything that was committed.
+  try {
+    const meta = readRunMeta(runId);
+    if (meta?.repoPath) {
+      const { reviveWorktree } = await import('../tools/worktree.ts');
+      const back = await reviveWorktree({ isolation: meta.isolation, workPath: meta.workPath, repoPath: meta.repoPath, branch: meta.branch, baseBranch: meta.baseBranch });
+      if (back?.revived) process.stdout.write(`The checkout of this task was gone. It is back at ${back.path}, on ${meta.branch}.\n`);
+    }
+  } catch (error) {
+    process.stderr.write(`${errorMessageOf(error)}\n`);
+    return 1;
   }
 
   const explicitStep = asString(flags.step);
