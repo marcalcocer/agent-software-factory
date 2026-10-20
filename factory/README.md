@@ -126,6 +126,7 @@ role justifies.
 | 06 | **security** | Sonnet-class → GPT-4o | OWASP Top 10 audit of the diff: injection, secrets, access control, misconfiguration, dependency/supply-chain risk. | none |
 | 07 | **documentation** | Haiku-class → GPT-4o-mini | *Optional.* Decides whether the change makes any documentation stale - `README.md`, `CHANGELOG.md`, `docs/**`, OpenAPI specs, `AGENTS.md` (facts only, never rules) - and updates exactly that; reports "nothing needs updating" when that is true. It no longer writes the pull-request text. | documentation files only |
 | 07 | **pr-writer** | Haiku-class → GPT-4o-mini | **Mandatory** (no switch). Writes the commit message, the pull-request title and the pull-request description from the final diff and the stages' reports. The "Quality gates" section is written by the factory itself from the real results, never by the model. No tools. | none |
+| — | **phase-reconciler** | Haiku-class → GPT-4o-mini | After a phase of a [project](#big-requests-projects-and-phases) is merged: reads what its runs really did (the developer's reports, the files, the review rounds) and says, for each phase still planned, whether it is already done, partly done or untouched, and what loose ends the delivery left. One cheap call per merged phase, only when phases remain. No tools. | none |
 
 The developer is the only agent that can modify source code; the documentation agent's write
 tools reject anything that is not a documentation file; everybody else is read-only. No agent
@@ -558,6 +559,122 @@ npm run factory -- run \
 Exit codes: `0` delivered, `1` failed or escalated, `2` bad usage/configuration,
 `3` suspended waiting for a human.
 
+Three flags decide *where* and *how big* (see the sections below):
+
+```bash
+--isolation worktree|in-place   # where the task works (default: worktree - a checkout of its own)
+--phasing auto|on|off           # may the architect split a big request into phases (default: auto)
+--phase <phaseId>               # run one phase of an existing roadmap instead of a task
+```
+
+#### Where a task works: its own checkout
+
+A task used to work in your repository: it switched the branch you were on, refused to start when you
+had uncommitted changes, and nothing else could run there meanwhile. By default each task now works in
+its own **git worktree** - a second checkout of the same repository, on the task's branch - in
+
+```text
+<workspace>/.factory/worktrees/<repo>/<task id>        e.g.  ~/workspace/.factory/worktrees/invest-track/f0042
+```
+
+Your folder is never touched: it can be on any branch, have uncommitted changes, and several tasks on
+one repository run at the same time. The run's `run.json` records `isolation` and `workPath`; the Studio
+shows them at the top of every run (and on its pull request), with *Copy path*, *Open folder*, *Remove
+worktree* and *Check out here*, so you can look at the code by hand.
+
+What it does, and refuses to do:
+
+- The checkout is cut from the **freshest** base (GitHub's, when it is ahead of your local one) and does
+  not track it. If the branch is already checked out somewhere - your repository, say - it **fails and
+  says where**; it never falls back to your folder quietly, and never builds over a folder that is not a
+  checkout.
+- `node_modules` is **linked** from your repository when the lockfile is the same (and kept out of git
+  through `info/exclude` - a `node_modules/` rule in `.gitignore` matches a directory, not the link),
+  and **installed** (`npm ci --prefer-offline`) when the base's lockfile differs. A failed install is an
+  error, not a quiet fallback. `FACTORY_WORKTREE_COPY=.env` copies the listed files, and only ones git
+  ignores - a checkout must not be a way to commit a secret.
+- A further round, a retry, `resume` and the review of the pull request all find the **same** checkout;
+  one you deleted is made again from the branch (which holds everything that was committed), and
+  commits a reviewer pushed on top are brought in when that is a plain fast-forward.
+- When the pull request is **merged or closed** - whether from the Studio or on GitHub - the checkout is
+  removed (a clean one only; the branch stays) *before* the local branch is deleted, since git will not
+  delete a branch that is checked out. One with uncommitted work is kept, and the notes say so.
+- `--isolation in-place` (or `FACTORY_ISOLATION=in-place`) is the old behaviour: it needs your repository
+  clean, and nothing else can use it meanwhile. A round keeps the place its task started in.
+
+```bash
+npm run factory -- worktree-list --repo invest-track     # every checkout: task, branch, uncommitted files, its PR
+npm run factory -- worktree-gc --repo invest-track       # remove the clean ones whose PR is over
+npm run factory -- worktree-remove --repo invest-track --path <folder> [--force]
+npm run factory -- worktree-checkout --repo invest-track --path <folder>   # "check out here"
+```
+
+`worktree-checkout` moves the task's branch from its checkout to your repository, so you can run it where
+you work: it refuses first if either side has changes that would be lost, and puts the checkout back if
+your repository cannot take the branch. Only the factory's own checkouts are ever removed or moved - not
+a worktree you made with `git worktree add`, even with `--force`.
+
+#### Big requests: projects and phases
+
+A request too big for one reviewable pull request used to be planned as one, with "Phase 2+" written as
+prose under *out of scope* that nothing carried past the merge. Now the architect can propose a
+**roadmap**, and the factory keeps it.
+
+- **Terms.** A *project* (initiative) has *phases*; each phase is a *run* that opens one pull request, and
+  a review of that pull request has *rounds*. Every task is filed under a project - a plain task is a
+  project of one phase, hidden from the lists.
+- **Planning.** `--phasing auto` (default) lets the architect split the request only when it is too big
+  for one pull request; `on` asks for it, `off` forbids it. It then plans **only phase 1**, with the
+  roadmap - a title, goal, scope and acceptance per phase, and what each waits for - saved in
+  `<FACTORY_LOG_DIR>/initiatives.db` (SQLite). The pull request has a *Roadmap* section ("phase 1 of 3").
+- **Starting the next phase.** `run --phase i0001-p2` (the Studio's *Start phase* button) takes the phase
+  as the request, named after it, with no model asked to name it. It is **refused while the phase it
+  builds on is not merged** - it would be planned against code that is about to change - and the reason
+  says which. The architect is shown the project: its goal, what you decided, every phase and where it
+  stands, what the finished ones delivered, and the backlog.
+- **After a merge**, `phase-reconcile` compares the roadmap with what the phase *really* delivered, read
+  from its runs (a first attempt of 19 files and a fix of 3 is a 19-file change): a phase that is already
+  done is **skipped** with a note saying where, a partly done one keeps its goal and takes the scope that
+  is left, loose ends go to the backlog. The Studio does it for you after a merge (a setting; one cheap
+  call). Nothing the model says is trusted blindly: an id that is not a waiting phase is ignored, and in
+  a rehearsal nothing reaches the roadmap.
+- **The plan is yours.** `initiative-edit` renames, rewords, skips, restores, adds phases and sets backlog
+  items aside - but a phase that is running, in review or merged keeps its scope, and an edit is checked
+  whole before anything is written.
+
+```bash
+npm run factory -- run --repo invest-track --phasing on --task "Redesign the whole frontend"
+npm run factory -- initiative-list --repo invest-track                   # projects, phases, what can start
+npm run factory -- run --phase i0001-p2                                  # start a phase
+npm run factory -- phase-reconcile --phase i0001-p1 [--force]            # compare with what it delivered
+npm run factory -- initiative-edit --initiative i0001 \
+  --patch '{"phases":[{"id":"i0001-p3","status":"SKIPPED"}],"addPhases":[{"title":"Dark charts"}]}'
+```
+
+Each of these prints one marker line (`INITIATIVE_LIST_JSON {...}`, `PHASE_RECONCILE_JSON {...}`, ...) on
+stdout, like `pr-check`: the Studio never opens the database itself, the factory CLI is its only writer.
+
+**Review comments about a later phase.** A reviewer who sees phase 2 of 4 will ask for things that belong
+to phase 3. The triage is shown the roadmap and may call such a comment `FUTURE_PHASE` (with the phase it
+thinks it belongs to). That comment is **neither answered nor built**: the pull request waits in the
+Studio ("Choose where it goes") and *you* decide, with a button - not by replying on GitHub:
+
+| You choose | What happens |
+|---|---|
+| **Defer to phase N** (or a phase of its own) | the comment becomes part of that phase's request, in your words; the comment is settled; with replies on, GitHub gets one acknowledgement saying where it went |
+| **Do it in this pull request** | it stays for the next round, which **re-plans** (the work is not in the plan) with the comment as new scope |
+
+```bash
+npm run factory -- scope-decide --repo invest-track --pr 8 \
+  --decisions '[{"commentId":"IC_1","decision":"DEFER","targetPhase":"i0001-p3"},{"commentId":"IC_2","decision":"DO_NOW"}]' [--reply]
+```
+
+What the triage says is made safe before anything acts on it: without a roadmap `FUTURE_PHASE` does not
+exist (the comment is new scope for this pull request); a target that is not a phase it can go to becomes
+"unknown" and you choose; and a report that asks for another round when no comment asks for a change -
+only questions and later-phase requests - becomes a reply-only report. The round (`revise`) leaves out any
+comment you have not decided.
+
 #### Choosing which stages run
 
 Prepare, PM Architect, Developer, the PR writer and Delivery always run. The quality gates can be switched off
@@ -840,7 +957,7 @@ Escalations are then recorded and the run ends (exit code `1`) instead of waitin
 
 ## Verifying without spending tokens
 
-`npm run smoke` executes the **entire workflow** once per scenario (twelve runs) with stubbed LLM responses
+`npm run smoke` executes the **entire workflow** once per scenario (fifteen runs) with stubbed LLM responses
 (`FACTORY_DRY_RUN=true`), asserting routing, loops, suspension, artifacts and metrics.
 No API key, no network, no repository mutation:
 
@@ -865,6 +982,8 @@ npm run check          # typecheck + unit tests + smoke
 | `clarify` | blocking ambiguity → `suspend()` → resume with answers → delivery |
 | `polish` | the review approves with a minor remark and a nit → the polish pass fixes the first, only reports the second; with polish off, the remark is listed in Follow-ups instead |
 | `happy` (round) | a further round on a pull request → not named again, titled by its triage, the PR writer writes the commit message |
+| `phased` | the architect splits a big request → only phase 1 is planned, the roadmap is saved and shown in the PR, phase 2 is refused until phase 1 is merged, then runs named by its phase with no model asked, and a merged phase is reconciled once |
+| `phased` (phasing off) | the user forbids phases → one pull request, no roadmap |
 
 You can also point the real factory at a scratch repository with `--dry-run` to validate the
 repository resolution, stack detection and branch strategy before spending a token.
@@ -956,6 +1075,8 @@ All variables are optional unless stated. See `.env.example`.
 | `FACTORY_DIFF_BUDGET_CHARS` | `120000` | Characters of a change's diff one agent is shown (about 4 per token). A larger change is condensed, never cut silently: the agent gets a manifest of every changed file and what was left out, and can read the complete patch from the run's `context/` directory. QA is shown at most 60000, tests first |
 | `FACTORY_EXTRA_ALLOWED_COMMANDS` | — | Extra executables (comma separated) |
 | `FACTORY_ALLOW_PUSH` / `FACTORY_ALLOW_PR` | `true` | Gate push / PR creation |
+| `FACTORY_ISOLATION` | `worktree` | Where a task works unless `--isolation` says otherwise: `worktree` (a checkout of its own under `<workspace>/.factory/worktrees`) or `in-place` (your repository) |
+| `FACTORY_WORKTREE_COPY` | — | Files (comma separated, relative to the repository) copied into each checkout, e.g. `.env`; only ones git ignores |
 | `FACTORY_NON_INTERACTIVE` | `false` | Never suspend (CI mode) |
 | `FACTORY_DRY_RUN` | `false` | Stub every LLM call, mutate nothing |
 | `FACTORY_DRY_RUN_SCENARIO` | `happy` | Scenario for the dry-run fixtures |
