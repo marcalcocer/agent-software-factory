@@ -178,7 +178,16 @@ export function buildConventionsBlock(repoPath: string | null): string {
  * Composes the full instruction set for an agent role: system prompt + convention cascade.
  * Used as a dynamic `instructions` resolver so it reflects the repository of the active run.
  */
+/**
+ * Roles that neither write nor judge code, and so gain nothing from the coding conventions. The run
+ * namer reads one request and answers with a few words; the Java rules and the repository's
+ * `AGENTS.md` would be thousands of tokens on every call of the cheapest agent there is.
+ */
+const ROLES_WITHOUT_CONVENTIONS: ReadonlySet<AgentRole> = new Set<AgentRole>(['run-namer']);
+
 export function composeInstructions(role: AgentRole, repoPath: string | null): string {
+  if (ROLES_WITHOUT_CONVENTIONS.has(role)) return loadPrompt(role);
+
   const header =
     repoPath === null
       ? ''

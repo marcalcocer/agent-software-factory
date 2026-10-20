@@ -455,7 +455,8 @@ const NAMER_MAX_REQUEST_CHARS = 4_000;
  * gone), the task is named from its own first sentence and the run goes on. Which one happened is in
  * the artifact, and the Studio can say so.
  */
-async function nameTask(
+// Exported so the failure path can be exercised directly.
+export async function nameTask(
   run: { runId: string; repoPath: string; repoName: string },
   task: string,
   logger: { warn?: (...args: any[]) => void } | undefined,
