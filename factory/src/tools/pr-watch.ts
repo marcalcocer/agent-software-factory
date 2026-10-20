@@ -7,10 +7,12 @@
  * `fetchPullRequestReview` that the triage uses, which already ignores bots, the factory's own
  * replies and resolved threads - and so it can run headless.
  */
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { fetchPullRequestReview, type PullRequestComment } from './github-tools.ts';
 import { assessMerge } from './pr-merge-rules.ts';
+import { readArtifact } from './logger-tools.ts';
 import { settlePullRequest, type SettleResult } from './pr-lifecycle.ts';
 import { withStore, type PhaseStatus } from '../initiatives/store.ts';
 import {
@@ -56,10 +58,20 @@ export interface PullRequestCheck {
    * the project it belongs to, and to the task's checkout.
    */
   settled?: SettleResult;
+  /** Where the task's work is: its own checkout, or the user's repository. */
+  workCopy?: PullRequestWorkCopy;
   /** The project this pull request is a phase of, when it has other phases: where a comment can be deferred to. */
   roadmap?: PullRequestRoadmap;
   /** What the user decided about comments that belong to a later phase (see `scope-decide`). */
   scopeDecisions?: Array<{ commentId: string; decision: 'DEFER' | 'DO_NOW'; targetPhaseId: string | null }>;
+}
+
+export interface PullRequestWorkCopy {
+  /** Runs from before checkouts existed worked in place. */
+  isolation: 'worktree' | 'in-place';
+  path: string;
+  /** The folder is there. A checkout is removed when its pull request is over, or by the user. */
+  exists: boolean;
 }
 
 export interface PullRequestRoadmap {
@@ -200,6 +212,7 @@ export async function checkPullRequests(options: CheckOptions = {}): Promise<Che
     }
   });
 
+  attachWorkCopies(pullRequests);
   await attachRoadmaps(pullRequests);
 
   return {
@@ -208,6 +221,17 @@ export async function checkPullRequests(options: CheckOptions = {}): Promise<Che
     backfilled,
     pullRequests,
   };
+}
+
+/** Tells where the work of each open pull request is, as its first run recorded it. */
+function attachWorkCopies(pullRequests: PullRequestCheck[]): void {
+  for (const pr of pullRequests) {
+    if (pr.state !== 'OPEN') continue;
+    const meta = readArtifact(pr.rootRunId, 'run.json') as { isolation?: string; workPath?: string } | null;
+    const isolation = meta?.isolation === 'worktree' ? 'worktree' : 'in-place';
+    const folder = isolation === 'worktree' && meta?.workPath ? meta.workPath : pr.repoPath;
+    pr.workCopy = { isolation, path: folder, exists: fs.existsSync(folder) };
+  }
 }
 
 /**

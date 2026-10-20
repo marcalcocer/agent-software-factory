@@ -493,6 +493,22 @@ describe('what pr-check tells the Studio', () => {
     expect(pr.scopeDecisions).toEqual([{ commentId: 'c1', decision: 'DO_NOW', targetPhaseId: null }]);
   });
 
+  it('says where the work of the pull request is: runs from before checkouts existed worked in place', async () => {
+    const pr = await check();
+
+    expect(pr.workCopy).toEqual({ isolation: 'in-place', path: REPO, exists: false }); // REPO is not a folder on this machine
+  });
+
+  it('says where a task\'s own checkout is, and whether the folder is still there', async () => {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'factory-checkout-'));
+    fs.mkdirSync(path.join(logs, 'run-1'), { recursive: true });
+    fs.writeFileSync(path.join(logs, 'run-1', 'run.json'), JSON.stringify({ runId: 'run-1', isolation: 'worktree', workPath: folder }));
+
+    expect((await check()).workCopy).toEqual({ isolation: 'worktree', path: folder, exists: true });
+    fs.rmSync(folder, { recursive: true });
+    expect((await check()).workCopy).toEqual({ isolation: 'worktree', path: folder, exists: false });
+  });
+
   it('says nothing of a roadmap for a plain task: there is no later phase to defer to', async () => {
     await withStore(async (store) => {
       for (const id of ['i0001-p2', 'i0001-p3', 'i0001-p4']) await store.updatePhase(id, { status: 'SKIPPED' });
