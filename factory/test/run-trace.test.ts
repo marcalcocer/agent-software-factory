@@ -115,3 +115,24 @@ describe('the title of a round comes from its triage', () => {
     expect(result.ok && result.revision.title).toBeUndefined();
   });
 });
+
+describe('a name the user gave is theirs', () => {
+  it('is not replaced when the factory names the task afterwards', () => {
+    createRunTrace(meta({ title: 'Provisional', titleSource: 'fallback' }));
+    updateRunMeta('r1', { title: 'My own name', titleSource: 'user' });
+
+    // The namer answers a few seconds later.
+    updateRunMeta('r1', { title: 'Dark mode for every screen', titleSource: 'agent', branch: 'factory/f0007/feat-dark-mode' });
+
+    expect(runJson()).toMatchObject({ title: 'My own name', titleSource: 'user', branch: 'factory/f0007/feat-dark-mode' });
+  });
+
+  it('is not replaced when the workflow completes the record the CLI made', () => {
+    createRunTrace(meta({ title: 'Provisional' }));
+    updateRunMeta('r1', { title: 'My own name', titleSource: 'user' });
+
+    openRunTrace(meta({ title: 'Provisional again', titleSource: 'fallback', taskId: 'f0007' }));
+
+    expect(runJson()).toMatchObject({ title: 'My own name', titleSource: 'user', taskId: 'f0007' });
+  });
+});

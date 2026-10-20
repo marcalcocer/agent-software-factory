@@ -145,7 +145,9 @@ export function openRunTrace(meta: RunTraceMeta): { runId: string; traceDir: str
 
   const startedAt = existing.startedAt ?? meta.startedAt;
   const traceDir = ensureRunTrace(meta.runId);
-  fs.writeFileSync(file, `${JSON.stringify({ ...existing, ...meta, startedAt }, null, 2)}\n`, 'utf8');
+  // A name the user already gave (the run is listed from the moment it is recorded) is theirs to keep.
+  const named = existing.titleSource === 'user' ? { title: existing.title, titleSource: existing.titleSource } : {};
+  fs.writeFileSync(file, `${JSON.stringify({ ...existing, ...meta, ...named, startedAt }, null, 2)}\n`, 'utf8');
   return { runId: meta.runId, traceDir, startedAt };
 }
 
@@ -472,7 +474,10 @@ export function updateRunMeta(runId: string, patch: Partial<RunTraceMeta>): void
     const file = path.join(traceDirFor(runId), 'run.json');
     if (!fs.existsSync(file)) return;
     const current = JSON.parse(fs.readFileSync(file, 'utf8')) as RunTraceMeta;
-    fs.writeFileSync(file, `${JSON.stringify({ ...current, ...patch }, null, 2)}\n`, 'utf8');
+    // The user's own name for a run is never replaced by one the factory chose, except by the user.
+    const keepName = current.titleSource === 'user' && patch.titleSource !== 'user';
+    const { title: _title, titleSource: _titleSource, ...rest } = patch;
+    fs.writeFileSync(file, `${JSON.stringify({ ...current, ...(keepName ? rest : patch) }, null, 2)}\n`, 'utf8');
   } catch {
     // Tracing is best-effort by design.
   }
