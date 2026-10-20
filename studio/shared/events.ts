@@ -67,6 +67,8 @@ export interface IPCChannels {
   ) => Promise<{ lines: string[]; total: number }>;
   'factory:cancel': (runId: string) => Promise<void>;
   'factory:delete': (runId: string) => Promise<void>;
+  /** Renames a run in the history. Stored with the run, so it survives restarts and switching repository. */
+  'factory:rename-run': (runId: string, title: string) => Promise<void>;
 
   // Pull-request watcher: review comments are looked for in the background
   'pr-watch:get': () => Promise<PrWatchState>;
@@ -152,6 +154,11 @@ export interface IPCEvents {
   /** The watcher's view changed (new comments, a job started / finished, ...). */
   'pr-watch:changed': (state: PrWatchState) => void;
   'factory:output': (runId: string, data: string) => void;
+  /**
+   * A factory process has announced its run id: the run exists on disk. Sent for every run, including a
+   * round the watcher starts by itself, so the history can show it at once.
+   */
+  'factory:started': (runId: string) => void;
   /** `reason` accompanies a failure: the last meaningful line the process printed. */
   'factory:completed': (runId: string, exitCode: number, reason?: string) => void;
   'factory:error': (runId: string, error: string) => void;

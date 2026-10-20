@@ -17,6 +17,7 @@ import type {
 import {
   readJson,
   readRunArtifacts,
+  renameRun,
   readRunEvents as readEventsIn,
   readRunState as readRunStateIn,
 } from '../services/run-state.js';
@@ -499,6 +500,8 @@ export async function startFactoryRun(cliArgs: string[]): Promise<{ runId: strin
       runId = match[1];
       activeRuns.set(runId, proc);
       console.log('[Factory IPC] Extracted runId:', runId);
+      // The CLI records the run before it announces it, so the history can show it right now.
+      mainWindow?.webContents.send('factory:started', runId);
     }
 
     // Send complete lines to renderer for real-time display
@@ -992,6 +995,20 @@ ipcMain.handle('factory:delete', async (_event, runId: string): Promise<void> =>
   // Recursively delete the run directory
   fs.rmSync(runDir, { recursive: true, force: true });
   console.log('[Factory IPC] Deleted run:', runId);
+});
+
+/** The longest title a run can be given. Longer than a card shows, short enough to stay a title. */
+const MAX_TITLE_LENGTH = 120;
+
+/**
+ * Renames a run. The name is stored in the run's own `run.json` (`titleSource: "user"`), so it survives
+ * a restart and switching repository - it used to live in React state and came back as "Untitled run".
+ */
+ipcMain.handle('factory:rename-run', async (_event, runId: string, title: string): Promise<void> => {
+  const clean = String(title ?? '').replace(/\s+/g, ' ').trim();
+  if (clean === '') throw new Error('A run needs a name.');
+  if (clean.length > MAX_TITLE_LENGTH) throw new Error(`A name can have at most ${MAX_TITLE_LENGTH} characters.`);
+  renameRun(runDirOf(runId), clean);
 });
 
 /**

@@ -108,6 +108,7 @@ const PER_ATTEMPT = new Set(['developer', 'qa-tester', 'reviewer', 'security', '
 /** Workflow step ids reported by the backend -> the node family they belong to. */
 const FAILED_STEP_FAMILY: Record<string, string> = {
   'prepare-run': 'prepare-run',
+  'run-namer': 'run-namer',
   plan: 'pm-architect',
   'pm-architect': 'pm-architect',
   developer: 'developer',
@@ -177,6 +178,15 @@ export function prWriterStatus(raw: string): NodeStatus {
   if (s === 'SKIPPED') return 'skipped';
   if (s === 'COMPLETED' || s === 'FALLBACK') return 'completed';
   return 'failed';
+}
+
+/**
+ * The run namer's artifact: COMPLETED, or FALLBACK (the AI could not answer, so the task was named from
+ * the request itself - the step still produced a name).
+ */
+export function namerStatus(raw: string): NodeStatus {
+  const s = raw.toUpperCase();
+  return s === 'COMPLETED' || s === 'FALLBACK' ? 'completed' : 'failed';
 }
 
 /** A triage artifact's status is its *decision*; the step itself succeeded whatever it decided. */
@@ -337,6 +347,8 @@ interface FrontierContext {
   idx: ArtifactIndex;
   pipeline: PipelineConfig;
   prepareDone: boolean;
+  /** The run namer was asked (its event is in the log) - it is not asked on runs from before it existed. */
+  namingStarted: boolean;
 }
 
 const isDone = (status: NodeStatus): boolean => status === 'completed' || status === 'skipped';
@@ -349,8 +361,9 @@ const isDone = (status: NodeStatus): boolean => status === 'completed' || status
  * "running" at once. A stage switched off in the pipeline is treated as already done: the
  * workflow writes its `SKIPPED` artifact within milliseconds, so it must never flash as running.
  */
-function inferFrontier({ idx, pipeline, prepareDone }: FrontierContext): string[] {
+function inferFrontier({ idx, pipeline, prepareDone, namingStarted }: FrontierContext): string[] {
   if (!prepareDone) return ['prepare-run'];
+  if (namingStarted && !idx.latest('run-namer')) return ['run-namer'];
 
   const pm = idx.latest('pm-architect');
   if (!pm) return ['pm-architect'];
@@ -401,6 +414,7 @@ function inferFrontier({ idx, pipeline, prepareDone }: FrontierContext): string[
 
 const RUNNING_ACTIVITY: Record<string, string> = {
   'prepare-run': 'Preparing the repository and work branch...',
+  'run-namer': 'Naming the task...',
   'pm-architect': 'Analysing the task and the codebase...',
   'pm-architect-plan': 'Re-planning with your answers...',
   developer: 'Writing code and implementing the plan...',
@@ -461,8 +475,12 @@ export function derivePipeline(input: DeriveInput): DerivedPipeline {
   const failed = !suspended && !alive && input.runStatus === 'FAILED';
   const lifecycle: Lifecycle = suspended ? 'waiting' : alive ? 'running' : failed ? 'failed' : 'done';
 
+  // The task is named from inside the prepare step, once the repository is known to be usable: from
+  // then on the repository is prepared as far as anyone watching is concerned.
+  const namingStarted = events.some((e) => e.type === 'run_naming');
   const prepareDone =
     events.some((e) => e.type === 'step_completed' && e.step === 'prepare-run') ||
+    namingStarted ||
     artifacts.length > 0;
 
   const pm = idx.latest('pm-architect');
@@ -472,7 +490,7 @@ export function derivePipeline(input: DeriveInput): DerivedPipeline {
   // Which node(s) execute now - or, for a failed run, which one the failure belongs to.
   const frontier =
     lifecycle === 'running' || lifecycle === 'failed'
-      ? inferFrontier({ idx, pipeline, prepareDone })
+      ? inferFrontier({ idx, pipeline, prepareDone, namingStarted })
       : [];
 
   // The attempt cycle may have moved on to a developer node that has no artifact yet.
@@ -489,6 +507,21 @@ export function derivePipeline(input: DeriveInput): DerivedPipeline {
     attempt: 1,
     done: prepareDone,
   });
+
+  // Only runs that have a namer show it: older runs were never named by an agent.
+  const namer = idx.latest('run-namer');
+  if (namingStarted || namer) {
+    specs.push({
+      id: 'run-namer',
+      name: 'Name',
+      icon: '🏷️',
+      kind: 'step',
+      attempt: 1,
+      artifactStep: 'run-namer',
+      art: namer,
+      map: namerStatus,
+    });
+  }
 
   if (exchange) {
     specs.push({
@@ -686,6 +719,8 @@ export function derivePipeline(input: DeriveInput): DerivedPipeline {
             : 'Waiting for your decision';
     } else if (status === 'skipped' && spec.disabled && !spec.art) {
       activity = 'Disabled for this task';
+    } else if (spec.id === 'run-namer' && spec.art?.status === 'FALLBACK') {
+      activity = 'Named from the request: the AI could not answer';
     } else if (status === 'skipped' && spec.art?.status === 'REUSED') {
       activity = 'Skipped: the plan of the previous round is reused';
     } else if (status === 'skipped' && spec.id === 'pr-writer') {

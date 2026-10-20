@@ -445,6 +445,30 @@ export function AgentDetail({
     );
   }
 
+  // --- Run namer ---
+  if (base === 'run-namer') {
+    return (
+      <div className="space-y-4">
+        {header}
+        {artifact.status === 'FALLBACK' && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-sm text-amber-100">
+            <div className="font-semibold mb-0.5">Named from the request</div>
+            The AI could not name this task{typeof data.error === 'string' ? ` (${data.error})` : ''}, so its first
+            sentence was used instead. You can rename the run in the history.
+          </div>
+        )}
+        <Section title="Title">
+          <p className="text-sm text-slate-100">{data.title}</p>
+        </Section>
+        <Section title="Branch">
+          <p className="text-sm font-mono text-slate-300">
+            {data.type}-{data.slug}
+          </p>
+        </Section>
+      </div>
+    );
+  }
+
   // --- PM Architect ---
   if (base === 'pm-architect' || base === 'pm-architect-plan') {
     const plan = data.plan || {};

@@ -39,6 +39,14 @@ export interface FactoryRun {
   runId: string;
   repoId: string;
   task: string;
+  /**
+   * What the run is called in the history. Named by the factory's run namer, or by the user (their name
+   * always wins). Absent on runs from before titles were stored.
+   */
+  title?: string;
+  titleSource?: 'agent' | 'fallback' | 'round' | 'user';
+  /** `f0042`: one id for the task and all of its rounds. Absent on runs from before task ids. */
+  taskId?: string;
   status: RunStatus;
   attempts: number;
   branch?: string;

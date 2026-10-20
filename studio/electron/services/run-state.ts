@@ -33,6 +33,17 @@ export function readRunEvents(runDir: string): RunEventRecord[] {
 }
 
 /**
+ * Gives a run a name of the user's choosing: written into `run.json`, which is where the factory keeps
+ * the title, and marked as the user's so nothing the factory does afterwards replaces it.
+ */
+export function renameRun(runDir: string, title: string): void {
+  const file = path.join(runDir, 'run.json');
+  const meta = readJson<Record<string, unknown>>(file);
+  if (!meta) throw new Error('This run has no record to rename.');
+  fs.writeFileSync(file, `${JSON.stringify({ ...meta, title, titleSource: 'user' }, null, 2)}\n`, 'utf8');
+}
+
+/**
  * The step artifacts (`01-pm-architect.json`, `02-developer.attempt-2.json`, ...) of a run
  * directory, in file-name order. A file that cannot be read - torn while the factory writes it - is
  * skipped rather than failing the whole read.
@@ -123,6 +134,10 @@ export function readRunState(
       runId,
       repoId: path.basename(repoPath),
       task: summary?.task || meta?.task || '',
+      // run.json first: it is where a rename is written, and the summary is a snapshot from the end.
+      ...(meta?.title || summary?.title ? { title: String(meta?.title || summary?.title) } : {}),
+      ...(meta?.titleSource ? { titleSource: meta.titleSource } : {}),
+      ...(meta?.taskId || summary?.taskId ? { taskId: String(meta?.taskId || summary?.taskId) } : {}),
       status,
       attempts: summary?.attempts || 0,
       branch: summary?.branch ?? meta?.branch,

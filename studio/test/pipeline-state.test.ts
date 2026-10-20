@@ -226,3 +226,51 @@ describe('derivePipeline and the stages a task switched off', () => {
     expect(nodesOf(derived)['reviewer']!.status).toBe('completed');
   });
 });
+
+describe('derivePipeline and the step that names the task', () => {
+  const named = (events: Array<Record<string, unknown>>, artifacts: RunArtifact[], runStatus = 'RUNNING') =>
+    derivePipeline({
+      artifacts,
+      events: events.map((e) => ({ at: 't', ...e })) as never[],
+      pendingInput: null,
+      runStatus,
+      assumeAlive: false,
+      pipeline: ALL_STAGES,
+    });
+
+  const namer = (status: string, data: Record<string, unknown> = { title: 'Dark mode', slug: 'dark-mode', type: 'feat' }): RunArtifact => ({
+    step: 'run-namer',
+    attempt: 1,
+    status,
+    data,
+  });
+
+  it('shows the Name step between Prepare and the architect, running while the AI is asked', () => {
+    const derived = named([{ type: 'run_started' }, { type: 'run_naming', phase: 'started' }], []);
+
+    expect(derived.nodes.map((node) => node.id).slice(0, 3)).toEqual(['prepare-run', 'run-namer', 'pm-architect']);
+    expect(derived.runningIds).toEqual(['run-namer']);
+    const nodes = Object.fromEntries(derived.nodes.map((node) => [node.id, node]));
+    expect(nodes['prepare-run']!.status).toBe('completed'); // the repository is ready: the name is the last thing before the branch
+    expect(nodes['run-namer']).toMatchObject({ status: 'running', activity: 'Naming the task...' });
+  });
+
+  it('moves on to the architect once the task has a name', () => {
+    const derived = named([{ type: 'run_naming', phase: 'started' }], [namer('COMPLETED')]);
+    expect(derived.runningIds).toEqual(['pm-architect']);
+    expect(derived.nodes.find((node) => node.id === 'run-namer')!.status).toBe('completed');
+  });
+
+  it('counts a name made from the request as a step that worked, and says how it was made', () => {
+    const derived = named([{ type: 'run_naming' }], [namer('FALLBACK', { title: 'Dark mode', slug: 'dark-mode', type: 'feat', error: 'usage limit' })], 'DELIVERED');
+    expect(derived.nodes.find((node) => node.id === 'run-namer')).toMatchObject({
+      status: 'completed',
+      activity: 'Named from the request: the AI could not answer',
+    });
+  });
+
+  it('is absent on runs from before tasks were named', () => {
+    expect(derive(RUN.round1).nodes.some((node) => node.id === 'run-namer')).toBe(false);
+    expect(derive(RUN.round2).nodes.some((node) => node.id === 'run-namer')).toBe(false);
+  });
+});

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { RUN, copyRuns, readEvents, runDir } from '../../fixtures';
-import { readRunArtifacts, readRunEvents, readRunState } from '../electron/services/run-state';
+import { readRunArtifacts, readRunEvents, readRunState, renameRun } from '../electron/services/run-state';
 
 const stateOf = (runId: string, alive = false) => readRunState(runDir(runId), runId, alive);
 
@@ -179,5 +179,67 @@ describe('readRunArtifacts / readRunEvents', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('the title of a run', () => {
+  let scratch: string;
+  beforeEach(() => {
+    scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-titles-'));
+  });
+  afterEach(() => {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  });
+
+  const withTitle = (meta: Record<string, unknown>, summary?: Record<string, unknown>) => {
+    copyRuns(scratch, [RUN.round1], (file) => file === 'run.json' || (summary !== undefined && file === 'summary.json'));
+    const dir = path.join(scratch, RUN.round1);
+    const runJson = JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8'));
+    fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify({ ...runJson, ...meta }));
+    if (summary) {
+      const summaryJson = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8'));
+      fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({ ...summaryJson, ...summary }));
+    }
+    return dir;
+  };
+
+  it('comes from the run itself, with its task id', () => {
+    const dir = withTitle({ title: 'Dark mode for every screen', titleSource: 'agent', taskId: 'f0042' });
+    expect(readRunState(dir, RUN.round1, true)!.run).toMatchObject({
+      title: 'Dark mode for every screen',
+      titleSource: 'agent',
+      taskId: 'f0042',
+    });
+  });
+
+  it('is the one in run.json, because that is where a rename is written', () => {
+    const dir = withTitle({ title: 'My own name', titleSource: 'user' }, { title: 'Name from the end of the run' });
+    expect(readRunState(dir, RUN.round1, false)!.run.title).toBe('My own name');
+  });
+
+  it('falls back to the summary for a run whose record has none', () => {
+    const dir = withTitle({}, { title: 'Name from the end of the run' });
+    expect(readRunState(dir, RUN.round1, false)!.run.title).toBe('Name from the end of the run');
+  });
+
+  it('is absent on runs from before titles were stored, not invented', () => {
+    expect(stateOf(RUN.round1)!.run.title).toBeUndefined();
+    expect(stateOf(RUN.round1)!.run.taskId).toBeUndefined();
+  });
+
+  it('survives a rename, which is written to run.json and marked as the user\'s', () => {
+    const dir = withTitle({ title: 'Dark mode for every screen', titleSource: 'agent' });
+    renameRun(dir, 'Phase one: tokens and dark mode');
+
+    expect(readRunState(dir, RUN.round1, false)!.run).toMatchObject({
+      title: 'Phase one: tokens and dark mode',
+      titleSource: 'user',
+    });
+    // Nothing else about the run changed.
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8')).task).toBe(stateOf(RUN.round1)!.run.task);
+  });
+
+  it('cannot rename a directory that is not a run', () => {
+    expect(() => renameRun(scratch, 'x')).toThrow('no record to rename');
   });
 });
