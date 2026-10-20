@@ -9,10 +9,12 @@ export default defineConfig({
     },
   },
   test: {
-    // The logic under test (run state, pipeline derivation, the PR watcher) is plain TypeScript.
-    // Components get a DOM environment when the first component test is written.
+    // The logic under test (run state, pipeline derivation, the PR watcher) is plain TypeScript and runs
+    // in Node. A test of a screen says so in its first line - `// @vitest-environment jsdom` - and the
+    // rest are not slowed down by a DOM.
     environment: 'node',
-    include: ['test/**/*.test.ts'],
+    include: ['test/**/*.test.{ts,tsx}'],
+    setupFiles: ['test/setup.ts'],
     restoreMocks: true,
     unstubEnvs: true,
   },
