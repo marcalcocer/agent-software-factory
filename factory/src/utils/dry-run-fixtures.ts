@@ -29,6 +29,7 @@ export const DRY_RUN_SCENARIOS = [
   'security-block',
   'escalate',
   'clarify',
+  'polish',
 ] as const;
 
 export type DryRunScenario = (typeof DRY_RUN_SCENARIOS)[number];
@@ -315,6 +316,37 @@ export function stubReviewReport(attempt: number): ReviewReport {
       mustFixBeforeMerge: [
         '[dry-run] Handle invalid input in calculateNet and add a boundary test for 10.125.',
       ],
+    };
+  }
+
+  // Approved, with a concrete minor remark and a nit: the polish pass fixes the first, only reports the second.
+  if (scenario === 'polish') {
+    return {
+      status: 'APPROVED_WITH_SUGGESTIONS',
+      summary: '[dry-run] Correct, with two small remarks.',
+      scores: { correctness: 5, maintainability: 4, conventions: 4, testQuality: 5 },
+      findings: [
+        {
+          severity: 'MINOR',
+          file: 'src/main/example.ts',
+          line: 12,
+          issue: '[dry-run] A stale comment.',
+          suggestion: '[dry-run] Remove the comment.',
+          rule: null,
+        },
+        {
+          severity: 'NIT',
+          file: 'src/main/example.ts',
+          line: 30,
+          issue: '[dry-run] A name could be shorter.',
+          suggestion: '[dry-run] Rename it.',
+          rule: null,
+        },
+      ],
+      conventionViolations: [],
+      architectureNotes: [],
+      positives: ['[dry-run] Clear naming and focused diff.'],
+      mustFixBeforeMerge: [],
     };
   }
 

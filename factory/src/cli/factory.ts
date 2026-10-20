@@ -126,6 +126,7 @@ run flags:
   --no-pr                   Do not open a pull request
   --no-qa                   Skip the QA stage (no build / test run; also disables triage retries)
   --no-review               Skip the code review stage
+  --no-polish               Skip the polish pass (the minor findings of the gates are only reported)
   --no-security             Skip the security audit stage
   --no-docs                 Skip the documentation stage (README / CHANGELOG / docs updates).
                             The commit message and pull-request text are written by the PR writer,

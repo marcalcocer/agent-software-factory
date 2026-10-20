@@ -50,7 +50,7 @@ interface ScenarioExpectation {
   expectedAttempts?: number;
   requiredArtifacts: string[];
   /** Optional stages to switch off for this scenario (what `--no-qa` / `--no-docs` ... do). */
-  pipeline?: { qa?: boolean; review?: boolean; security?: boolean; documentation?: boolean };
+  pipeline?: { qa?: boolean; review?: boolean; security?: boolean; documentation?: boolean; polish?: boolean };
   /** Further assertions on what the run wrote. Each entry is `[name, ok, detail]`. */
   extraChecks?: (traceDir: string) => Array<[string, boolean, string?]>;
 }
@@ -162,6 +162,45 @@ function namingChecks(traceDir: string): Array<[string, boolean, string?]> {
   ];
 }
 
+/**
+ * What must hold for the polish pass of any run that reaches delivery: it left an artifact saying what it
+ * did, and that artifact agrees with the pull-request text - the quality gates carry its line.
+ */
+function polishChecks(
+  traceDir: string,
+  expected: { status: string; applied?: number; reportedNit?: boolean; gateLine: RegExp },
+): Array<[string, boolean, string?]> {
+  const read = (file: string): Record<string, any> | null => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(traceDir, file), 'utf8')) as Record<string, any>;
+    } catch {
+      return null;
+    }
+  };
+  const polish = read('06-polish.json');
+  const body = String(read('08-pull-request.json')?.data?.pullRequest?.body ?? '');
+  const events = (() => {
+    try {
+      return fs.readFileSync(path.join(traceDir, 'events.ndjson'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as Record<string, any>);
+    } catch {
+      return [];
+    }
+  })();
+  const asked = events.filter((event) => event.type === 'agent_call' && event.step === 'polish');
+
+  return [
+    ['the polish pass recorded what it did', polish?.status === expected.status, String(polish?.status)],
+    ...(expected.applied === undefined
+      ? ([['the polish pass did not ask the developer when there was nothing to fix', asked.length === 0, String(asked.length)]] as Array<[string, boolean, string?]>)
+      : ([
+          ['the developer was asked once, as the developer', asked.length === 1 && asked[0]?.role === 'developer', String(asked.length)],
+          ['the findings it fixed are named by id', (polish?.data?.applied ?? []).length === expected.applied, JSON.stringify(polish?.data?.applied)],
+          ['a nit is reported and not fixed', expected.reportedNit === undefined || (polish?.data?.reported ?? []).some((item: any) => item.reason === 'a nit') === expected.reportedNit, JSON.stringify(polish?.data?.reported)],
+        ] as Array<[string, boolean, string?]>)),
+    ['the quality gates of the description carry the polish line', expected.gateLine.test(body), (/- Polish:[^\n]*/.exec(body) ?? [''])[0]],
+  ];
+}
+
 const SCENARIOS: ScenarioExpectation[] = [
   {
     scenario: 'happy',
@@ -183,7 +222,38 @@ const SCENARIOS: ScenarioExpectation[] = [
     ],
     extraChecks: (dir) => [
       ...namingChecks(dir),
+      ...polishChecks(dir, { status: 'NONE', gateLine: /- Polish: no minor findings to fix/ }),
       ...gateChecks(dir, { qa: 'PASS', codeReview: 'APPROVED', security: 'PASS', documentation: 'COMPLETED' }),
+    ],
+  },
+  {
+    scenario: 'polish',
+    description: 'the review approves with a minor remark and a nit -> the polish pass fixes the first, only reports the second',
+    interactive: false,
+    expect: 'DELIVERED_WITHOUT_PR',
+    expectedAttempts: 1,
+    requiredArtifacts: ['05-code-review.json', '06-polish.json', '07-pr-writer.json', '08-pull-request.json', 'summary.json'],
+    extraChecks: (dir) => [
+      ...polishChecks(dir, { status: 'APPLIED', applied: 1, reportedNit: true, gateLine: /- Polish: 1 minor finding fixed \(dry run\)/ }),
+      ...gateChecks(dir, { qa: 'PASS', codeReview: 'APPROVED_WITH_SUGGESTIONS', security: 'PASS', documentation: 'COMPLETED' }),
+    ],
+  },
+  {
+    scenario: 'polish',
+    description: 'polish switched OFF: the same remarks are only reported, the developer is not asked',
+    interactive: false,
+    expect: 'DELIVERED_WITHOUT_PR',
+    expectedAttempts: 1,
+    pipeline: { polish: false },
+    requiredArtifacts: ['06-polish.json', '08-pull-request.json', 'summary.json'],
+    extraChecks: (dir) => [
+      ...polishChecks(dir, { status: 'SKIPPED', gateLine: /- Polish: not run \(disabled for this task\)/ }),
+      [
+        'the minor finding that was not fixed is listed in the pull request instead',
+        /## Follow-ups[\s\S]*src\/main\/example\.ts:12: \[dry-run\] A stale comment\.[^\n]*\(not fixed\)/.test(
+          String(JSON.parse(fs.readFileSync(path.join(dir, '08-pull-request.json'), 'utf8'))?.data?.pullRequest?.body ?? ''),
+        ),
+      ],
     ],
   },
   {

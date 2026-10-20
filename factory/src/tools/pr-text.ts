@@ -17,6 +17,7 @@ import type {
   DeveloperReport,
   DocumentationReport,
   ExecutionPlan,
+  PolishResult,
   PrText,
   PrWriterAgentOutput,
   QaReport,
@@ -46,6 +47,8 @@ export interface PrTextContext {
    * all of it. Their lines say so, instead of presenting a partial look as a full one.
    */
   coverage?: Partial<Record<'review' | 'security', string>>;
+  /** What the polish pass did with the minor findings of the gates (`null`: it never ran). */
+  polish?: PolishResult | null;
 }
 
 /** The longest commit subject that is ever kept, whoever wrote it. The agent is asked for 72. */
@@ -103,6 +106,62 @@ function securityLine(ctx: PrTextContext): string {
   return `Security audit: ${security.status.replace(/_/g, ' ')} (${risk})${seen(ctx.coverage?.security)}`;
 }
 
+/** One finding as a line for the reader: where, what, and why it was left. */
+function describeFinding(candidate: PolishResult['candidates'][number]): string {
+  const where = candidate.file ? `${candidate.file}${candidate.line ? `:${candidate.line}` : ''}` : candidate.source === 'qa' ? 'QA' : 'the change';
+  return `${where}: ${clipAtWord(candidate.problem.replace(/\s+/g, ' '), 160)}`;
+}
+
+/**
+ * What the polish pass means for the pull request: one line for the quality gates, and the findings
+ * that were NOT fixed, for the follow-ups. The reviewer approved the code as it was before the polish,
+ * so a reader has to be told that something changed after the gates - and what was left.
+ */
+export function polishNote(result: PolishResult | null | undefined): { line: string; followUps: string[] } | null {
+  if (!result) return null;
+  const asked = result.candidates.length;
+  const byId = new Map(result.candidates.map((candidate) => [candidate.id, candidate]));
+  const describe = (id: string): string => (byId.has(id) ? describeFinding(byId.get(id)!) : id);
+
+  const followUps: string[] = [];
+  if (result.status === 'APPLIED' || result.status === 'DECLINED') {
+    for (const entry of result.declined) followUps.push(`${describe(entry.id)} (not fixed: ${clipAtWord(entry.reason, 120)})`);
+    for (const id of result.unanswered) followUps.push(`${describe(id)} (not fixed)`);
+  } else {
+    // Undone, could not run, or switched off: none of them was fixed, and they must not vanish.
+    for (const candidate of result.candidates) followUps.push(`${describeFinding(candidate)} (not fixed)`);
+  }
+  for (const item of result.reported) {
+    if (item.reason !== 'a nit') followUps.push(`${clipAtWord(item.summary.replace(/\s+/g, ' '), 160)} (${item.reason})`);
+  }
+
+  let line: string;
+  switch (result.status) {
+    case 'NONE':
+      line = 'Polish: no minor findings to fix';
+      break;
+    case 'SKIPPED':
+      line = result.reason === 'NEEDS_QA' ? 'Polish: not run (it needs the QA stage to check its fixes)' : `Polish: ${NOT_RUN}`;
+      break;
+    case 'APPLIED':
+      line = result.dryRun
+        ? `Polish: ${plural(result.applied.length, 'minor finding', 'minor findings')} fixed (dry run)`
+        : `Polish: fixed ${result.applied.length} of ${plural(asked, 'minor finding', 'minor findings')} - ` +
+          `${plural(result.changedFiles.length, 'file', 'files')} changed after the review, tests and build passed again`;
+      break;
+    case 'DECLINED':
+      line = `Polish: ${plural(asked, 'minor finding', 'minor findings')} looked at, nothing changed`;
+      break;
+    case 'REVERTED':
+      line = `Polish: undone, ${result.detail ?? 'the checks failed'}`;
+      break;
+    case 'FAILED':
+      line = `Polish: could not run (${clipAtWord(result.detail ?? 'unknown reason', 120)})`;
+      break;
+  }
+  return { line, followUps };
+}
+
 function documentationLine(ctx: PrTextContext): string {
   if (!ctx.pipeline.documentation) return `Documentation: ${NOT_RUN}`;
   const docs = ctx.documentation;
@@ -118,9 +177,12 @@ function documentationLine(ctx: PrTextContext): string {
  * in plain words; nothing here is a claim a model could get wrong.
  */
 export function qualityGatesSection(ctx: PrTextContext): string {
-  return ['## Quality gates', '', ...[qaLine(ctx), reviewLine(ctx), securityLine(ctx), documentationLine(ctx)].map((line) => `- ${line}`)].join(
-    '\n',
-  );
+  const polish = polishNote(ctx.polish);
+  return [
+    '## Quality gates',
+    '',
+    ...[qaLine(ctx), reviewLine(ctx), securityLine(ctx), ...(polish ? [polish.line] : []), documentationLine(ctx)].map((line) => `- ${line}`),
+  ].join('\n');
 }
 
 /* -------------------------------------------------------------------------- */
@@ -153,6 +215,35 @@ export function withQualityGates(body: string, gates: string): string {
   return `${clean.slice(0, tail.index).trimEnd()}\n\n${gates}\n\n${clean.slice(tail.index)}`.trim();
 }
 
+const FOLLOW_UPS_HEADING = /^##\s*follow[- ]?ups?\s*#*\s*$/im;
+
+/**
+ * Adds bullets to the "Follow-ups" section of a description, creating it at the end when it has none.
+ * The factory knows which minor findings were left unfixed; a description must not depend on the model
+ * choosing to mention them. An item the section already holds (the start of its text) is not repeated.
+ */
+export function withFollowUps(body: string, items: string[]): string {
+  const wanted = [...new Set(items.map((item) => item.replace(/\s+/g, ' ').trim()).filter(Boolean))];
+  const clean = cleanBody(body);
+  if (wanted.length === 0) return clean;
+
+  const heading = FOLLOW_UPS_HEADING.exec(clean);
+  if (!heading) return `${clean}\n\n## Follow-ups\n\n${wanted.map((item) => `- ${item}`).join('\n')}`.trim();
+
+  const headEnd = heading.index + heading[0].length;
+  const after = clean.slice(headEnd);
+  const next = after.search(/^##\s/m);
+  const section = next === -1 ? after : after.slice(0, next);
+  const rest = next === -1 ? '' : after.slice(next);
+
+  const present = section.toLowerCase().replace(/\s+/g, ' ');
+  const fresh = wanted.filter((item) => !present.includes(item.toLowerCase().slice(0, 60)));
+  if (fresh.length === 0) return clean;
+
+  const grown = `${clean.slice(0, headEnd)}${section.trimEnd()}\n${fresh.map((item) => `- ${item}`).join('\n')}`;
+  return (rest === '' ? grown : `${grown}\n\n${rest}`).trim();
+}
+
 /** Labels the way GitHub wants them: trimmed, unique, not empty, and not a pile of them. */
 export function cleanLabels(labels: string[]): string[] {
   const seen = new Set<string>();
@@ -177,7 +268,10 @@ export function normalizePrWriterOutput(raw: PrWriterAgentOutput, ctx: PrTextCon
   const commitSubject = subject === '' ? fallbackSubject : subject;
 
   const title = clipAtWord(cleanSubject(raw.pullRequest.title), TITLE_LIMIT) || commitSubject;
-  const body = withQualityGates(raw.pullRequest.body, qualityGatesSection(ctx));
+  const body = withFollowUps(
+    withQualityGates(raw.pullRequest.body, qualityGatesSection(ctx)),
+    polishNote(ctx.polish)?.followUps ?? [],
+  );
 
   return {
     commitMessage: composeCommitMessage(commitSubject, raw.commitMessage.body),
@@ -251,7 +345,11 @@ export function fallbackPrText(ctx: PrTextContext, reason?: string): PrText {
     700,
   );
 
-  const followUps = [...(ctx.developer?.followUps ?? []), ...(ctx.documentation?.followUps ?? [])]
+  const followUps = [
+    ...(ctx.developer?.followUps ?? []),
+    ...(ctx.documentation?.followUps ?? []),
+    ...(polishNote(ctx.polish)?.followUps ?? []),
+  ]
     .map((item) => item.trim())
     .filter(Boolean);
 

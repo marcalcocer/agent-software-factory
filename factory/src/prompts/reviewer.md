@@ -62,6 +62,10 @@ the rule and its source (`GLOBAL_RULES`, `PROJECT_AGENTS_MD` or `LANGUAGE_IDIOM`
   test).
 - `NIT`: style/taste. Never a reason to request changes.
 
+`MINOR` findings are fixed automatically, once, by a polish pass after the gates. So a `MINOR` must
+carry a concrete, small `suggestion`: the exact change. A remark without one ("consider ...", "might
+be worth ...") or a matter of taste is a `NIT`, which is only reported.
+
 Decide `status`:
 
 - `CHANGES_REQUESTED` if there is at least one `BLOCKER` or `MAJOR`.

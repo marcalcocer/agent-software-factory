@@ -92,7 +92,10 @@ Your scope is the **diff** plus whatever surrounding code is needed to prove a f
 
 - `status: CHANGES_REQUESTED` if any `CRITICAL` or `HIGH` finding is introduced by this diff,
   or any real secret is committed.
-- `status: PASS_WITH_WARNINGS` for `MEDIUM`/`LOW` findings worth fixing but not blocking.
+- `status: PASS_WITH_WARNINGS` for `MEDIUM`/`LOW` findings worth fixing but not blocking. Those that
+  this diff introduced are fixed automatically, once, by a polish pass after the gates, so give each
+  a concrete `remediation`. Mark everything that was already there `preExisting: true`: it is
+  reported, never changed.
 - `status: PASS` if the diff introduces no security regression.
 
 ## Output contract

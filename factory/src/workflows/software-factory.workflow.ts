@@ -47,6 +47,7 @@ import { triageAgent } from '../agents/triage.agent.ts';
 import {
   amendTipCommitMessage,
   assessDeliveryEditability,
+  changesSince,
   chooseBaseBranch,
   commitAll,
   createBranch,
@@ -60,10 +61,13 @@ import {
   pushBranch,
   recentCommitSubjects,
   renameBranch,
+  restoreWorkingTree,
+  snapshotWorkingTree,
 } from '../tools/git-tools.ts';
 import { describeCoverage, isTestFile, viewDiff, type DiffCoverage, type DiffView } from '../tools/diff-view.ts';
+import { runPolishPass } from './polish-pass.ts';
 import { condenseDiff, explainAgentFailure } from '../tools/pr-merge-rules.ts';
-import { fallbackPrText, normalizePrWriterOutput, type PrTextContext } from '../tools/pr-text.ts';
+import { fallbackPrText, normalizePrWriterOutput, polishNote, type PrTextContext } from '../tools/pr-text.ts';
 import { branchNameFor, fallbackRunName, normalizeRunName, roundTitle, withTaskTrailer, type RunName } from '../tools/run-naming.ts';
 import {
   appendEvent,
@@ -82,7 +86,8 @@ import {
   writePendingInput,
   writeSummary,
 } from '../tools/logger-tools.ts';
-import { detectProjectStack, runSuite } from '../tools/test-runner-tools.ts';
+import { buildPayload, polishChecksLabel, qaChecksLabel, runChecks, testPayload, toCheckResult } from '../tools/run-checks.ts';
+import { detectProjectStack } from '../tools/test-runner-tools.ts';
 import {
   markCommentsHandled,
   pullRequestKey,
@@ -130,6 +135,7 @@ import {
   DEFAULT_PIPELINE,
   factoryTaskSchema,
   outcomeSchema,
+  polishResultSchema,
   prTextSchema,
   prWriterAgentSchema,
   qaReportSchema,
@@ -144,6 +150,7 @@ import {
   type ExecutionPlan,
   type Feedback,
   type Outcome,
+  type PolishResult,
   type PrText,
   type QaReport,
   type Revision,
@@ -1038,69 +1045,9 @@ const qaTesterStep = createStep({
 
     // Deterministic pre-execution of test and build: cheaper and more reliable than asking
     // the model to be the one that remembers to run them. The agent still runs targeted commands.
-    let preExecutedTest: string | null = null;
-    let preExecutedBuild: string | null = null;
-
-    if (!run.dryRun && run.testCommand) {
-      const execution = await runSuite(run.repoPath, run.testCommand, { cwd: run.stack.cwd });
-      const outputPath = writeContextBlock(
-        run.runId,
-        `qa-suite-attempt-${attempt}.log`,
-        `$ ${execution.command}\nexit=${execution.exitCode} duration=${execution.durationMs}ms\n\n` +
-          `--- stdout ---\n${execution.stdoutTail}\n--- stderr ---\n${execution.stderrTail}\n`,
-      );
-      appendEvent(run.runId, {
-        type: 'suite_executed',
-        attempt,
-        command: execution.command,
-        exitCode: execution.exitCode,
-        durationMs: execution.durationMs,
-        log: path.basename(outputPath),
-      });
-      preExecutedTest = JSON.stringify(
-        {
-          command: execution.command,
-          exitCode: execution.exitCode,
-          durationMs: execution.durationMs,
-          timedOut: execution.timedOut,
-          totals: execution.parsed,
-          stdoutTail: execution.stdoutTail.slice(-8_000),
-          stderrTail: execution.stderrTail.slice(-8_000),
-        },
-        null,
-        2,
-      );
-    }
-
-    if (!run.dryRun && run.stack.buildCommand) {
-      const buildExecution = await runSuite(run.repoPath, run.stack.buildCommand, { cwd: run.stack.cwd });
-      const buildOutputPath = writeContextBlock(
-        run.runId,
-        `qa-build-attempt-${attempt}.log`,
-        `$ ${buildExecution.command}\nexit=${buildExecution.exitCode} duration=${buildExecution.durationMs}ms\n\n` +
-          `--- stdout ---\n${buildExecution.stdoutTail}\n--- stderr ---\n${buildExecution.stderrTail}\n`,
-      );
-      appendEvent(run.runId, {
-        type: 'build_executed',
-        attempt,
-        command: buildExecution.command,
-        exitCode: buildExecution.exitCode,
-        durationMs: buildExecution.durationMs,
-        log: path.basename(buildOutputPath),
-      });
-      preExecutedBuild = JSON.stringify(
-        {
-          command: buildExecution.command,
-          exitCode: buildExecution.exitCode,
-          durationMs: buildExecution.durationMs,
-          timedOut: buildExecution.timedOut,
-          stdoutTail: buildExecution.stdoutTail.slice(-8_000),
-          stderrTail: buildExecution.stderrTail.slice(-8_000),
-        },
-        null,
-        2,
-      );
-    }
+    const checks = await runChecks(run, qaChecksLabel(attempt));
+    const preExecutedTest = checks.test ? testPayload(checks.test) : null;
+    const preExecutedBuild = checks.build ? buildPayload(checks.build) : null;
 
     // The patch is embedded in the prompt rather than left to a tool round-trip: the QA agent must
     // be able to spot deleted or weakened tests from primary evidence, and that must not depend on
@@ -1699,10 +1646,104 @@ const implementationCycle = createWorkflow({
 /* Step 07 - documentation                                                     */
 /* ========================================================================== */
 
+/* ========================================================================== */
+/* Step 06b - polish: the minor findings of the gates, fixed in one checked pass */
+/* ========================================================================== */
+
+/**
+ * The polish pass, run at the start of the documentation step.
+ *
+ * It is not a step of its own on purpose. Mastra resumes a nested workflow by position: with a new
+ * step in front of the delivery gate, a run left suspended there by an older version resumes one step
+ * early and the PR writer runs a second time (checked against Mastra with a nested workflow suspended
+ * under the old graph). Its artifact (`06-polish.json`), its events and its place in the Studio are
+ * what make it a stage; where it sits in the code does not change that.
+ *
+ * It cannot fail the run: whatever goes wrong inside it leaves the working tree as it was and is
+ * recorded as the result. The one exception is not being able to undo it, which stops the run.
+ */
+async function polishFindings(
+  state: CycleState,
+  logger: { info?: (...args: any[]) => void } | undefined,
+): Promise<PolishResult> {
+  const { run, attempt } = state;
+
+  // A retry of the delivery comes back through here. The fixes of a pass that completed are in the
+  // working tree already; asking again would pay twice for the same findings.
+  const earlierArtifact = readArtifact(run.runId, artifactFileName('polish')) as { status?: string; data?: unknown } | null;
+  const earlier = polishResultSchema.safeParse(earlierArtifact?.data);
+  if (earlier.success && earlierArtifact?.status !== 'FAILED') return earlier.data;
+
+  appendEvent(run.runId, { type: 'polish_started' });
+  const started = Date.now();
+  let servedBy: string | undefined;
+
+  const result = await runPolishPass(
+    {
+      gates: { qa: state.qaReport, review: state.reviewReport, security: state.securityReport },
+      enabled: run.pipeline.polish !== false,
+      qaEnabled: run.pipeline.qa,
+      dryRun: run.dryRun,
+      before: state.qaReport?.totals ?? null,
+      context: [
+        runBrief(run, attempt),
+        promptSection('Original task', run.revision?.originalTask ?? run.task),
+        run.revision ? promptSection('This round', run.task) : '',
+        promptSection('Execution plan', { summary: state.plan.summary, acceptanceCriteria: state.plan.acceptanceCriteria }),
+      ],
+    },
+    {
+      snapshot: () => snapshotWorkingTree(run.repoPath),
+      restore: (tree) => restoreWorkingTree(run.repoPath, tree),
+      changesSince: (tree) => changesSince(run.repoPath, tree),
+      runChecks: async () => toCheckResult(await runChecks(run, polishChecksLabel)),
+      askDeveloper: async (prompt, candidates) => {
+        const answer = await invokeAgent({
+          agent: developerAgent,
+          role: 'developer',
+          step: 'polish',
+          runId: run.runId,
+          attempt,
+          repoPath: run.repoPath,
+          repoName: run.repoName,
+          prompt,
+          schema: developerReportSchema,
+          maxSteps: MAX_STEPS.developer,
+          dryRunResult: {
+            ...stubDeveloperReport(attempt, []),
+            summary: '[dry-run] Polished the minor findings.',
+            appliedFeedback: candidates.map((candidate) => `${candidate.id}: [dry-run] applied`),
+          },
+        });
+        servedBy = answer.servedByModel;
+        return answer.object;
+      },
+      note: (event) => appendEvent(run.runId, event as { type: string }),
+    },
+  );
+
+  writeArtifact({
+    runId: run.runId,
+    step: 'polish',
+    status: result.status,
+    durationMs: Date.now() - started,
+    ...(servedBy ? { model: servedBy } : {}),
+    data: result,
+  });
+  logger?.info?.('[factory] polish pass finished', {
+    runId: run.runId,
+    status: result.status,
+    applied: result.applied.length,
+    asked: result.candidates.length,
+  });
+  return result;
+}
+
 const documentationStep = createStep({
   id: 'documentation',
   description:
-    'Documentation agent: decides whether the change invalidates the documentation (README, ' +
+    'First the polish pass (the minor findings of the gates, fixed once and checked), then the ' +
+    'documentation agent: decides whether the change invalidates the documentation (README, ' +
     'CHANGELOG, docs, OpenAPI, AGENTS.md) and updates exactly that. Optional - the pull-request ' +
     'text is written by the PR writer, which always runs.',
   inputSchema: cycleStateSchema,
@@ -1714,6 +1755,9 @@ const documentationStep = createStep({
     const state = inputData;
     const { run, attempt } = state;
     const logger = mastra?.getLogger?.();
+
+    // First, the minor findings of the gates: the documentation describes the code as it ends up.
+    await polishFindings(state, logger);
 
     const diff = run.dryRun ? { diff: '', files: [] } : await getDiff(run.repoPath);
 
@@ -1811,6 +1855,12 @@ const documentationStep = createStep({
 /* Step 07b - pull-request text (PR writer)                                    */
 /* ========================================================================== */
 
+/** The polish pass of the run, as recorded (`null` for a run that never reached it). */
+export function readPolishResult(runId: string): PolishResult | null {
+  const parsed = polishResultSchema.safeParse((readArtifact(runId, artifactFileName('polish')) as { data?: unknown } | null)?.data);
+  return parsed.success ? parsed.data : null;
+}
+
 /** What the PR writer works from, taken from the state of the cycle. */
 function prTextContext(
   state: CycleState,
@@ -1818,6 +1868,7 @@ function prTextContext(
   files: string[],
 ): PrTextContext {
   return {
+    polish: readPolishResult(state.run.runId),
     task: state.run.task,
     plan: state.plan,
     developer: state.developerReport,
@@ -1901,6 +1952,13 @@ function buildPrWriterPrompt(input: {
         })
       : '',
     promptSection('Stages switched off for this task (they did not run - never describe them as having run)', switchedOff.join(', ')),
+    promptSection(
+      'Minor findings after the gates (the factory adds these to Quality gates and Follow-ups itself: do not repeat them)',
+      (() => {
+        const note = polishNote(readPolishResult(run.runId));
+        return note ? [note.line, ...note.followUps.map((item) => `- not fixed: ${item}`)].join('\n') : '';
+      })(),
+    ),
     promptSection('Files changed', input.files),
     promptSection('Diff - the source of truth', diff.text === '' ? null : `\`\`\`diff\n${diff.text}\n\`\`\``),
     promptSection('What you were not shown', notShown.join('\n')),

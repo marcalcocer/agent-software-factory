@@ -27,6 +27,10 @@ export const pipelineConfigSchema = z.object({
   review: z.boolean().describe('Run the code review agent (default: true).'),
   security: z.boolean().describe('Run the security audit agent (default: true).'),
   documentation: z.boolean().describe('Run the documentation agent (default: true).'),
+  polish: z
+    .boolean()
+    .default(true)
+    .describe('Fix the minor findings of the gates in one checked pass (default: true). Needs the QA stage to verify itself.'),
 });
 export type PipelineConfig = z.infer<typeof pipelineConfigSchema>;
 
@@ -36,6 +40,7 @@ export const DEFAULT_PIPELINE: PipelineConfig = {
   review: true,
   security: true,
   documentation: true,
+  polish: true,
 };
 
 /** Stages that always run, surfaced so the UI can render them as locked. */
@@ -451,6 +456,46 @@ export const securityReportSchema = z.object({
   mustFixBeforeMerge: z.array(z.string()),
 });
 export type SecurityReport = z.infer<typeof securityReportSchema>;
+
+/* -------------------------------------------------------------------------- */
+/* 06 - Polish pass                                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What the polish pass did with the minor findings of the gates (the artifact `06-polish.json`).
+ *
+ * NONE: nothing to fix. SKIPPED: switched off, or QA is off so it could not verify itself. APPLIED:
+ * the developer's fixes stayed, the tests and the build passed after them. DECLINED: the developer
+ * looked and changed nothing. REVERTED: the fixes were undone (`reason` says why). FAILED: the pass
+ * could not run; the working tree is as it was.
+ */
+export const polishResultSchema = z.object({
+  status: z.enum(['NONE', 'SKIPPED', 'APPLIED', 'DECLINED', 'REVERTED', 'FAILED']),
+  reason: z.string().optional(),
+  detail: z.string().optional(),
+  /** What the developer was asked to fix. */
+  candidates: z.array(
+    z.object({
+      id: z.string(),
+      source: z.enum(['security', 'qa', 'review']),
+      severity: z.string(),
+      file: z.string().nullable(),
+      line: z.number().int().nullable(),
+      problem: z.string(),
+      fix: z.string(),
+    }),
+  ),
+  applied: z.array(z.string()),
+  declined: z.array(z.object({ id: z.string(), reason: z.string() })),
+  unanswered: z.array(z.string()),
+  /** Real findings the pass did not act on, with why (nits, things that were already there, too many). */
+  reported: z.array(z.object({ source: z.enum(['security', 'qa', 'review']), summary: z.string(), reason: z.string() })),
+  changedFiles: z.array(z.string()),
+  changedLines: z.number().int(),
+  developerSummary: z.string().optional(),
+  dryRun: z.boolean().optional(),
+});
+export type PolishResult = z.infer<typeof polishResultSchema>;
 
 /* -------------------------------------------------------------------------- */
 /* 07 - Documentation                                                          */

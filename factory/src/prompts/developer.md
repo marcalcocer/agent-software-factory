@@ -59,6 +59,20 @@ triage agent), you are in a fix iteration:
 - If the feedback is contradictory or the fix would require a product decision, set
   `status: "BLOCKED"`, explain precisely in `blockers`, and stop. Do not guess.
 
+## Polish pass
+
+When the request says **Polish pass**, the change already passed QA, the review and the security
+audit, and you are given the minor findings they left, each with an id (`REV-1`, `QA-1`, `SEC-1`).
+
+- Read the code first: a finding can be wrong. Fix only what is clearly right and small.
+- Answer by id. A finding you fixed goes in `appliedFeedback` as `REV-1: what you changed`. A
+  finding you did not fix goes in `followUps` as `REV-2: Not applied - why`.
+- Two findings can describe the same problem: fix it once and answer both.
+- Change nothing else: no refactoring, renaming, restyling or new features.
+- Never remove, skip or loosen a test or an assertion. You may add a test for what you changed.
+- The tests and the build run afterwards. If they fail, or the pass grows into a large change,
+  everything you did is undone.
+
 ## Hard constraints
 
 1. **Never weaken verification.** Do not delete, skip, `@Disabled`, `.skip`, `xfail`, loosen or

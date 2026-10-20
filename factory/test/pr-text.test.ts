@@ -6,6 +6,8 @@ import {
   composeCommitMessage,
   fallbackPrText,
   normalizePrWriterOutput,
+  polishNote,
+  withFollowUps,
   qualityGatesSection,
   removeSection,
   withQualityGates,
@@ -170,5 +172,159 @@ describe('composeCommitMessage', () => {
   it('is the subject alone when there is no body', () => {
     expect(composeCommitMessage('feat: x.', '')).toBe('feat: x');
     expect(composeCommitMessage('feat: x', 'Why.')).toBe('feat: x\n\nWhy.');
+  });
+});
+
+describe('what the pull request says about the polish pass', () => {
+  const candidate = (id: string, file: string, line: number, problem: string) => ({
+    id, source: 'review' as const, severity: 'MINOR', file, line, problem, fix: 'Do it.',
+  });
+  const base = {
+    candidates: [
+      candidate('REV-1', 'ui/src/Summary.jsx', 57, 'Sign colour reveals the hidden sign'),
+      candidate('REV-2', 'ui/src/theme.test.js', 1, 'var and const are mixed'),
+      candidate('REV-3', 'ui/src/ThemeToggle.jsx', 6, 'Icon is wrong for a moment on hydration'),
+    ],
+    applied: [] as string[],
+    declined: [] as Array<{ id: string; reason: string }>,
+    unanswered: [] as string[],
+    reported: [] as Array<{ source: 'security' | 'qa' | 'review'; summary: string; reason: string }>,
+    changedFiles: [] as string[],
+    changedLines: 0,
+  };
+
+  it('says code changed after the review approved it, and what was left', () => {
+    const note = polishNote({
+      ...base,
+      status: 'APPLIED',
+      applied: ['REV-1'],
+      declined: [{ id: 'REV-2', reason: 'the rule is written for Java' }],
+      unanswered: ['REV-3'],
+      changedFiles: ['ui/src/Summary.jsx'],
+      changedLines: 4,
+    })!;
+
+    expect(note.line).toBe('Polish: fixed 1 of 3 minor findings - 1 file changed after the review, tests and build passed again');
+    expect(note.followUps).toEqual([
+      'ui/src/theme.test.js:1: var and const are mixed (not fixed: the rule is written for Java)',
+      'ui/src/ThemeToggle.jsx:6: Icon is wrong for a moment on hydration (not fixed)',
+    ]);
+  });
+
+  it('puts the polish line between the audit and the documentation in the quality gates', () => {
+    const section = qualityGatesSection({
+      ...round1Context(),
+      polish: { ...base, status: 'APPLIED', applied: ['REV-1'], changedFiles: ['a.ts'], changedLines: 2 },
+    });
+    const lines = section.split('\n').filter((line) => line.startsWith('- ')).map((line) => line.split(':')[0]);
+
+    expect(lines).toEqual(['- QA', '- Code review', '- Security audit', '- Polish', '- Documentation']);
+  });
+
+  it('has no polish line for a run that never reached the pass', () => {
+    expect(qualityGatesSection(round1Context())).not.toContain('Polish');
+    expect(polishNote(null)).toBeNull();
+  });
+
+  it('lists every finding as not fixed when the pass was undone, and says why', () => {
+    const note = polishNote({ ...base, status: 'REVERTED', reason: 'CHECKS_FAILED', detail: 'The test suite failed after the fixes (exit 1).' })!;
+
+    expect(note.line).toBe('Polish: undone, The test suite failed after the fixes (exit 1).');
+    expect(note.followUps).toHaveLength(3);
+    expect(note.followUps.every((item) => item.endsWith('(not fixed)'))).toBe(true);
+  });
+
+  it.each([
+    [{ status: 'NONE' as const }, 'Polish: no minor findings to fix'],
+    [{ status: 'SKIPPED' as const, reason: 'DISABLED' }, 'Polish: not run (disabled for this task)'],
+    [{ status: 'SKIPPED' as const, reason: 'NEEDS_QA' }, 'Polish: not run (it needs the QA stage to check its fixes)'],
+    [{ status: 'DECLINED' as const }, 'Polish: 3 minor findings looked at, nothing changed'],
+    [{ status: 'FAILED' as const, detail: 'usage limit reached' }, 'Polish: could not run (usage limit reached)'],
+  ])('%j reads %s', (change, line) => {
+    expect(polishNote({ ...base, ...change })!.line).toBe(line);
+  });
+
+  it('lists the minor findings when the pass was switched off, because nothing else will fix them', () => {
+    const note = polishNote({ ...base, status: 'SKIPPED', reason: 'DISABLED', detail: 'Stage disabled for this task.' })!;
+
+    expect(note.line).toBe('Polish: not run (disabled for this task)');
+    expect(note.followUps).toEqual([
+      'ui/src/Summary.jsx:57: Sign colour reveals the hidden sign (not fixed)',
+      'ui/src/theme.test.js:1: var and const are mixed (not fixed)',
+      'ui/src/ThemeToggle.jsx:6: Icon is wrong for a moment on hydration (not fixed)',
+    ]);
+  });
+
+  it('keeps what the gates reported but never acted on in the follow-ups, except nits', () => {
+    const note = polishNote({
+      ...base,
+      candidates: [],
+      status: 'NONE',
+      reported: [
+        { source: 'security', summary: 'XSS in ui/src/lib/ChartUtils.js:37: self-XSS', reason: 'informational' },
+        { source: 'review', summary: 'naming', reason: 'a nit' },
+      ],
+    })!;
+
+    expect(note.followUps).toEqual(['XSS in ui/src/lib/ChartUtils.js:37: self-XSS (informational)']);
+  });
+
+  it('puts the unfixed findings in the follow-ups of the plain description as well', () => {
+    const text = fallbackPrText({
+      ...round1Context(),
+      polish: { ...base, status: 'DECLINED', declined: [{ id: 'REV-2', reason: 'style only' }], unanswered: ['REV-1', 'REV-3'] },
+    });
+
+    expect(text.pullRequest.body).toContain('(not fixed: style only)');
+    expect(text.pullRequest.body).toContain('- Polish: 3 minor findings looked at, nothing changed');
+  });
+});
+
+describe('withFollowUps', () => {
+  it('creates the section at the end when the description has none', () => {
+    expect(withFollowUps('## Summary\nS', ['a: x (not fixed)', 'b: y (not fixed)'])).toBe(
+      '## Summary\nS\n\n## Follow-ups\n\n- a: x (not fixed)\n- b: y (not fixed)',
+    );
+  });
+
+  it('adds to the section the model wrote, and leaves what comes after it where it was', () => {
+    const body = '## Summary\nS\n\n## Follow-ups\n- Decide on a changelog\n\n## Notes\nN';
+    expect(withFollowUps(body, ['a: x (not fixed)'])).toBe(
+      '## Summary\nS\n\n## Follow-ups\n- Decide on a changelog\n- a: x (not fixed)\n\n## Notes\nN',
+    );
+  });
+
+  it('does not repeat an item that is already there, and does nothing for no items', () => {
+    const body = '## Follow-ups\n- a: x (not fixed)';
+    expect(withFollowUps(body, ['a: x (not fixed)'])).toBe(body);
+    expect(withFollowUps('## Summary\nS', [])).toBe('## Summary\nS');
+  });
+
+  it('finds the heading however it is written', () => {
+    for (const heading of ['## Follow-ups', '## Follow ups', '## Followups', '## follow-up']) {
+      const result = withFollowUps(`${heading}\n- one`, ['two']);
+      expect(result).toBe(`${heading}\n- one\n- two`);
+    }
+  });
+});
+
+describe('the description the agent wrote reaches the pull request with the factory\'s own parts', () => {
+  const real = readJson(RUN.round1, '07-pr-writer.attempt-2.json').data;
+  const [subject = '', , ...rest] = String(real.commitMessage).split('\n');
+
+  it('lists the unfixed minor findings even when the model said nothing about them', () => {
+    const text = normalizePrWriterOutput(
+      { commitMessage: { subject, body: rest.join('\n').trim() }, pullRequest: { ...real.pullRequest, body: '## Summary\nA change.\n\n## Changes\n- x', labels: [] } },
+      {
+        ...round1Context(),
+        polish: {
+          status: 'SKIPPED', reason: 'DISABLED', changedFiles: [], changedLines: 0, applied: [], declined: [], unanswered: [], reported: [],
+          candidates: [{ id: 'REV-1', source: 'review', severity: 'MINOR', file: 'ui/src/Summary.jsx', line: 57, problem: 'Sign colour reveals the hidden sign', fix: 'x' }],
+        },
+      },
+    );
+
+    expect(text.pullRequest.body).toContain('- Polish: not run (disabled for this task)');
+    expect(text.pullRequest.body).toMatch(/## Follow-ups\n\n- ui\/src\/Summary.jsx:57: Sign colour reveals the hidden sign \(not fixed\)$/);
   });
 });

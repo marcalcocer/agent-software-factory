@@ -12,7 +12,7 @@
 
 export type FlagValue = string | boolean;
 
-export type StageName = 'qa' | 'review' | 'security' | 'documentation';
+export type StageName = 'qa' | 'review' | 'security' | 'documentation' | 'polish';
 
 /** Optional stages and every flag name that addresses them (`--no-docs` -> documentation). */
 const STAGE_FLAG_NAMES: Record<StageName, readonly string[]> = {
@@ -20,6 +20,7 @@ const STAGE_FLAG_NAMES: Record<StageName, readonly string[]> = {
   review: ['review'],
   security: ['security'],
   documentation: ['docs', 'documentation'],
+  polish: ['polish'],
 };
 
 function isFalse(value: FlagValue): boolean {

@@ -36,6 +36,8 @@ export const ARTIFACT_PREFIXES = {
   triage: '04-triage',
   'code-review': '05-code-review',
   security: '06-security',
+  // The one pass that fixes the minor findings of QA, the review and the audit.
+  polish: '06-polish',
   documentation: '07-documentation',
   // The commit message and pull-request text. Same stage number as documentation: it runs right
   // after it (so it can say what was documented) and sorts right after it.
