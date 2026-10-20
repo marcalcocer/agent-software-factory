@@ -31,6 +31,7 @@ export const DRY_RUN_SCENARIOS = [
   'escalate',
   'clarify',
   'polish',
+  'phased',
 ] as const;
 
 export type DryRunScenario = (typeof DRY_RUN_SCENARIOS)[number];
@@ -101,6 +102,38 @@ export function stubExecutionPlan(
     ],
     suggestedBranchName: 'feature/dry-run-change',
     commitMessage: 'feat(example): dry-run change',
+    // The architect proposes phases only in the scenario that exercises them.
+    phasing:
+      scenario === 'phased'
+        ? {
+            phased: true,
+            reason: '[dry-run] Too big for one pull request.',
+            initiativeTitle: '[dry-run] Rework the example module',
+            phases: [
+              {
+                title: '[dry-run] Foundation',
+                goal: '[dry-run] The base the others build on.',
+                scope: ['[dry-run] core types', '[dry-run] wiring'],
+                acceptance: ['[dry-run] the build passes'],
+                dependsOn: [],
+              },
+              {
+                title: '[dry-run] Screens',
+                goal: '[dry-run] Apply it to the screens.',
+                scope: ['[dry-run] list screen', '[dry-run] detail screen'],
+                acceptance: ['[dry-run] screens use the new types'],
+                dependsOn: [1],
+              },
+              {
+                title: '[dry-run] Cleanup',
+                goal: '[dry-run] Remove the old code.',
+                scope: ['[dry-run] dead code'],
+                acceptance: ['[dry-run] nothing refers to the old module'],
+                dependsOn: [],
+              },
+            ],
+          }
+        : null,
   };
 }
 

@@ -24,6 +24,7 @@ import type {
   ReviewReport,
   SecurityReport,
 } from '../utils/schemas.ts';
+import type { RoadmapView } from '../initiatives/phasing.ts';
 import { cleanBody, cleanSubject, clipAtWord } from './pr-merge-rules.ts';
 
 /* -------------------------------------------------------------------------- */
@@ -49,6 +50,8 @@ export interface PrTextContext {
   coverage?: Partial<Record<'review' | 'security', string>>;
   /** What the polish pass did with the minor findings of the gates (`null`: it never ran). */
   polish?: PolishResult | null;
+  /** The roadmap this pull request is a phase of (`null`: it is a task of its own). */
+  roadmap?: RoadmapView | null;
 }
 
 /** The longest commit subject that is ever kept, whoever wrote it. The agent is asked for 72. */
@@ -215,6 +218,40 @@ export function withQualityGates(body: string, gates: string): string {
   return `${clean.slice(0, tail.index).trimEnd()}\n\n${gates}\n\n${clean.slice(tail.index)}`.trim();
 }
 
+/**
+ * The "Roadmap" section: which phase this pull request is, and what is left. Written by the factory
+ * from the roadmap, never by a model: a reader of one phase has to know it is one phase - the question
+ * "is this the only phase?" was asked of a pull request that did not say.
+ */
+export function roadmapSection(view: RoadmapView): string {
+  const lines = view.phases.map((phase) => {
+    const title = clipAtWord(phase.title, 100);
+    if (phase.status === 'SKIPPED') return `- [ ] ~~${phase.ordinal}. ${title}~~ (skipped)`;
+    if (phase.ordinal === view.current) return `- [x] ${phase.ordinal}. ${title} - **this pull request**`;
+    return `- [${phase.status === 'MERGED' ? 'x' : ' '}] ${phase.ordinal}. ${title}${phase.status === 'MERGED' ? ' - merged' : ''}`;
+  });
+  const later = view.phases.filter((phase) => phase.ordinal > view.current && phase.status !== 'SKIPPED' && phase.status !== 'MERGED');
+  return [
+    '## Roadmap',
+    '',
+    `This pull request is **phase ${view.current} of ${view.total}** of "${clipAtWord(view.title, 100)}".`,
+    '',
+    ...lines,
+    ...(later.length > 0 ? ['', `Not in this pull request: ${later.length === 1 ? 'phase' : 'phases'} ${later.map((phase) => phase.ordinal).join(', ')}.`] : []),
+  ].join('\n');
+}
+
+/** Puts the Roadmap section where the quality gates start, replacing any a model wrote anyway. */
+export function withRoadmap(body: string, roadmap: RoadmapView | null | undefined): string {
+  const clean = removeSection(cleanBody(body), 'Roadmap');
+  if (!roadmap) return clean;
+  const section = roadmapSection(roadmap);
+  const gates = headingPattern('Quality gates').exec(clean);
+  const tail = gates ?? /^##\s*(risks?\b|follow-?ups?\b)/im.exec(clean);
+  if (!tail) return `${clean}\n\n${section}`.trim();
+  return `${clean.slice(0, tail.index).trimEnd()}\n\n${section}\n\n${clean.slice(tail.index)}`.trim();
+}
+
 const FOLLOW_UPS_HEADING = /^##\s*follow[- ]?ups?\s*#*\s*$/im;
 
 /**
@@ -269,7 +306,7 @@ export function normalizePrWriterOutput(raw: PrWriterAgentOutput, ctx: PrTextCon
 
   const title = clipAtWord(cleanSubject(raw.pullRequest.title), TITLE_LIMIT) || commitSubject;
   const body = withFollowUps(
-    withQualityGates(raw.pullRequest.body, qualityGatesSection(ctx)),
+    withRoadmap(withQualityGates(raw.pullRequest.body, qualityGatesSection(ctx)), ctx.roadmap),
     polishNote(ctx.polish)?.followUps ?? [],
   );
 
@@ -357,6 +394,7 @@ export function fallbackPrText(ctx: PrTextContext, reason?: string): PrText {
     ['## Summary', '', summary].join('\n'),
     ['## Changes', '', ...changesSection(ctx)].join('\n'),
     ['## Test plan', '', ...testPlanSection(ctx)].join('\n'),
+    ...(ctx.roadmap ? [roadmapSection(ctx.roadmap)] : []),
     qualityGatesSection(ctx),
     ...(followUps.length > 0 ? [['## Follow-ups', '', ...bullets(followUps, 6, ['more item', 'more items'])].join('\n')] : []),
   ];

@@ -99,7 +99,13 @@ export interface RunTraceMeta {
   /** What the task is called in the run history. Editable by the user. */
   title?: string;
   /** Who chose the title: the namer agent, the plain stand-in, a round's triage, or the user. */
-  titleSource?: 'agent' | 'fallback' | 'round' | 'user';
+  titleSource?: 'agent' | 'fallback' | 'round' | 'phase' | 'user';
+  /** The initiative and phase this run works on (see `initiatives/store.ts`). */
+  initiativeId?: string;
+  phaseId?: string;
+  /** The user's own repository when the work happens in a checkout of its own (`repoPath` stays the user's). */
+  workPath?: string;
+  isolation?: 'worktree' | 'in-place';
   /**
    * How this run relates to others. Every run is round 1 of its own chain unless it is a
    * revision of a pull request, in which case it points at the run it continues. Persisted so a

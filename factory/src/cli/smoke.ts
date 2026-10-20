@@ -53,8 +53,14 @@ interface ScenarioExpectation {
   pipeline?: { qa?: boolean; review?: boolean; security?: boolean; documentation?: boolean; polish?: boolean };
   /** Run as a further round on a pull request, the way `revise` starts one. */
   round?: boolean;
+  /** What the user allowed the architect to do about phasing. */
+  phasing?: 'auto' | 'on' | 'off';
+  /** The dry-run scenario the stubs follow, when it is not `scenario` (the architect proposes phases, the user said no). */
+  dryRunScenario?: string;
   /** Further assertions on what the run wrote. Each entry is `[name, ok, detail]`. */
-  extraChecks?: (traceDir: string) => Array<[string, boolean, string?]>;
+  extraChecks?: (traceDir: string) => Array<[string, boolean, string?]> | Promise<Array<[string, boolean, string?]>>;
+  /** More work once the run is checked: another run that builds on this one. */
+  then?: (context: { label: string; traceDir: string }) => Promise<void>;
 }
 
 /**
@@ -255,6 +261,93 @@ function roundChecks(traceDir: string): Array<[string, boolean, string?]> {
   ];
 }
 
+/**
+ * A big request the architect splits into phases: the roadmap is saved, this run is phase 1, and the
+ * pull request says so.
+ */
+async function phasedChecks(traceDir: string): Promise<Array<[string, boolean, string?]>> {
+  const { withStore } = await import('../initiatives/store.ts');
+  const read = (file: string): Record<string, any> | null => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(traceDir, file), 'utf8')) as Record<string, any>;
+    } catch {
+      return null;
+    }
+  };
+  const meta = read('run.json');
+  const body = String(read('08-pull-request.json')?.data?.pullRequest?.body ?? '');
+  const initiative = meta?.initiativeId ? await withStore((store) => store.getInitiative(String(meta.initiativeId))) : null;
+  const phases = initiative?.phases ?? [];
+
+  return [
+    ['the run is filed under an initiative and a phase', Boolean(meta?.initiativeId) && meta?.phaseId === `${meta?.initiativeId}-p1`, `${meta?.initiativeId} ${meta?.phaseId}`],
+    ['the roadmap was saved: a project of three phases', initiative?.kind === 'project' && phases.length === 3, `${initiative?.kind} ${phases.length}`],
+    ['this run is phase 1, running, with its task and branch', phases[0]?.status === 'RUNNING' || phases[0]?.status === 'IN_REVIEW' ? phases[0]?.taskId === meta?.taskId && phases[0]?.branch === meta?.branch : false, `${phases[0]?.status} ${phases[0]?.taskId}`],
+    ['the other phases wait, each after the one before it unless told otherwise', phases[1]?.status === 'PLANNED' && phases[1]?.dependsOn.join() === phases[0]?.id && phases[2]?.dependsOn.join() === phases[1]?.id, phases.map((p) => p.dependsOn.join('+')).join(' | ')],
+    ['the initiative is named by the architect, not by phase 1', initiative?.title === '[dry-run] Rework the example module', initiative?.title],
+    ['the pull request says it is phase 1 of 3', /This pull request is \*\*phase 1 of 3\*\*/.test(body) && /- \[x\] 1\. \[dry-run\] Foundation - \*\*this pull request\*\*/.test(body) && /- \[ \] 2\. \[dry-run\] Screens/.test(body), (/## Roadmap[\s\S]{0,120}/.exec(body) ?? [''])[0]],
+    ['the Roadmap comes before the quality gates', body.indexOf('## Roadmap') !== -1 && body.indexOf('## Roadmap') < body.indexOf('## Quality gates'), ''],
+  ];
+}
+
+/**
+ * Phase 2 of that roadmap. It cannot start while phase 1 is not merged; once it is, a run of the phase
+ * needs no namer (the phase has its name), takes the phase's title, and is filed under the phase.
+ */
+async function phaseTwo({ label, traceDir }: { label: string; traceDir: string }): Promise<void> {
+  const { withStore } = await import('../initiatives/store.ts');
+  const { phaseTask } = await import('../initiatives/phasing.ts');
+  const meta = JSON.parse(fs.readFileSync(path.join(traceDir, 'run.json'), 'utf8')) as Record<string, any>;
+  const initiativeId = String(meta.initiativeId);
+  const phaseId = `${initiativeId}-p2`;
+  const workflow = mastra.getWorkflow('softwareFactoryWorkflow');
+
+  const start = async () => {
+    const initiative = (await withStore((store) => store.getInitiative(initiativeId)))!;
+    const phase = initiative.phases.find((candidate) => candidate.id === phaseId)!;
+    const runId = generateRunId('smoke-phase');
+    const run = await workflow.createRun({ runId });
+    const result = await run.start({
+      inputData: {
+        task: phaseTask(initiative, phase),
+        repo: PROJECT_ROOT,
+        maxAttempts: 2,
+        autoCommit: false,
+        createPullRequest: false,
+        interactive: false,
+        phase: { initiativeId, phaseId },
+      },
+    });
+    return { runId, result };
+  };
+
+  // 1. Phase 1 is still a pull request: phase 2 would be planned against code that is about to change.
+  const early = await start();
+  check(
+    `${label} phase 2 is refused while phase 1 is not merged`,
+    early.result.status === 'failed' && /builds on phase 1/.test(String(early.result.error?.message)),
+    early.result.status === 'failed' ? String(early.result.error?.message).slice(0, 110) : early.result.status,
+  );
+
+  // 2. Phase 1 merged (what `pr-merge` and `pr-check` do): now it starts.
+  await withStore((store) => store.markMerged(`${initiativeId}-p1`, { sha: 'abc1234' }));
+  const { runId, result } = await start();
+  check(`${label} phase 2 runs once phase 1 is merged`, result.status === 'success', result.status);
+  if (result.status !== 'success') return;
+
+  const dir = traceDirFor(runId);
+  const run2 = JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8')) as Record<string, any>;
+  const namer = JSON.parse(fs.readFileSync(path.join(dir, '00-run-namer.json'), 'utf8')) as Record<string, any>;
+  const calls = fs.readFileSync(path.join(dir, 'events.ndjson'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, any>);
+  const phase = (await withStore((store) => store.getPhase(phaseId)))!;
+
+  check(`${label} phase 2's run is filed under phase 2`, run2.phaseId === phaseId && run2.initiativeId === initiativeId, `${run2.initiativeId} ${run2.phaseId}`);
+  check(`${label} phase 2 is named by its roadmap entry, with no model asked`, namer.data?.source === 'phase' && run2.title === '[dry-run] Screens' && !calls.some((e) => e.role === 'run-namer'), `${run2.title} ${namer.data?.source}`);
+  check(`${label} phase 2 has a task id of its own, and a branch from its title`, run2.taskId !== meta.taskId && String(run2.branch).startsWith(`factory/${run2.taskId}/`) && /screens/.test(String(run2.branch)), String(run2.branch));
+  check(`${label} phase 2 is running with its own task`, phase.status === 'RUNNING' && phase.taskId === run2.taskId, `${phase.status} ${phase.taskId}`);
+  check(`${label} the pull request of phase 2 says it is phase 2 of 3`, /phase 2 of 3/.test(String(JSON.parse(fs.readFileSync(path.join(dir, '08-pull-request.json'), 'utf8')).data?.pullRequest?.body)), '');
+}
+
 const SCENARIOS: ScenarioExpectation[] = [
   {
     scenario: 'happy',
@@ -301,6 +394,36 @@ const SCENARIOS: ScenarioExpectation[] = [
       ...polishChecks(dir, { status: 'APPLIED', applied: 1, reportedNit: true, gateLine: /- Polish: 1 minor finding fixed \(dry run\)/ }),
       ...gateChecks(dir, { qa: 'PASS', codeReview: 'APPROVED_WITH_SUGGESTIONS', security: 'PASS', documentation: 'COMPLETED' }),
     ],
+  },
+  {
+    scenario: 'phased',
+    description: 'a big request: the architect proposes three phases -> a roadmap, this run is phase 1, and phase 2 follows once phase 1 is merged',
+    interactive: false,
+    expect: 'DELIVERED_WITHOUT_PR',
+    expectedAttempts: 1,
+    requiredArtifacts: ['01-pm-architect.json', '07-pr-writer.json', '08-pull-request.json', 'summary.json'],
+    extraChecks: phasedChecks,
+    then: phaseTwo,
+  },
+  {
+    scenario: 'happy',
+    description: 'phasing switched OFF: the architect is told not to split, and no roadmap is made even if it proposes one',
+    interactive: false,
+    expect: 'DELIVERED_WITHOUT_PR',
+    expectedAttempts: 1,
+    phasing: 'off',
+    dryRunScenario: 'phased',
+    requiredArtifacts: ['01-pm-architect.json', '08-pull-request.json', 'summary.json'],
+    extraChecks: async (dir) => {
+      const { withStore } = await import('../initiatives/store.ts');
+      const meta = JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8')) as Record<string, any>;
+      const initiative = await withStore((store) => store.getInitiative(String(meta.initiativeId)));
+      const body = String(JSON.parse(fs.readFileSync(path.join(dir, '08-pull-request.json'), 'utf8')).data?.pullRequest?.body ?? '');
+      return [
+        ['it stays a quick task of one phase', initiative?.kind === 'quick' && initiative.phases.length === 1, `${initiative?.kind} ${initiative?.phases.length}`],
+        ['the pull request has no roadmap', !body.includes('## Roadmap'), ''],
+      ];
+    },
   },
   {
     scenario: 'polish',
@@ -442,7 +565,7 @@ function readJsonFile(filePath: string): Record<string, unknown> | null {
 }
 
 async function runScenario(expectation: ScenarioExpectation, index: number): Promise<void> {
-  process.env.FACTORY_DRY_RUN_SCENARIO = expectation.scenario;
+  process.env.FACTORY_DRY_RUN_SCENARIO = expectation.dryRunScenario ?? expectation.scenario;
   process.env.FACTORY_NON_INTERACTIVE = expectation.interactive ? 'false' : 'true';
 
   const label = `[${index + 1}/${SCENARIOS.length}] ${expectation.scenario}${
@@ -463,6 +586,7 @@ async function runScenario(expectation: ScenarioExpectation, index: number): Pro
       createPullRequest: false,
       interactive: expectation.interactive,
       ...(expectation.pipeline ? { pipeline: expectation.pipeline } : {}),
+      ...(expectation.phasing ? { phasing: expectation.phasing } : {}),
       ...(expectation.round
         ? { revision: SMOKE_REVISION, baseBranch: 'master', branchName: SMOKE_REVISION.pullRequest.headBranch }
         : {}),
@@ -518,7 +642,7 @@ async function runScenario(expectation: ScenarioExpectation, index: number): Pro
   const missing = expectation.requiredArtifacts.filter((artifact) => !present.includes(artifact));
   check(`${label} writes the expected artifacts`, missing.length === 0, missing.length > 0 ? `missing: ${missing.join(', ')}` : `${present.length} files`);
 
-  for (const [name, ok, detail] of expectation.extraChecks?.(traceDir) ?? []) {
+  for (const [name, ok, detail] of (await expectation.extraChecks?.(traceDir)) ?? []) {
     check(`${label} ${name}`, ok, detail ?? '');
   }
 
@@ -526,6 +650,8 @@ async function runScenario(expectation: ScenarioExpectation, index: number): Pro
     `${label} writes the run event log`,
     fs.existsSync(path.join(traceDir, 'events.ndjson')),
   );
+
+  await expectation.then?.({ label, traceDir });
 
   const summaryPath = path.join(traceDir, 'summary.json');
   if (fs.existsSync(summaryPath)) {

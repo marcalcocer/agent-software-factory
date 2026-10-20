@@ -141,6 +141,18 @@ export const factoryTaskSchema = z.object({
   revision: revisionSchema
     .optional()
     .describe('Set when this run is a further round on an existing pull request.'),
+  phasing: z
+    .enum(['auto', 'on', 'off'])
+    .optional()
+    .describe('Whether the architect may split a big request into phases (default: auto - only when it is too big for one pull request).'),
+  phase: z
+    .object({ initiativeId: z.string(), phaseId: z.string() })
+    .optional()
+    .describe('Set when this run implements one phase of a roadmap.'),
+  isolation: z
+    .enum(['worktree', 'in-place'])
+    .optional()
+    .describe('Where the work happens: its own checkout (worktree, the default) or the repository as the user has it.'),
 });
 export type FactoryTask = z.infer<typeof factoryTaskSchema>;
 
@@ -188,6 +200,27 @@ export const runContextSchema = z.object({
   revision: revisionSchema.optional(),
   /** `f0042`: ties the branch, the commits and every round of the task together. Absent on older runs. */
   taskId: z.string().optional(),
+  /** The user's own repository, when the work happens somewhere else (`repoPath` is then where the work is). */
+  mainRepoPath: z.string().optional(),
+  /** `worktree`: `repoPath` is a checkout made for this task. `in-place`: it is the user's repository. */
+  isolation: z.enum(['worktree', 'in-place']).optional(),
+  /** The initiative and phase this run belongs to. Absent on older runs, and when the store was unavailable. */
+  initiative: z
+    .object({
+      id: z.string(),
+      phaseId: z.string(),
+      ordinal: z.number().int(),
+      total: z.number().int(),
+      /** The initiative's title. */
+      title: z.string(),
+      /** The phase's own title. */
+      phaseTitle: z.string(),
+      /** `new`: a task that may become a project. `phase`: one phase of a roadmap. `round`: further work on a pull request. */
+      mode: z.enum(['new', 'phase', 'round']),
+    })
+    .optional(),
+  /** What the user allowed the architect to do about phasing. */
+  phasingMode: z.enum(['auto', 'on', 'off']).optional(),
   /** What the task is called in the run history. */
   title: z.string().optional(),
 });
@@ -196,6 +229,32 @@ export type RunContext = z.infer<typeof runContextSchema>;
 /* -------------------------------------------------------------------------- */
 /* 01 - PM & Architect                                                         */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * The architect's proposal to deliver a big request in phases. `phased: false` (or no proposal) is the
+ * normal case: one pull request.
+ */
+export const phasingSchema = z.object({
+  phased: z
+    .boolean()
+    .describe('True only when the request is too big for one reviewable pull request and should be delivered in phases.'),
+  reason: z.string().describe('Why, in one sentence: what makes it too big. Empty when phased is false.'),
+  initiativeTitle: z.string().describe('A short name for the whole effort - not for phase 1. Empty when phased is false.'),
+  phases: z
+    .array(
+      z.object({
+        title: z.string().describe('What the phase delivers, as a short noun phrase.'),
+        goal: z.string().describe('One or two sentences: what is true when this phase is merged.'),
+        scope: z.array(z.string()).describe('What it covers, as short bullet points (files, screens, behaviours).'),
+        acceptance: z.array(z.string()).describe('How to tell it is done: verifiable statements.'),
+        dependsOn: z
+          .array(z.number().int())
+          .describe('Positions (1 = the first phase) of earlier phases that must be merged first. Empty: just the one before.'),
+      }),
+    )
+    .describe('ALL the phases, in delivery order. Phase 1 is the one this execution plan implements. Empty when phased is false.'),
+});
+export type Phasing = z.infer<typeof phasingSchema>;
 
 export const executionPlanSchema = z.object({
   summary: z.string().describe('One-paragraph abstract of the plan.'),
@@ -234,6 +293,8 @@ export const executionPlanSchema = z.object({
   ),
   suggestedBranchName: z.string(),
   commitMessage: z.string().describe('Conventional Commits subject, <= 72 characters.'),
+  /** Absent on plans from before phasing existed, and `null` when the request is one pull request. */
+  phasing: phasingSchema.nullish(),
 });
 export type ExecutionPlan = z.infer<typeof executionPlanSchema>;
 

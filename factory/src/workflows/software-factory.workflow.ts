@@ -68,7 +68,7 @@ import { describeCoverage, isTestFile, viewDiff, type DiffCoverage, type DiffVie
 import { runPolishPass } from './polish-pass.ts';
 import { cleanSubject, condenseDiff, explainAgentFailure } from '../tools/pr-merge-rules.ts';
 import { composeCommitMessage, fallbackPrText, normalizePrWriterOutput, polishNote, type PrTextContext } from '../tools/pr-text.ts';
-import { branchNameFor, fallbackRunName, normalizeRunName, roundTitle, withTaskTrailer, type RunName } from '../tools/run-naming.ts';
+import { branchNameFor, fallbackRunName, guessBranchType, normalizeRunName, roundTitle, slugify, withTaskTrailer, type RunName } from '../tools/run-naming.ts';
 import {
   appendEvent,
   aggregateRunMetrics,
@@ -111,6 +111,10 @@ import {
 import { getConventionSources } from '../utils/context-loader.ts';
 import { getFactoryConfig, resolveInsideRepo, resolveRepoPath } from '../utils/factory-config.ts';
 import { allocateTaskId } from '../utils/task-ids.ts';
+import { backlogFromRun } from '../initiatives/harvest.ts';
+import { linkToInitiative, loadRoadmapView, renameInitiative, startPhase, type InitiativeLink } from '../initiatives/link.ts';
+import { renderInitiativeContext, roadmapFromPlan, type RoadmapView } from '../initiatives/phasing.ts';
+import { withStore } from '../initiatives/store.ts'; 
 import { AGENT_ROLES, describeModelChain } from '../utils/model-router.ts';
 import {
   blockedQaReport,
@@ -204,6 +208,9 @@ function runBrief(run: RunContext, attempt: number): string {
     testCommand: run.testCommand,
     conventionSources: run.conventions,
     traceDirectory: run.traceDir,
+    ...(run.initiative && run.initiative.total > 1
+      ? { phase: `${run.initiative.ordinal} of ${run.initiative.total} of "${run.initiative.title}": ${run.initiative.phaseTitle}` }
+      : {}),
     ...(run.revision
       ? {
           // Every agent should know this is further work on an open pull request, not a fresh task.
@@ -553,9 +560,12 @@ const prepareRunStep = createStep({
     // The CLI may have recorded the run already (it does, the moment it starts one).
     const revision = inputData.revision;
     const rootRecord = revision
-      ? (readArtifact(revision.rootRunId, 'run.json') as { taskId?: string; title?: string } | null)
+      ? (readArtifact(revision.rootRunId, 'run.json') as { taskId?: string; title?: string; initiativeId?: string; phaseId?: string } | null)
       : null;
-    const taskId = revision ? rootRecord?.taskId : await allocateTaskId();
+    // A retry of a prepare that failed halfway keeps the id it had: ids are not spent twice.
+    const earlier = readArtifact(effectiveRunId, 'run.json') as { taskId?: string; phaseId?: string } | null;
+    const taskId = revision ? rootRecord?.taskId : (earlier?.taskId ?? (await allocateTaskId()));
+    const mode: InitiativeLink['mode'] = inputData.phase ? 'phase' : revision ? 'round' : 'new';
     const provisionalName = fallbackRunName(inputData.task);
     const provisionalTitle = revision
       ? roundTitle(rootRecord?.title ?? fallbackRunName(revision.originalTask).title, revision.round, revision.title)
@@ -588,6 +598,7 @@ const prepareRunStep = createStep({
       ...(inputData.revision ? { revision: inputData.revision } : {}),
       ...(taskId ? { taskId } : {}),
       title: provisionalTitle,
+      ...(inputData.phasing ? { phasingMode: inputData.phasing } : {}),
     };
 
     const { traceDir, startedAt } = openRunTrace({
@@ -624,12 +635,51 @@ const prepareRunStep = createStep({
     run.traceDir = traceDir;
     run.startedAt = startedAt; // the run began when it was started, not when this step got going
 
+    /** Bookkeeping around the run: a failure is recorded and the run goes on - except for a phase, which is what the run is for. */
+    const tryLink = async (title: string): Promise<InitiativeLink | undefined> => {
+      try {
+        return await linkToInitiative({
+          runId: run.runId,
+          repoPath,
+          task: inputData.task,
+          provisionalTitle: title,
+          ...(earlier?.phaseId ? { existing: { phaseId: earlier.phaseId } } : {}),
+          ...(inputData.phase ? { phase: inputData.phase } : {}),
+          ...(revision
+            ? {
+                roundOf: {
+                  ...(rootRecord?.initiativeId ? { initiativeId: rootRecord.initiativeId } : {}),
+                  ...(rootRecord?.phaseId ? { phaseId: rootRecord.phaseId } : {}),
+                  ...(rootRecord?.taskId ? { rootTaskId: rootRecord.taskId } : {}),
+                },
+              }
+            : {}),
+        });
+      } catch (error) {
+        if (mode === 'phase') throw error;
+        appendEvent(run.runId, { type: 'initiative_unavailable', error: (error as Error).message });
+        logger?.warn?.(`[factory] the initiative store could not be used; the run goes on without it: ${(error as Error).message}`, { runId: run.runId });
+        return undefined;
+      }
+    };
+
+    // A phase (checked first: a phase that is not ready stops the run before anything is spent) and a
+    // round already exist. A new task is filed once it has its name and its branch.
+    let link = mode === 'new' ? undefined : await tryLink(provisionalTitle);
+
     // Name the task. Before the branch is made: the branch is named for what the work is.
-    if (!revision) {
+    if (mode === 'new') {
       const { name, source } = await nameTask({ runId: run.runId, repoPath, repoName }, inputData.task, logger);
       run.title = name.title;
       run.workBranch = workBranchFor(name);
       updateRunMeta(run.runId, { title: name.title, titleSource: source, branch: run.workBranch });
+    } else if (mode === 'phase' && link) {
+      // A phase has its name already - nothing to ask a model.
+      const name: RunName = { title: link.phaseTitle, slug: slugify(link.phaseTitle) || 'phase', type: guessBranchType(`${link.phaseTitle} ${inputData.task}`) };
+      run.title = name.title;
+      run.workBranch = workBranchFor(name);
+      writeArtifact({ runId: run.runId, step: 'run-namer', status: 'COMPLETED', data: { ...name, source: 'phase' } });
+      updateRunMeta(run.runId, { title: name.title, titleSource: 'phase', branch: run.workBranch });
     }
 
     if (baseChoice.note) {
@@ -650,6 +700,17 @@ const prepareRunStep = createStep({
       }
     }
 
+    // The run has its name and its branch: file it under an initiative, and start its phase.
+    if (mode === 'new') link = await tryLink(run.title ?? provisionalTitle);
+    if (link) {
+      run.initiative = link;
+      updateRunMeta(run.runId, { initiativeId: link.id, phaseId: link.phaseId });
+      if (mode === 'new' && run.title) await renameInitiative(link, run.title).catch(() => {});
+      if (taskId) await startPhase(link, { taskId, rootRunId: run.revision?.rootRunId ?? run.runId, branch: run.workBranch }).catch((error: Error) => {
+        appendEvent(run.runId, { type: 'initiative_unavailable', error: error.message });
+      });
+    }
+
     logger?.info?.('[factory] run prepared', {
       runId: run.runId,
       repository: repoPath,
@@ -664,6 +725,7 @@ const prepareRunStep = createStep({
       stack: stack.type,
       ...(run.taskId ? { taskId: run.taskId } : {}),
       ...(run.title ? { title: run.title } : {}),
+      ...(run.initiative ? { initiativeId: run.initiative.id, phaseId: run.initiative.phaseId } : {}),
     });
 
     return { run };
@@ -673,6 +735,40 @@ const prepareRunStep = createStep({
 /* ========================================================================== */
 /* Step 01 - plan (PM & Architect)                                             */
 /* ========================================================================== */
+
+/** What the architect is told about phasing, by what the user allowed and what kind of run this is. */
+function phasingInstruction(run: RunContext): string {
+  const initiative = run.initiative;
+  if (initiative?.mode === 'phase') {
+    return `This run implements phase ${initiative.ordinal} of ${initiative.total} of a roadmap that already exists. Plan exactly that phase and set \`phasing: null\`.`;
+  }
+  if (initiative?.mode === 'round' || run.revision) return 'This is a further round on an open pull request. Set `phasing: null`.';
+  switch (run.phasingMode) {
+    case 'off':
+      return 'The user does not want this split into phases. Set `phasing: null` and plan one pull request.';
+    case 'on':
+      return (
+        'The user asked for this to be planned in phases. Unless the request genuinely fits one reviewable pull request, ' +
+        'set `phasing.phased: true` with the roadmap, and plan only Phase 1.'
+      );
+    default:
+      return 'Propose phases only if the request is too big for one reviewable pull request (see "Phasing" in your instructions). Otherwise set `phasing: null`.';
+  }
+}
+
+/** The initiative as the architect reads it - for a phase of a roadmap, and for a round that plans again. */
+async function initiativeContextFor(run: RunContext): Promise<string> {
+  const initiative = run.initiative;
+  if (!initiative || initiative.mode === 'new') return '';
+  try {
+    return await withStore(async (store) => {
+      const loaded = await store.getInitiative(initiative.id);
+      return loaded ? renderInitiativeContext(loaded, initiative.phaseId, await store.listBacklog(initiative.id, 'OPEN')) : '';
+    });
+  } catch {
+    return '';
+  }
+}
 
 const planStep = createStep({
   id: 'plan',
@@ -733,11 +829,16 @@ const planStep = createStep({
       logger?.info?.('[factory] clarification received, re-planning', { runId: run.runId });
     }
 
+    // What the architect is told about phasing, and - for a phase of a roadmap or a re-plan of a round -
+    // the initiative it belongs to.
+    const initiativeContext = await initiativeContextFor(run);
     const prompt = composePrompt(
       '# Task',
       '',
       run.task,
       runBrief(run, 1),
+      promptSection('Phasing', phasingInstruction(run)),
+      promptSection('Initiative context', initiativeContext),
       promptSection('Acceptance criteria required by the requester', run.requesterCriteria),
       promptSection('Clarifications provided by the human', clarifications),
       revision
@@ -824,7 +925,28 @@ const planStep = createStep({
       });
     }
 
-    const updatedRun: RunContext = clarifications ? { ...run, clarifications } : run;
+    let updatedRun: RunContext = clarifications ? { ...run, clarifications } : run;
+
+    // The architect may have judged the request too big for one pull request. Only a new task can
+    // become a project: a phase already has its roadmap, and a round belongs to a phase.
+    const roadmap = run.initiative?.mode === 'new' && run.phasingMode !== 'off' ? roadmapFromPlan(plan, run.title ?? run.task) : null;
+    if (roadmap && run.initiative) {
+      const asked = [...readEvents(run.runId)].reverse().find((e) => e.type === 'run_suspended' && e.reason === 'CLARIFICATION_REQUIRED') as
+        | { questions?: unknown }
+        | undefined;
+      const decisions = clarifications
+        ? [{ questions: Array.isArray(asked?.questions) ? (asked.questions as string[]) : [], answer: clarifications, at: new Date().toISOString() }]
+        : undefined;
+      try {
+        const saved = await withStore((store) => store.setRoadmap(run.initiative!.id, { ...roadmap, ...(decisions ? { decisions } : {}) }));
+        updatedRun = { ...updatedRun, initiative: { ...run.initiative, total: saved.phases.length, title: saved.title } };
+        appendEvent(run.runId, { type: 'roadmap_set', initiativeId: saved.id, phases: saved.phases.map((phase) => phase.title), reason: plan.phasing?.reason ?? '' });
+        logger?.info?.(`[factory] the architect split this into ${saved.phases.length} phases; this run is phase 1`, { runId: run.runId });
+      } catch (error) {
+        // The plan is still good for a pull request: the roadmap can be written by hand in the Studio.
+        appendEvent(run.runId, { type: 'initiative_unavailable', error: (error as Error).message });
+      }
+    }
 
     // After a re-plan the developer still gets the reviewer's own words, not only the new plan.
     return startCycle(updatedRun, plan, revision ? reviewFeedback(revision) : null);
@@ -1881,8 +2003,10 @@ function prTextContext(
   state: CycleState,
   documentation: z.infer<typeof documentationReportSchema> | null,
   files: string[],
+  roadmap: RoadmapView | null = null,
 ): PrTextContext {
   return {
+    roadmap,
     polish: readPolishResult(state.run.runId),
     task: state.run.task,
     plan: state.plan,
@@ -1904,6 +2028,7 @@ function buildPrWriterPrompt(input: {
   files: string[];
   diff: ReturnType<typeof condenseDiff>;
   recentSubjects: string[];
+  roadmap: RoadmapView | null;
 }): string {
   const { state, documentation, diff } = input;
   const { run } = state;
@@ -1966,6 +2091,12 @@ function buildPrWriterPrompt(input: {
           followUps: documentation.followUps,
         })
       : '',
+    promptSection(
+      'Roadmap (this pull request is one phase of a bigger piece of work; the factory adds a Roadmap section itself - do not write one)',
+      input.roadmap
+        ? [`This is phase ${input.roadmap.current} of ${input.roadmap.total} of "${input.roadmap.title}".`, ...input.roadmap.phases.map((p) => `${p.ordinal}. ${p.title} [${p.status}]`)].join('\n')
+        : '',
+    ),
     promptSection('Stages switched off for this task (they did not run - never describe them as having run)', switchedOff.join(', ')),
     promptSection(
       'Minor findings after the gates (the factory adds these to Quality gates and Follow-ups itself: do not repeat them)',
@@ -2141,7 +2272,8 @@ export const prWriterStep = createStep({
     if (run.revision) return done(await writeRoundCommit(state, mastra?.getLogger?.()));
 
     const diff = run.dryRun ? { diff: '', files: [] } : await getFullDiff(run.repoPath);
-    const context = prTextContext(state, documentation, diff.files);
+    const roadmap = await loadRoadmapView(run.initiative);
+    const context = prTextContext(state, documentation, diff.files, roadmap);
 
     if (!run.dryRun && diff.files.length === 0) {
       const prText = fallbackPrText(context, 'The run changed no files, so there was nothing to describe.');
@@ -2164,7 +2296,7 @@ export const prWriterStep = createStep({
         attempt,
         repoPath: run.repoPath,
         repoName: run.repoName,
-        prompt: buildPrWriterPrompt({ state, documentation, files: diff.files, diff: condensed, recentSubjects }),
+        prompt: buildPrWriterPrompt({ state, documentation, files: diff.files, diff: condensed, recentSubjects, roadmap }),
         schema: prWriterAgentSchema,
         dryRunResult: stubPrWriterOutput(run.task, run.workBranch),
       });
@@ -2245,6 +2377,13 @@ async function announcePullRequest(input: {
       ...(run.revision ? { rootRunId: run.revision.rootRunId, round: run.revision.round } : {}),
     });
     appendEvent(run.runId, { type: 'pr_registered', key: entry.key, number, url: input.url, round: entry.round });
+    if (run.initiative) {
+      try {
+        await withStore((store) => store.linkPullRequest(run.initiative!.phaseId, { number, url: input.url, branch: input.workBranch }));
+      } catch (error) {
+        appendEvent(run.runId, { type: 'initiative_unavailable', error: (error as Error).message });
+      }
+    }
     logger?.info?.(`[factory] pull request #${number} is now watched for review comments`, { runId: run.runId });
 
     const revision = run.revision;
@@ -2279,6 +2418,33 @@ async function announcePullRequest(input: {
     logger?.warn?.(`[factory] could not update the pull-request watcher: ${(error as Error).message}`, {
       runId: run.runId,
     });
+  }
+}
+
+/**
+ * What the run leaves for later - the findings nobody fixed, the follow-ups the agents named - goes to the
+ * backlog of its initiative. The same finding twice is kept once, so running this on every pass of the
+ * delivery step is fine. Bookkeeping: it never fails a delivery.
+ */
+async function harvestBacklog(
+  run: RunContext,
+  cycle: CycleState,
+  documentation: z.infer<typeof documentationReportSchema>,
+): Promise<void> {
+  if (!run.initiative) return;
+  try {
+    const items = backlogFromRun({
+      polish: readPolishResult(run.runId),
+      developerFollowUps: cycle.developerReport?.followUps ?? [],
+      documentationFollowUps: documentation.followUps,
+    });
+    if (items.length === 0) return;
+    const added = await withStore((store) =>
+      store.addBacklog(run.initiative!.id, items.map((item) => ({ ...item, phaseId: run.initiative!.phaseId }))),
+    );
+    if (added > 0) appendEvent(run.runId, { type: 'backlog_added', count: added });
+  } catch (error) {
+    appendEvent(run.runId, { type: 'initiative_unavailable', error: (error as Error).message });
   }
 }
 
@@ -2328,6 +2494,7 @@ export const pullRequestStep = createStep({
   execute: async ({ inputData, resumeData, suspend, mastra }) => {
     const { cycle, documentation } = inputData;
     const run = cycle.run;
+    await harvestBacklog(run, cycle, documentation);
     // The commit message, title and description come from the PR writer. A run suspended before that
     // step existed has none: it gets the plain text built from its reports.
     const text: PrText = inputData.prText ?? fallbackPrText(prTextContext(cycle, documentation, []));
@@ -2948,6 +3115,7 @@ const finalizeStep = createStep({
       ...(run.revision ? { parentRunId: run.revision.parentRunId } : {}),
       ...(run.taskId ? { taskId: run.taskId } : {}),
       ...(run.title ? { title: run.title } : {}),
+      ...(run.initiative ? { initiativeId: run.initiative.id, phaseId: run.initiative.phaseId } : {}),
       repository: run.repoPath,
       branch: run.workBranch,
       startedAt: run.startedAt,
