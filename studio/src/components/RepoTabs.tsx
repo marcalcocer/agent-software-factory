@@ -33,6 +33,7 @@ export function RepoTabs({ tabs, activeTab, onSelectTab, onCloseTab, runningRepo
             )}
             {!isRunning && (
               <button
+                aria-label={`Close ${tab}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   onCloseTab(tab);

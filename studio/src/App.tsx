@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AuthProvider, PipelineConfig, PrMergeNotice, PrMergeResult, PrWatchState } from '@shared/types';
+import type { AuthProvider, FactoryRun, PipelineConfig, PrMergeNotice, PrMergeResult, PrWatchState } from '@shared/types';
 import { Sidebar } from './components/Sidebar';
 import { RepoTabs } from './components/RepoTabs';
 import { TaskInput } from './components/TaskInput';
@@ -9,6 +9,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { PipelineView } from './components/PipelineView';
 import { ConfirmModal } from './components/ConfirmModal';
 import { PullRequestsPanel } from './components/PullRequestsPanel';
+import { titleFromTask } from './lib/runTitle';
 import { applyTheme, watchSystemTheme, type ThemeSetting } from './theme';
 
 interface Repository {
@@ -19,9 +20,15 @@ interface Repository {
 
 interface Run {
   id: string;
+  /** The folder name of the repository the run belongs to. */
+  repoName: string;
+  /** What the run is called: named by the factory, renamed by the user, or - for old runs - its first sentence. */
   title: string;
+  titleSource?: FactoryRun['titleSource'];
+  taskId?: string;
   task: string;
-  status: 'running' | 'completed' | 'failed' | 'escalated';
+  /** `waiting`: parked at a gate (a question, an approval) until the user answers. */
+  status: 'running' | 'waiting' | 'completed' | 'failed' | 'escalated';
   startTime: Date;
   endTime?: Date;
   error?: string;
@@ -46,7 +53,8 @@ function App() {
   const [repos, setRepos] = useState<Repository[]>([]);
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
-  const [runs, setRuns] = useState<Run[]>([]);
+  // The runs of each repository, by its path: a repository's list is only ever replaced by its own load.
+  const [runsByRepo, setRunsByRepo] = useState<Record<string, Run[]>>({});
   const [runLoading, setRunLoading] = useState(false);
   const [reposLoading, setReposLoading] = useState(false);
 
@@ -54,7 +62,9 @@ function App() {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [runningRepo, setRunningRepo] = useState<string | null>(null); // Track which repo is running
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [viewingHistoryRunId, setViewingHistoryRunId] = useState<string | null>(null);
+  // The run on screen. Not the same thing as the run that is alive: the user can leave a run that is
+  // going (Back), and open one that has finished.
+  const [openRunId, setOpenRunId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [taskDrafts, setTaskDrafts] = useState<Record<string, string>>({});
   const [theme, setTheme] = useState<ThemeSetting>('system');
@@ -82,6 +92,21 @@ function App() {
   const latest = useRef({ activeTab, runningRepo, repos, activeRunId });
   latest.current = { activeTab, runningRepo, repos, activeRunId };
 
+  /** Changes one run wherever it is listed (it is in exactly one repository's list). */
+  const updateRun = (runId: string, change: Partial<Run>) =>
+    setRunsByRepo((previous) => {
+      const next: Record<string, Run[]> = {};
+      for (const [path, list] of Object.entries(previous)) {
+        next[path] = list.map((run) => (run.id === runId ? { ...run, ...change } : run));
+      }
+      return next;
+    });
+
+  const activeRepoPath = repos.find((repo) => repo.name === activeTab)?.path ?? null;
+  const repoRuns = (activeRepoPath && runsByRepo[activeRepoPath]) || [];
+  /** A run that is using this repository's working copy: no other task can start until it is done. */
+  const busyRun = repoRuns.find((run) => run.status === 'running' || run.status === 'waiting');
+
   // Apply the theme to the document root and follow OS changes while in "system" mode.
   useEffect(() => {
     applyTheme(theme);
@@ -102,7 +127,7 @@ function App() {
   // share the effect above, so every reload of the repository list (a new array) closed the run
   // the user was looking at - e.g. the one they were deliberately kept on after it finished.
   useEffect(() => {
-    if (activeTab) setViewingHistoryRunId(null);
+    if (activeTab) setOpenRunId(null);
   }, [activeTab]);
 
   // Follow the pull-request watcher. It lives in the main process (so it keeps checking whichever
@@ -165,27 +190,17 @@ function App() {
       // Exit code 3 means SUSPENDED (waiting for human input).
       // Keep the pipeline visible: it picks up the pending input and shows the form.
       if (exitCode === 3) {
-        setRuns((prev) =>
-          prev.map((run) => (run.id === runId ? { ...run, status: 'escalated' } : run)),
-        );
+        updateRun(runId, { status: 'waiting' });
         reloadVisibleRuns();
         return;
       }
 
-      setRuns((prev) =>
-        prev.map((run) =>
-          run.id === runId
-            ? { ...run, status: exitCode === 0 ? 'completed' : 'failed', endTime: new Date() }
-            : run
-        )
-      );
+      updateRun(runId, { status: exitCode === 0 ? 'completed' : 'failed', endTime: new Date() });
 
       if (latest.current.activeRunId === runId) {
-        // Stay on the finished run instead of bouncing back to the task form: that is where the
-        // user reads the outcome - or the reason it failed. The view now reads it from disk.
-        if (latest.current.activeTab === latest.current.runningRepo) {
-          setViewingHistoryRunId(runId);
-        }
+        // Whoever is looking at the finished run keeps looking at it - that is where the outcome, or
+        // the reason it failed, is read - and whoever went Back is not pulled in again. Either way the
+        // view reads the state from disk.
         setActiveRunId(null);
         setRunLoading(false);
         setRunningRepo(null);
@@ -195,11 +210,7 @@ function App() {
 
     const unsubscribeError = window.api.on('factory:error', (runId: string, message: string) => {
       console.error(`Run ${runId} error:`, message);
-      setRuns((prev) =>
-        prev.map((run) =>
-          run.id === runId ? { ...run, status: 'failed', endTime: new Date() } : run
-        )
-      );
+      updateRun(runId, { status: 'failed', endTime: new Date() });
       if (latest.current.activeRunId === runId) {
         // The process could not even start, so there is no run on disk to show: say why.
         setError(`The factory could not be started: ${message}`);
@@ -209,9 +220,15 @@ function App() {
       }
     });
 
+    // A run exists the moment its process names it - also a round the watcher started by itself, which
+    // nobody asked the screen to show. Without this it was missing from the history until the user
+    // switched repository and back.
+    const unsubscribeStarted = window.api.on('factory:started', () => reloadVisibleRuns());
+
     return () => {
       unsubscribeCompleted();
       unsubscribeError();
+      unsubscribeStarted();
     };
   }, []);
 
@@ -227,39 +244,51 @@ function App() {
     }
   };
 
+  /** Which load of each repository is the latest one: an older answer arriving late is dropped. */
+  const loadSequence = useRef<Record<string, number>>({});
+
   const loadRunsForRepo = async (repoPath: string) => {
+    const sequence = (loadSequence.current[repoPath] ?? 0) + 1;
+    loadSequence.current[repoPath] = sequence;
     try {
-      const factoryRuns = await window.api.invoke('factory:list', repoPath);
-      
-      // Transform FactoryRun[] to Run[] and merge with existing runs
-      const newRuns: Run[] = factoryRuns.map((fr: any) => ({
+      const factoryRuns: FactoryRun[] = await window.api.invoke('factory:list', repoPath);
+      if (loadSequence.current[repoPath] !== sequence) return;
+
+      // What is on disk is the truth, titles included: they used to be merged in from React state, which
+      // is why a renamed run came back as "Untitled run" once the user switched repository.
+      const loaded: Run[] = factoryRuns.map((fr) => ({
         id: fr.runId,
-        title: 'Untitled run', // Will be overridden by local state if exists
+        repoName: fr.repoId,
+        title: fr.title ?? titleFromTask(fr.task),
+        ...(fr.titleSource ? { titleSource: fr.titleSource } : {}),
+        ...(fr.taskId ? { taskId: fr.taskId } : {}),
         task: fr.task,
-        status: fr.status === 'RUNNING' ? 'running' :
-                fr.status === 'FAILED' ? 'failed' :
-                fr.status === 'ESCALATED_TO_HUMAN' ? 'escalated' :
-                fr.status === 'SUSPENDED' ? 'escalated' :  // Suspended runs need user action
-                'completed',
+        status:
+          fr.status === 'RUNNING'
+            ? 'running'
+            : fr.status === 'SUSPENDED'
+              ? 'waiting' // parked at a gate: it needs the user
+              : fr.status === 'FAILED'
+                ? 'failed'
+                : fr.status === 'ESCALATED_TO_HUMAN'
+                  ? 'escalated'
+                  : 'completed',
         startTime: new Date(fr.startedAt),
         endTime: fr.finishedAt ? new Date(fr.finishedAt) : undefined,
         error: fr.error,
         rootRunId: fr.rootRunId,
         round: fr.round,
         pullRequestNumber: fr.pullRequest?.number,
-        summary: fr.tokens ? {
-          durationMs: fr.finishedAt ? 
-            new Date(fr.finishedAt).getTime() - new Date(fr.startedAt).getTime() : 0,
-          tokensUsed: fr.tokens.total,
-          stepsCompleted: fr.steps?.length || 0,
-        } : undefined,
+        summary: fr.tokens
+          ? {
+              durationMs: fr.finishedAt ? new Date(fr.finishedAt).getTime() - new Date(fr.startedAt).getTime() : 0,
+              tokensUsed: fr.tokens.total,
+              stepsCompleted: fr.steps?.length || 0,
+            }
+          : undefined,
       }));
 
-      // Merge with existing runs, keeping titles from current state
-      setRuns((prev) => {
-        const existing = new Map(prev.map(r => [r.id, r]));
-        return newRuns.map(nr => existing.get(nr.id) ? { ...nr, title: existing.get(nr.id)!.title } : nr);
-      });
+      setRunsByRepo((previous) => ({ ...previous, [repoPath]: loaded }));
     } catch (err) {
       console.error('Failed to load runs for repo:', err);
     }
@@ -303,10 +332,11 @@ function App() {
   };
 
   const handleCloseTab = (repoName: string) => {
-    setOpenTabs(openTabs.filter((name) => name !== repoName));
-    if (activeTab === repoName) {
-      setActiveTab(openTabs.length > 1 ? openTabs[0] : null);
-    }
+    const remaining = openTabs.filter((name) => name !== repoName);
+    setOpenTabs(remaining);
+    // Closing the tab you are on moves you to another open one - not to the one just closed, which is
+    // what happened when it was the first.
+    if (activeTab === repoName) setActiveTab(remaining[0] ?? null);
   };
 
   const handleRunTask = async (task: string, pipeline?: PipelineConfig) => {
@@ -322,23 +352,30 @@ function App() {
       
       const result = await window.api.invoke('factory:run-task', {
         repo: activeTab,
+        ...(activeRepoPath ? { repoPath: activeRepoPath } : {}),
         task,
         maxAttempts: settings.global.defaultMaxAttempts,
         dryRun: settings.global.dryRunByDefault,
         pipeline: pipeline || pipelineConfig,
       });
 
-      // Add to run history
+      // It is on disk already (the factory records a run before it announces it); show it right away.
       const newRun: Run = {
         id: result.runId,
-        title: 'Untitled run',
+        repoName: activeTab,
+        title: titleFromTask(task),
         task,
         status: 'running',
         startTime: new Date(),
       };
-
-      setRuns([newRun, ...runs]);
+      if (activeRepoPath) {
+        setRunsByRepo((previous) => ({
+          ...previous,
+          [activeRepoPath]: [newRun, ...(previous[activeRepoPath] ?? []).filter((run) => run.id !== newRun.id)],
+        }));
+      }
       setActiveRunId(result.runId); // Track active run for live output
+      setOpenRunId(result.runId);
       
       // Clear task draft after successful submission
       setTaskDrafts({ ...taskDrafts, [activeTab]: '' });
@@ -346,11 +383,20 @@ function App() {
       console.error('Failed to run task:', err);
       setError(`Task execution failed: ${err instanceof Error ? err.message : String(err)}`);
       setRunLoading(false); // Only stop loading on error during submission
+      setRunningRepo(null);
     }
   };
 
-  const handleRenameRun = (runId: string, title: string) => {
-    setRuns((prev) => prev.map((run) => (run.id === runId ? { ...run, title } : run)));
+  /** Renames a run: shown at once, stored with the run, put back if the store refuses. */
+  const handleRenameRun = async (runId: string, title: string) => {
+    const before = Object.values(runsByRepo).flat().find((run) => run.id === runId);
+    updateRun(runId, { title, titleSource: 'user' });
+    try {
+      await window.api.invoke('factory:rename-run', runId, title);
+    } catch (err) {
+      if (before) updateRun(runId, { title: before.title, titleSource: before.titleSource });
+      setError(`Rename failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   const handleDeleteRun = async () => {
@@ -360,11 +406,15 @@ function App() {
       await window.api.invoke('factory:delete', deleteConfirmRunId);
       
       // Remove from UI state
-      setRuns((prev) => prev.filter((run) => run.id !== deleteConfirmRunId));
+      setRunsByRepo((previous) =>
+        Object.fromEntries(
+          Object.entries(previous).map(([path, list]) => [path, list.filter((run) => run.id !== deleteConfirmRunId)]),
+        ),
+      );
       
       // Close any open views for this run
       if (selectedRunId === deleteConfirmRunId) setSelectedRunId(null);
-      if (viewingHistoryRunId === deleteConfirmRunId) setViewingHistoryRunId(null);
+      if (openRunId === deleteConfirmRunId) setOpenRunId(null);
       
       setDeleteConfirmRunId(null);
     } catch (err) {
@@ -384,9 +434,9 @@ function App() {
   ) => {
     const { runId } = await window.api.invoke('pr-watch:revise', key, options);
     setError(null);
-    setViewingHistoryRunId(null);
     setRunningRepo(activeTab);
     setActiveRunId(runId);
+    setOpenRunId(runId);
     setRunLoading(true);
     const repo = repos.find((r) => r.name === activeTab);
     if (repo) loadRunsForRepo(repo.path);
@@ -420,7 +470,7 @@ function App() {
 
   /** Opens a run (a round of a pull request, say) in the pipeline view. */
   const handleOpenRun = (runId: string) => {
-    setViewingHistoryRunId(runId);
+    setOpenRunId(runId);
   };
 
   /** Review comments waiting per repository, for the sidebar. */
@@ -463,13 +513,10 @@ function App() {
     setSelectedRunId(null);
     setRunningRepo(activeTab);
     setActiveRunId(runId);
+    setOpenRunId(runId);
     setRunLoading(true);
     setError(null);
-    setRuns((prev) =>
-      prev.map((run) =>
-        run.id === runId ? { ...run, status: 'running', endTime: undefined } : run
-      )
-    );
+    updateRun(runId, { status: 'running', endTime: undefined });
 
     try {
       await window.api.invoke('factory:resume', { runId });
@@ -636,46 +683,37 @@ function App() {
                   </div>
                 )}
 
-                {/* Task Input or Pipeline View */}
-                {runLoading && activeTab === runningRepo ? (
+                {/* A run on screen, or the history with the pull requests and the task form */}
+                {runLoading && activeTab === runningRepo && !activeRunId && !openRunId ? (
+                  // Between the click and the run's id: a few seconds while the process boots.
+                  <PipelineView key="starting" runId={null} isRunning pipelineConfig={pipelineConfig} />
+                ) : openRunId ? (
                   <PipelineView
-                    key={activeRunId ?? 'starting'}
-                    runId={activeRunId}
-                    isRunning={runLoading}
+                    key={openRunId}
+                    runId={openRunId}
+                    isRunning={runLoading && activeRunId === openRunId}
                     pipelineConfig={pipelineConfig}
-                    onRetry={handleResumeRun}
-                  />
-                ) : viewingHistoryRunId ? (
-                  <PipelineView
-                    key={viewingHistoryRunId}
-                    runId={viewingHistoryRunId}
-                    isRunning={false}
-                    onClose={() => setViewingHistoryRunId(null)}
+                    onClose={() => setOpenRunId(null)}
                     onRetry={handleResumeRun}
                     onOpenRun={handleOpenRun}
                   />
                 ) : (
                   <>
                     {/* Run History - shown above the task input when there's history */}
-                    {(() => {
-                      const repoRuns = runs.filter(run => run.id.includes(activeTab));
-                      if (repoRuns.length === 0) return null;
-
-                      return (
-                        <RunHistory
-                          runs={repoRuns}
-                          loading={false}
-                          onSelectRun={(runId) => setViewingHistoryRunId(runId)}
-                          onResume={handleResumeRun}
-                          onRename={handleRenameRun}
-                          onDelete={(runId) => setDeleteConfirmRunId(runId)}
-                        />
-                      );
-                    })()}
+                    {repoRuns.length > 0 && (
+                      <RunHistory
+                        runs={repoRuns}
+                        loading={false}
+                        onSelectRun={handleOpenRun}
+                        onResume={handleResumeRun}
+                        onRename={handleRenameRun}
+                        onDelete={(runId) => setDeleteConfirmRunId(runId)}
+                      />
+                    )}
 
                     <div className="space-y-4">
                       <PullRequestsPanel
-                        repoPath={repos.find((r) => r.name === activeTab)?.path ?? ''}
+                        repoPath={activeRepoPath ?? ''}
                         state={prWatch}
                         onRefresh={() => {
                           window.api.invoke('pr-watch:refresh').catch(() => {});
@@ -699,9 +737,20 @@ function App() {
                         onChange={(value) => setTaskDrafts({ ...taskDrafts, [activeTab]: value })}
                         onSubmit={handleRunTask}
                         loading={false}
-                        hasHistory={runs.some(run => run.id.includes(activeTab))}
+                        hasHistory={repoRuns.length > 0}
                         pipeline={pipelineConfig}
                         onPipelineChange={setPipelineConfig}
+                        {...(busyRun
+                          ? {
+                              blocked: {
+                                message:
+                                  busyRun.status === 'running'
+                                    ? `"${busyRun.title}" is still running in this repository and uses the same working copy. A new task can start when it is done.`
+                                    : `"${busyRun.title}" is waiting for you in this repository and uses the same working copy. Answer it or close it to start a new task.`,
+                                onOpen: () => setOpenRunId(busyRun.id),
+                              },
+                            }
+                          : {})}
                       />
                     </div>
                   </>

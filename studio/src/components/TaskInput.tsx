@@ -10,12 +10,38 @@ interface TaskInputProps {
   hasHistory: boolean; // Whether this repo has previous runs
   pipeline: PipelineConfig;
   onPipelineChange: (config: PipelineConfig) => void;
+  /**
+   * Another run uses this repository's working copy, so a task cannot start now. The draft can still be
+   * written meanwhile; `onOpen` takes the user to the run that is in the way.
+   */
+  blocked?: { message: string; onOpen?: () => void };
 }
 
-export function TaskInput({ repoName, value, onChange, onSubmit, loading, hasHistory, pipeline, onPipelineChange }: TaskInputProps) {
+function BlockedNotice({ blocked }: { blocked: NonNullable<TaskInputProps['blocked']> }) {
+  return (
+    <div
+      role="status"
+      data-testid="task-blocked"
+      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-sm text-amber-900 dark:text-amber-200"
+    >
+      <span>{blocked.message}</span>
+      {blocked.onOpen && (
+        <button
+          type="button"
+          onClick={blocked.onOpen}
+          className="px-2.5 py-1 rounded-md text-xs font-medium bg-amber-600 hover:bg-amber-700 text-white transition-colors"
+        >
+          Open it
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function TaskInput({ repoName, value, onChange, onSubmit, loading, hasHistory, pipeline, onPipelineChange, blocked }: TaskInputProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!value.trim()) return;
+    if (!value.trim() || blocked) return;
 
     onSubmit(value, pipeline);
 
@@ -28,6 +54,7 @@ export function TaskInput({ repoName, value, onChange, onSubmit, loading, hasHis
     return (
       <form onSubmit={handleSubmit} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm">
         <div className="p-4 space-y-3">
+          {blocked && <BlockedNotice blocked={blocked} />}
           <div className="flex gap-3">
             <textarea
               value={value}
@@ -39,7 +66,7 @@ export function TaskInput({ repoName, value, onChange, onSubmit, loading, hasHis
             />
             <button
               type="submit"
-              disabled={loading || !value.trim()}
+              disabled={loading || !value.trim() || Boolean(blocked)}
               className="px-6 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-medium rounded-md transition-colors disabled:cursor-not-allowed self-end"
             >
               Run
@@ -59,6 +86,7 @@ export function TaskInput({ repoName, value, onChange, onSubmit, loading, hasHis
           New Task for {repoName}
         </h3>
       </div>
+      {blocked && <BlockedNotice blocked={blocked} />}
       <div>
         <label className="block text-sm font-medium text-slate-900 dark:text-slate-100 mb-2">
           What should the factory build or fix?
@@ -80,7 +108,7 @@ export function TaskInput({ repoName, value, onChange, onSubmit, loading, hasHis
 
       <button
         type="submit"
-        disabled={loading || !value.trim()}
+        disabled={loading || !value.trim() || Boolean(blocked)}
         className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-medium rounded-md transition-colors disabled:cursor-not-allowed"
       >
         {loading ? 'Running Factory...' : 'Run Factory'}

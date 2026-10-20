@@ -14,6 +14,7 @@ import {
   type NodeStatus,
   type PipelineNode,
 } from '../../shared/pipelineState';
+import { titleFromTask } from '../lib/runTitle';
 import { AgentDetail } from './AgentDetail';
 import { HumanInputPanel } from './HumanInputPanel';
 
@@ -612,19 +613,34 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
 
   return (
     <div className="space-y-4">
+      {/* Where you are, and the way back. Always there: a run keeps going in the background, so leaving
+          its screen is never a reason to wait for it to finish. */}
+      {onClose && (
+        <nav aria-label="Breadcrumb" data-testid="run-breadcrumb" className="flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+          <button
+            onClick={onClose}
+            title="Back to the run history. A run that is still going carries on."
+            className="inline-flex items-center gap-1 px-2 py-1 -ml-2 rounded-md font-medium hover:bg-slate-200/70 dark:hover:bg-slate-700/60 transition-colors"
+          >
+            <span aria-hidden="true">←</span> Run history
+          </button>
+          <span aria-hidden="true" className="text-slate-400">/</span>
+          <span className="truncate font-medium text-slate-900 dark:text-slate-100" title={runInfo?.task}>
+            {runInfo ? (runInfo.title ?? titleFromTask(runInfo.task)) : 'Run'}
+          </span>
+          {runInfo?.taskId && (
+            <span className="font-mono text-xs px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700">{runInfo.taskId}</span>
+          )}
+          {isRound && (
+            <span className="text-xs font-medium text-indigo-700 dark:text-indigo-300">Round {runInfo?.round}</span>
+          )}
+        </nav>
+      )}
+
       {/* Header with timer */}
       <div className={`rounded-lg p-4 text-white ${headerTone}`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {lifecycle !== 'running' && onClose && (
-              <button
-                onClick={onClose}
-                className="p-2 hover:bg-white/10 rounded transition-colors"
-                title="Back to runs"
-              >
-                ← Back
-              </button>
-            )}
             {lifecycle === 'running' && (
               <div className="relative">
                 <div className="w-10 h-10 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>

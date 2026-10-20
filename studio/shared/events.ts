@@ -37,6 +37,11 @@ export interface IPCChannels {
   }) => Promise<{ runId: string }>;
   'factory:run-task': (params: {
     repo: string;
+    /**
+     * Where the repository is. Lets the main process refuse a task while another run uses the same
+     * working copy - two runs would switch each other's branch.
+     */
+    repoPath?: string;
     task: string;
     maxAttempts?: number;
     dryRun?: boolean;

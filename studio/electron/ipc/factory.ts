@@ -573,11 +573,28 @@ export async function startFactoryRun(cliArgs: string[]): Promise<{ runId: strin
  */
 ipcMain.handle('factory:run-task', async (_event, params: {
   repo: string;
+  repoPath?: string;
   task: string;
   maxAttempts?: number;
   dryRun?: boolean;
   pipeline?: { qa?: boolean; review?: boolean; security?: boolean; documentation?: boolean };
 }): Promise<{ runId: string }> => {
+  // One run at a time per working copy. A run switches the repository's branch and edits its files,
+  // and a run parked at a human gate has its branch checked out and will commit onto whatever branch
+  // is there when it resumes: a second task started now would corrupt either.
+  if (params.repoPath) {
+    const busy = findBusyRun(params.repoPath);
+    if (busy) {
+      const task = busy.task?.replace(/\s+/g, ' ').trim();
+      const what = task ? `"${task.length > 60 ? `${task.slice(0, 57)}...` : task}"` : `run ${busy.runId}`;
+      throw new Error(
+        busy.reason === 'running'
+          ? `${what} is still running in this repository and uses the same working copy. Wait for it to finish, or stop it, then start the task.`
+          : `${what} is waiting for your input in this repository and uses the same working copy. Answer it or close it, then start the task.`,
+      );
+    }
+  }
+
   // Ensure auth first
   const authenticated = await ensureClaudeAuth();
   if (!authenticated) {

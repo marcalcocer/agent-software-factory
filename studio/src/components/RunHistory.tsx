@@ -1,11 +1,15 @@
 import { useRef, useState } from 'react';
+import { formatDuration } from '../lib/format';
 import { groupRuns } from '../lib/groupRuns';
 
 interface Run {
   id: string;
   title: string;
+  /** `f0042`: one id for the task and all of its rounds. */
+  taskId?: string;
   task: string;
-  status: 'running' | 'completed' | 'failed' | 'escalated';
+  /** `waiting`: parked at a gate (a question, an approval) until the user answers. */
+  status: 'running' | 'waiting' | 'completed' | 'failed' | 'escalated';
   startTime: Date;
   endTime?: Date;
   error?: string;
@@ -135,6 +139,11 @@ export function RunHistory({ runs, loading, onSelectRun, onResume, onRename, onD
                       Running
                     </span>
                   )}
+                  {run.status === 'waiting' && (
+                    <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200">
+                      ⏸ Waiting for you
+                    </span>
+                  )}
                   {run.status === 'completed' && (
                     <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-200">
                       ✓ Completed
@@ -162,6 +171,7 @@ export function RunHistory({ runs, loading, onSelectRun, onResume, onRename, onD
                   </div>
                 ) : null}
                 <div className="text-sm text-slate-500 dark:text-slate-400 truncate">
+                  {run.taskId && <span className="font-mono text-slate-600 dark:text-slate-300">{run.taskId} · </span>}
                   {run.id}
                 </div>
                 {run.status === 'failed' && (
@@ -193,7 +203,7 @@ export function RunHistory({ runs, loading, onSelectRun, onResume, onRename, onD
                   </div>
                   {run.summary && (
                     <div className="text-xs mt-1">
-                      {run.summary.durationMs}ms • {run.summary.tokensUsed} tokens
+                      {formatDuration(run.summary.durationMs)} • {run.summary.tokensUsed.toLocaleString()} tokens
                     </div>
                   )}
                 </div>
