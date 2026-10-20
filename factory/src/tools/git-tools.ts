@@ -344,6 +344,81 @@ export async function getDiff(
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* Snapshots of the working tree (to undo work that turns out worse)           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Records the working tree as a git tree object: what is tracked, changed, deleted and new (anything
+ * `.gitignore` ignores is not part of it). Nothing is committed, and the working tree and the index
+ * are left as they were.
+ */
+export async function snapshotWorkingTree(repoPath: string): Promise<string> {
+  const add = await runGit(['add', '--all'], { cwd: repoPath });
+  if (!add.ok) throw new Error(fail(add));
+  try {
+    const written = await runGit(['write-tree'], { cwd: repoPath });
+    if (!written.ok) throw new Error(fail(written));
+    return written.stdout.trim();
+  } finally {
+    await runGit(['reset', '--quiet'], { cwd: repoPath }); // unstage again
+  }
+}
+
+/**
+ * Puts the working tree back exactly as `snapshotWorkingTree` recorded it: edits are undone, files
+ * deleted since are back, files created since are gone. Ignored files (dependencies, build output)
+ * are not touched.
+ */
+export async function restoreWorkingTree(repoPath: string, tree: string): Promise<void> {
+  // Stage first, so a file created since the snapshot is known to the index and read-tree removes it.
+  const add = await runGit(['add', '--all'], { cwd: repoPath });
+  if (!add.ok) throw new Error(fail(add));
+  try {
+    const read = await runGit(['read-tree', '--reset', '-u', tree], { cwd: repoPath });
+    if (!read.ok) throw new Error(fail(read));
+  } finally {
+    await runGit(['reset', '--quiet'], { cwd: repoPath });
+  }
+}
+
+export interface ChangesSince {
+  files: string[];
+  additions: number;
+  deletions: number;
+  /** The patch between the snapshot and now. */
+  patch: string;
+}
+
+/** What changed in the working tree since a snapshot. */
+export async function changesSince(repoPath: string, tree: string): Promise<ChangesSince> {
+  const add = await runGit(['add', '--all'], { cwd: repoPath });
+  if (!add.ok) throw new Error(fail(add));
+  try {
+    const capture = { cwd: repoPath, maxOutputChars: GIT_DIFF_READ_CAP_CHARS };
+    const [stat, patch] = await Promise.all([
+      runGit(['--no-pager', 'diff', '--cached', '--numstat', tree], capture),
+      runGit(['--no-pager', 'diff', '--cached', tree], capture),
+    ]);
+    if (!stat.ok) throw new Error(fail(stat));
+    if (!patch.ok) throw new Error(fail(patch));
+
+    const files: string[] = [];
+    let additions = 0;
+    let deletions = 0;
+    for (const line of stat.stdout.split('\n')) {
+      const [added, removed, ...path] = line.split('\t');
+      if (path.length === 0) continue;
+      files.push(path.join('\t'));
+      additions += Number.parseInt(added ?? '', 10) || 0; // a binary file reports "-"
+      deletions += Number.parseInt(removed ?? '', 10) || 0;
+    }
+    return { files, additions, deletions, patch: patch.stdout };
+  } finally {
+    await runGit(['reset', '--quiet'], { cwd: repoPath });
+  }
+}
+
 export async function commitAll(
   repoPath: string,
   message: string,
