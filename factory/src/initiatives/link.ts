@@ -6,7 +6,7 @@
  * The one exception is a run the user started on a phase of a roadmap - it exists to work on that
  * phase, so a phase that is missing, belongs to another repository, or is not ready to start is an error.
  */
-import { readiness, roadmapView, type RoadmapView } from './phasing.ts';
+import { phaseTask, readiness, roadmapView, type RoadmapView } from './phasing.ts';
 import { withStore, type InitiativeWithPhases, type PhaseRow } from './store.ts';
 import type { RunContext } from '../utils/schemas.ts';
 
@@ -106,4 +106,48 @@ export async function loadRoadmapView(link: InitiativeLink | undefined): Promise
   } catch {
     return null;
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Starting a phase from the command line                                      */
+/* -------------------------------------------------------------------------- */
+
+export type PhaseRequest =
+  | {
+      ok: true;
+      /** The repository the roadmap belongs to. */
+      repoPath: string;
+      /** What the run is asked to do: the phase as a request, plus anything the user added. */
+      task: string;
+      phase: { initiativeId: string; phaseId: string };
+      /** The name of the run: the phase's own. */
+      title: string;
+    }
+  | { ok: false; error: string };
+
+/**
+ * Turns "run phase X" into a run request, or says why it cannot start. Checked here, at the edge, so a
+ * phase that is not ready is refused before a run record exists (the workflow checks again, which also
+ * covers a phase that changed in between).
+ */
+export async function resolvePhaseRequest(options: { phaseId: string; repoPath?: string; extra?: string }): Promise<PhaseRequest> {
+  return await withStore(async (store): Promise<PhaseRequest> => {
+    const phase = await store.getPhase(options.phaseId);
+    const initiative = phase ? await store.getInitiative(phase.initiativeId) : null;
+    if (!phase || !initiative) return { ok: false, error: `Phase ${options.phaseId} was not found. It may have been removed from the roadmap.` };
+    if (options.repoPath && initiative.repoPath !== options.repoPath) {
+      return { ok: false, error: `Phase ${phase.id} belongs to ${initiative.repoPath}, not to ${options.repoPath}.` };
+    }
+    const verdict = readiness(initiative, phase);
+    if (!verdict.ready) return { ok: false, error: verdict.reason };
+
+    const extra = options.extra?.trim();
+    return {
+      ok: true,
+      repoPath: initiative.repoPath,
+      task: extra ? `${phaseTask(initiative, phase)}\n\nFrom the user, for this run:\n${extra}` : phaseTask(initiative, phase),
+      phase: { initiativeId: initiative.id, phaseId: phase.id },
+      title: phase.title,
+    };
+  });
 }

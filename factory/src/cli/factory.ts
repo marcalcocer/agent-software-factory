@@ -17,7 +17,9 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { parsePipelineFlags, type FlagValue } from './pipeline-flags.ts';
+import { asBoolean, asInteger, asString, errorMessageOf, printMarker, type FlagValue } from './flags.ts';
+import { commandInitiativeEdit, commandInitiativeList, commandPhaseReconcile } from './initiatives.ts';
+import { parsePipelineFlags } from './pipeline-flags.ts';
 import { parseDeliveryEditsJson } from '../utils/delivery-edits.ts';
 import { followUpRunFlags } from './pr-feedback-followup.ts';
 import {
@@ -74,21 +76,6 @@ function parseArgs(argv: string[]): ParsedArgs {
   return { command, flags, positionals };
 }
 
-function asString(value: FlagValue | undefined): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
-}
-
-function asBoolean(value: FlagValue | undefined): boolean | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value === 'boolean') return value;
-  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
-}
-
-function asInteger(value: FlagValue | undefined): number | undefined {
-  const parsed = Number.parseInt(String(value ?? ''), 10);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 
 const HELP = `
 agent-software-factory - multi-agent software factory powered by Mastra
@@ -106,6 +93,9 @@ Commands:
   pr-reply    Post the replies a triage drafted for questions and notes
   pr-merge-draft  Write the commit message a squash merge of a pull request would have
   pr-merge    Squash-merge a pull request the human approved, then tidy up
+  initiative-list  List the projects of a repository: phases, what can start, the backlog
+  initiative-edit  Rename, reword, skip or add phases of a project; set backlog items aside
+  phase-reconcile  After a phase is merged, compare what it delivered with the phases still to come
   list        List recent runs and their status
   show        Print the summary.json of a run
   doctor      Check configuration, credentials and external tooling
@@ -114,6 +104,12 @@ Commands:
 run flags:
   --repo <name|path>        Target repository (folder inside the workspace root, or absolute)
   --task "<requirement>"    The requirement to implement (English)
+  --phase <phaseId>         Run one phase of a roadmap (see initiative-list) instead of a task: the
+                            phase is the request, and --repo may be left out. A --task given with it
+                            is added as the user's notes for this run. Refused while the phase it
+                            builds on is not merged.
+  --phasing <auto|on|off>   Whether the architect may split a big request into phases (default: auto -
+                            only when it is too big for one reviewable pull request)
   --base-branch <branch>    Branch to start from (default: the checked-out branch - or the
                             repository's default branch when that one is a branch the factory
                             made for an earlier task, so tasks never stack on each other)
@@ -173,6 +169,23 @@ pr-merge flags:
   --dry-run                 Check everything, merge nothing
                             Prints PR_MERGE_JSON {merged, reason, notes, ...}.
 
+initiative-list flags:
+  --repo <name|path>        Target repository (required)
+  --include-quick           Also the single-phase projects every plain task creates
+  --include-archived        Also the ones set aside
+                            Prints INITIATIVE_LIST_JSON {repoPath, initiatives}.
+
+initiative-edit flags:
+  --initiative <id>         The project (required)
+  --patch '<json>'          What to change (required), e.g.
+                            '{"phases":[{"id":"i0001-p2","status":"SKIPPED"}],"addPhases":[{"title":"..."}]}'
+                            Prints INITIATIVE_EDIT_JSON {initiative}, or {error} when nothing changed.
+
+phase-reconcile flags:
+  --phase <phaseId>         The merged phase (required)
+  --force                   Compare again even if it was done already
+                            Prints PHASE_RECONCILE_JSON {report}; report is null when there was nothing to do.
+
 Examples:
   npm run factory -- run --repo invest-track --task "Add pagination to GET /api/positions"
   npm run factory -- run --repo ~/workspace/home-auth --task "Fix token refresh race" --max-attempts 4
@@ -203,14 +216,43 @@ function heading(text: string): void {
 /* -------------------------------------------------------------------------- */
 
 async function commandRun(flags: Record<string, FlagValue>): Promise<number> {
-  const repo = asString(flags.repo);
-  const task = asString(flags.task);
+  let repo = asString(flags.repo);
+  let task = asString(flags.task);
+  const phaseFlag = asString(flags.phase);
 
-  if (!repo || !task) {
-    process.stderr.write('Both --repo and --task are required.\n');
+  if (!phaseFlag && (!repo || !task)) {
+    process.stderr.write('Both --repo and --task are required (or --phase <phaseId> to run a phase of a roadmap).\n');
     process.stdout.write(HELP);
     return 2;
   }
+
+  const phasing = asString(flags.phasing);
+  if (phasing !== undefined && !['auto', 'on', 'off'].includes(phasing)) {
+    process.stderr.write('--phasing must be auto, on or off.\n');
+    return 2;
+  }
+
+  // A run of one phase of a roadmap: the phase is the request, and the roadmap's repository the repo.
+  let phase: { initiativeId: string; phaseId: string } | undefined;
+  let phaseTitle: string | undefined;
+  if (phaseFlag) {
+    const { resolveRepoPath: resolveFlagRepo } = await import('../utils/factory-config.ts');
+    const { resolvePhaseRequest } = await import('../initiatives/link.ts');
+    const request = await resolvePhaseRequest({
+      phaseId: phaseFlag,
+      ...(repo ? { repoPath: resolveFlagRepo(repo, { requireGit: false }) } : {}),
+      ...(task ? { extra: task } : {}),
+    });
+    if (!request.ok) {
+      process.stderr.write(`${request.error}\n`);
+      return 2;
+    }
+    repo = request.repoPath;
+    task = request.task;
+    phase = request.phase;
+    phaseTitle = request.title;
+  }
+  if (!repo || !task) return 2;
 
   const { mastra } = await import('../mastra/index.ts');
   const { generateRunId } = await import('../tools/logger-tools.ts');
@@ -284,6 +326,8 @@ async function commandRun(flags: Record<string, FlagValue>): Promise<number> {
     ...(asString(flags['test-command']) ? { testCommand: asString(flags['test-command'])! } : {}),
     ...(criteria ? { acceptanceCriteria: criteria.split(';').map((entry) => entry.trim()).filter(Boolean) } : {}),
     ...(asString(flags.clarifications) ? { clarifications: asString(flags.clarifications)! } : {}),
+    ...(phasing ? { phasing: phasing as 'auto' | 'on' | 'off' } : {}),
+    ...(phase ? { phase } : {}),
     ...(asBoolean(flags.commit) === false ? { autoCommit: false } : {}),
     ...(asBoolean(flags.pr) === false ? { createPullRequest: false } : {}),
     ...(config.nonInteractive ? { interactive: false } : {}),
@@ -349,8 +393,9 @@ async function commandRun(flags: Record<string, FlagValue>): Promise<number> {
         : {}),
       title: revision
         ? roundTitle(rootTitle ?? fallbackRunName(revision.originalTask).title, revision.round, revision.title)
-        : fallbackRunName(task).title,
-      titleSource: revision ? 'round' : 'fallback',
+        : (phaseTitle ?? fallbackRunName(task).title),
+      titleSource: revision ? 'round' : phase ? 'phase' : 'fallback',
+      ...(phase ? { initiativeId: phase.initiativeId, phaseId: phase.phaseId } : {}),
       dryRun: config.dryRun,
       startedAt,
     });
@@ -488,19 +533,6 @@ function findResumeStep(state: unknown): string | undefined {
     .filter(([, value]) => value?.status === 'failed')
     .map(([stepId]) => stepId)
     .sort((a, b) => b.split('.').length - a.split('.').length || b.localeCompare(a))[0];
-}
-
-/** Normalises whatever Mastra reports as a failure (Error, string, serialised object). */
-function errorMessageOf(error: unknown): string {
-  if (!error) return '';
-  if (typeof error === 'string') return error;
-  const message = (error as { message?: unknown }).message;
-  if (typeof message === 'string' && message.trim() !== '') return message;
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
 }
 
 /** Extracts the failure from a Mastra workflow result: the top-level error, else the failed step's. */
@@ -1041,11 +1073,6 @@ async function commandRevise(flags: Record<string, FlagValue>): Promise<number> 
 /* pr-dismiss / pr-reply                                                       */
 /* -------------------------------------------------------------------------- */
 
-/** Prints a machine-readable result line the Studio looks for (stray log lines cannot break it). */
-function printMarker(marker: string, payload: unknown): void {
-  process.stdout.write(`${marker} ${JSON.stringify(payload)}\n`);
-}
-
 /** Sets review comments aside: they stop counting as pending and are never acted on. */
 async function commandPrDismiss(flags: Record<string, FlagValue>): Promise<number> {
   const repoFlag = asString(flags.repo);
@@ -1216,6 +1243,12 @@ async function main(): Promise<number> {
       return await commandPrMergeDraft(flags);
     case 'pr-merge':
       return await commandPrMerge(flags);
+    case 'initiative-list':
+      return await commandInitiativeList(flags);
+    case 'initiative-edit':
+      return await commandInitiativeEdit(flags);
+    case 'phase-reconcile':
+      return await commandPhaseReconcile(flags);
     case 'list':
       return await commandList(flags);
     case 'show':

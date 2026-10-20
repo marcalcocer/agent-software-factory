@@ -126,6 +126,15 @@ export interface ScopeDecisionRow {
   decidedAt: string;
 }
 
+/** One line of a project's history: what happened to it, and when. */
+export interface InitiativeEvent {
+  id: number;
+  initiativeId: string | null;
+  type: string;
+  data: unknown;
+  at: string;
+}
+
 export interface InitiativeWithPhases extends InitiativeRow {
   phases: PhaseRow[];
   backlogOpen: number;
@@ -779,6 +788,19 @@ export class InitiativeStore {
 
   async log(initiativeId: string | null, type: string, payload: unknown = {}): Promise<void> {
     await this.write((tx) => this.record(tx, initiativeId, type, payload));
+  }
+
+  /** What happened to a project, oldest first. */
+  async listEvents(initiativeId: string): Promise<InitiativeEvent[]> {
+    return await this.all('SELECT * FROM events WHERE initiative_id = ? ORDER BY id', [initiativeId], (row) => {
+      let data: unknown = {};
+      try {
+        data = JSON.parse(str(row.payload_json));
+      } catch {
+        // A line that cannot be read is still a line that happened.
+      }
+      return { id: Number(row.id), initiativeId: orNull(row.initiative_id), type: str(row.type), data, at: str(row.at) };
+    });
   }
 }
 

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { backlogFromRun } from '../src/initiatives/harvest.ts';
-import { linkToInitiative, loadRoadmapView, renameInitiative, startPhase } from '../src/initiatives/link.ts';
+import { linkToInitiative, loadRoadmapView, renameInitiative, resolvePhaseRequest, startPhase } from '../src/initiatives/link.ts';
 import { withStore } from '../src/initiatives/store.ts';
 import { roadmapSection, withRoadmap } from '../src/tools/pr-text.ts';
 import type { PolishResult } from '../src/utils/schemas.ts';
@@ -89,7 +89,7 @@ describe('linkToInitiative: one phase of a roadmap', () => {
     await expect(linkToInitiative(phaseRequest('i0001-p2', 'r9'))).rejects.toThrow('in progress');
   });
 
-  it('is an error for a phase that does not exist: a run of a phase exists for that phase', async () => {
+  it('is an error for a phase that does not exist', async () => {
     await project();
     await expect(linkToInitiative({ ...phaseRequest('i0001-p9') })).rejects.toThrow('was not found');
   });
@@ -97,6 +97,63 @@ describe('linkToInitiative: one phase of a roadmap', () => {
   it('is an error for another repository\'s phase', async () => {
     await project();
     await expect(linkToInitiative({ ...phaseRequest('i0001-p2'), repoPath: '/elsewhere' })).rejects.toThrow('belongs to');
+  });
+});
+
+describe('resolvePhaseRequest: run phase X', () => {
+  it('is refused, before any run exists, while the phase it builds on is not merged - saying which', async () => {
+    await project();
+
+    expect(await resolvePhaseRequest({ phaseId: 'i0001-p2' })).toEqual({
+      ok: false,
+      error: expect.stringContaining('phase 1 ("Foundation"), which is not merged yet'),
+    });
+  });
+
+  it('becomes a request once it can start: the phase as the task, in its repository, named as the phase', async () => {
+    await project();
+    await withStore((store) => store.markMerged('i0001-p1'));
+
+    const request = await resolvePhaseRequest({ phaseId: 'i0001-p2' });
+
+    expect(request).toMatchObject({ ok: true, repoPath: REPO, phase: { initiativeId: 'i0001', phaseId: 'i0001-p2' }, title: 'Screens' });
+    if (!request.ok) return;
+    expect(request.task).toContain('Phase 2 of 3 of "Redesign the frontend": Screens');
+  });
+
+  it('carries what the user asked for while reviewing an earlier phase, as the phase\'s own notes', async () => {
+    await project();
+    await withStore(async (store) => {
+      await store.markMerged('i0001-p1');
+      await store.appendNotes('i0001-p2', [{ source: 'user-request', text: 'Migrate the settings screen too' }]);
+    });
+
+    const request = await resolvePhaseRequest({ phaseId: 'i0001-p2' });
+    expect(request.ok && request.task).toContain('Migrate the settings screen too');
+  });
+
+  it('adds what the user wrote for this run, after the phase', async () => {
+    await project();
+    await withStore((store) => store.markMerged('i0001-p1'));
+
+    const request = await resolvePhaseRequest({ phaseId: 'i0001-p2', extra: '  Keep the old URLs working.  ' });
+
+    expect(request.ok && request.task).toMatch(/Screens[\s\S]*From the user, for this run:\nKeep the old URLs working\.$/);
+  });
+
+  it('says so for a phase that does not exist, and for a phase of another repository', async () => {
+    await project();
+    await withStore((store) => store.markMerged('i0001-p1'));
+
+    expect(await resolvePhaseRequest({ phaseId: 'i0001-p9' })).toEqual({ ok: false, error: expect.stringContaining('was not found') });
+    expect(await resolvePhaseRequest({ phaseId: 'i0001-p2', repoPath: '/elsewhere' })).toEqual({ ok: false, error: expect.stringContaining('belongs to') });
+  });
+
+  it('refuses a phase that is already running or delivered', async () => {
+    await project();
+    await withStore((store) => store.markMerged('i0001-p1'));
+
+    expect(await resolvePhaseRequest({ phaseId: 'i0001-p1' })).toEqual({ ok: false, error: expect.stringContaining('not waiting to be started') });
   });
 });
 
