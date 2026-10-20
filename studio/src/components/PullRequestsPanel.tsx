@@ -4,10 +4,14 @@ import type {
   PrMergeDraft,
   PrMergeNotice,
   PrMergeResult,
+  PrScopeComment,
   PrWatchState,
   PrWatchStatus,
+  ScopeDecisionResult,
+  SettledPhase,
   WatchedPullRequest,
 } from '../../shared/types';
+import { WorkingCopyLine } from './WorkingCopy';
 
 /* -------------------------------------------------------------------------- */
 /* Small pieces                                                                */
@@ -145,6 +149,11 @@ interface CardActions {
   onDismiss: (key: string) => Promise<void>;
   onPostReplies: (key: string) => Promise<void>;
   onOpenRun: (runId: string) => void;
+  /** Says where review comments about a later phase go: a phase of the roadmap, a new one, or this pull request. */
+  onDecideScope: (
+    key: string,
+    decisions: Array<{ commentId: string; decision: 'DEFER' | 'DO_NOW'; targetPhase?: string | null }>,
+  ) => Promise<ScopeDecisionResult[]>;
   /** "I reviewed it and have no comments" - for the commit the card showed. */
   onApprove: (key: string, headSha: string) => Promise<void>;
   onWithdrawApproval: (key: string) => Promise<void>;
@@ -390,6 +399,123 @@ function MergeSection({ pr, actions, busy, run, buttonBase }: MergeSectionProps)
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* Review comments that ask for more than this pull request                    */
+/* -------------------------------------------------------------------------- */
+
+interface ScopeSectionProps {
+  pr: WatchedPullRequest;
+  actions: CardActions;
+  busy: string | null;
+  run: (label: string, work: () => Promise<void>) => Promise<void>;
+  buttonBase: string;
+}
+
+/**
+ * Comments the triage thinks belong to a later phase. They are not built in this pull request by
+ * accident, and not lost: the user says where each goes - a phase of the roadmap (the one the triage
+ * suggests is one click), a phase of its own, or this pull request after all.
+ */
+function ScopeSection({ pr, actions, busy, run, buttonBase }: ScopeSectionProps) {
+  const scope = pr.scope!;
+  const planned = (pr.roadmap?.phases ?? []).filter((phase) => phase.status === 'PLANNED');
+  const [chosen, setChosen] = useState<Record<string, string>>({});
+
+  const decide = (commentId: string, decision: 'DEFER' | 'DO_NOW', targetPhase?: string) =>
+    run(`scope:${commentId}`, async () => {
+      const results = await actions.onDecideScope(pr.key, [
+        { commentId, decision, ...(targetPhase === undefined ? {} : { targetPhase }) },
+      ]);
+      const failed = results.find((result) => !result.ok);
+      if (failed) throw new Error(failed.error ?? 'It could not be decided.');
+    });
+
+  const secondary = `${buttonBase} border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700`;
+  const primary = `${buttonBase} text-white bg-purple-600 hover:bg-purple-700`;
+
+  const suggestion = (comment: PrScopeComment) => {
+    if (comment.suggestedPhaseId === 'NEW') return { label: 'Make it a phase of its own', target: 'NEW' };
+    const phase = planned.find((candidate) => candidate.id === comment.suggestedPhaseId);
+    return phase ? { label: `Defer to phase ${phase.ordinal}: ${phase.title}`, target: phase.id } : null;
+  };
+
+  return (
+    <div data-testid="scope-section" className="rounded-md border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/20 p-3 space-y-3">
+      <div>
+        <p className="text-sm font-medium text-purple-900 dark:text-purple-200">
+          {scope.undecided.length === 1 ? 'This comment asks' : 'These comments ask'} for more than this pull request
+        </p>
+        <p className="text-xs text-purple-800/80 dark:text-purple-300/80">
+          {pr.roadmap
+            ? `This is phase ${pr.roadmap.ordinal} of ${pr.roadmap.total} of "${pr.roadmap.title}". Nothing starts until you say where each goes.`
+            : 'Nothing starts until you say where each goes.'}
+        </p>
+      </div>
+
+      <ul className="space-y-3">
+        {scope.undecided.map((comment) => {
+          const suggested = suggestion(comment);
+          const picked = chosen[comment.id] ?? '';
+          return (
+            <li key={comment.id} data-testid={`scope-comment-${comment.id}`} className="space-y-2 rounded border border-purple-200 dark:border-purple-800 bg-white dark:bg-slate-800 p-2.5">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                <span className="font-medium text-slate-800 dark:text-slate-200">@{comment.author}</span>
+                {comment.path && (
+                  <span className="font-mono">
+                    {' '}
+                    {comment.path}
+                    {comment.line ? `:${comment.line}` : ''}
+                  </span>
+                )}
+              </div>
+              <p className="text-sm text-slate-700 dark:text-slate-300 break-words">
+                {comment.body.replace(/\s+/g, ' ').slice(0, 280)}
+                {comment.body.length > 280 ? '...' : ''}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {suggested && (
+                  <button disabled={busy !== null} onClick={() => decide(comment.id, 'DEFER', suggested.target)} className={primary}>
+                    {busy === `scope:${comment.id}` ? <Busy>Saving...</Busy> : suggested.label}
+                  </button>
+                )}
+                <select
+                  aria-label={`Defer comment from @${comment.author} to another phase`}
+                  value={picked}
+                  onChange={(event) => setChosen({ ...chosen, [comment.id]: event.target.value })}
+                  className="px-2 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900"
+                >
+                  <option value="">{suggested ? 'Another phase...' : 'Defer to...'}</option>
+                  {planned.map((phase) => (
+                    <option key={phase.id} value={phase.id}>
+                      Phase {phase.ordinal}: {phase.title}
+                    </option>
+                  ))}
+                  <option value="NEW">A phase of its own</option>
+                </select>
+                {picked !== '' && (
+                  <button disabled={busy !== null} onClick={() => decide(comment.id, 'DEFER', picked)} className={secondary}>
+                    Defer
+                  </button>
+                )}
+                <button disabled={busy !== null} onClick={() => decide(comment.id, 'DO_NOW')} className={secondary}>
+                  Do it in this pull request
+                </button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+
+      {scope.doNow.length > 0 && (
+        <p className="text-xs text-purple-800 dark:text-purple-300" data-testid="scope-do-now">
+          {scope.doNow.length === 1 ? '1 comment goes' : `${scope.doNow.length} comments go`} into this pull request: the next round plans{' '}
+          {scope.doNow.length === 1 ? 'it' : 'them'} in.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function PullRequestCard({ pr, actions }: { pr: WatchedPullRequest; actions: CardActions }) {
   const triage = pr.triage ?? null;
   const needsCode = triage?.action === 'RERUN_IMPLEMENTATION' || triage?.action === 'RERUN_PLANNING';
@@ -464,9 +590,19 @@ function PullRequestCard({ pr, actions }: { pr: WatchedPullRequest; actions: Car
         <span>{pr.message}</span>
       </p>
 
+      {/* Where the code is, so it can be looked at by hand. */}
+      {pr.workCopy && <WorkingCopyLine workCopy={pr.workCopy} rootRunId={pr.rootRunId} />}
+
       {pr.status === 'idle' && <MergeSection pr={pr} actions={actions} busy={busy} run={run} buttonBase={buttonBase} />}
 
-      {pr.pending.length > 0 && !inProgress && <CommentList comments={pr.pending} />}
+      {pr.status === 'awaiting-scope' && pr.scope && <ScopeSection pr={pr} actions={actions} busy={busy} run={run} buttonBase={buttonBase} />}
+
+      {pr.pending.length > 0 && !inProgress && (
+        <CommentList
+          // The ones the section above asks about are listed there, with their buttons.
+          comments={pr.status === 'awaiting-scope' && pr.scope ? pr.pending.filter((comment) => !pr.scope!.undecided.some((asked) => asked.id === comment.id)) : pr.pending}
+        />
+      )}
 
       {triage && pr.status === 'triaged' && (
         <div className="space-y-2">
@@ -635,6 +771,20 @@ function PullRequestCard({ pr, actions }: { pr: WatchedPullRequest; actions: Car
  * never see what became of it - least of all the things that were deliberately not done (a
  * working copy that stayed where it was, a branch that was kept).
  */
+/** Where the project stands now that a phase is delivered. */
+function PhaseOutcome({ phase }: { phase: SettledPhase }) {
+  return (
+    <p data-testid="phase-outcome">
+      Phase {phase.ordinal} of {phase.total} of <span className="font-medium">{phase.initiativeTitle}</span> is delivered.{' '}
+      {phase.next
+        ? `Phase ${phase.next.ordinal} ("${phase.next.title}") is next - start it from the roadmap below.`
+        : phase.initiativeDone
+          ? 'The project is finished.'
+          : 'No other phase can start yet.'}
+    </p>
+  );
+}
+
 function MergeNoticeCard({ notice, onDismiss }: { notice: PrMergeNotice; onDismiss: (id: string) => void }) {
   const { result } = notice;
   const repoUrl = notice.url.replace(/\/pull\/\d+.*$/, '');
@@ -674,6 +824,7 @@ function MergeNoticeCard({ notice, onDismiss }: { notice: PrMergeNotice; onDismi
         </p>
       )}
       {!result.merged && result.reason && <p>{result.reason}</p>}
+      {result.merged && result.phase && <PhaseOutcome phase={result.phase} />}
       {result.notes.length > 0 && (
         <ul className="list-disc list-inside text-xs opacity-90">
           {result.notes.map((note) => (

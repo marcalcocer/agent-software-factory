@@ -17,6 +17,7 @@ import {
 import { titleFromTask } from '../lib/runTitle';
 import { AgentDetail } from './AgentDetail';
 import { HumanInputPanel } from './HumanInputPanel';
+import { WorkingCopyBar } from './WorkingCopy';
 
 /** Turn raw factory errors into a friendlier, actionable message. */
 function humanizeError(raw: string): string {
@@ -665,6 +666,9 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
           </div>
         </div>
       </div>
+
+      {/* Where the work is: the folder and the branch, so the user can look at the code by hand. */}
+      {runId && runInfo && <WorkingCopyBar runId={runId} refreshKey={`${runInfo.status}:${runInfo.round ?? 1}`} />}
 
       {/* The rounds of this task: one task, several rounds, each with its own results */}
       {(rounds.length > 1 || isRound) && (

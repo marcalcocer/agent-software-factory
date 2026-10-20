@@ -2,11 +2,14 @@ import { useEffect, useState } from 'react';
 import type { PrWatchSettingsBundle } from '../../shared/types';
 import type { ThemeSetting } from '../theme';
 import { PullRequestSettings } from './PullRequestSettings';
+import { WorktreeList } from './WorktreeList';
 
 interface SettingsPanelProps {
   isOpen: boolean;
   onClose: () => void;
   onThemeChange?: (theme: ThemeSetting) => void;
+  /** Called after the settings were saved, with the ones the rest of the screen depends on. */
+  onSaved?: (settings: { isolation: 'worktree' | 'in-place'; workspaceRoot: string }) => void;
 }
 
 interface Settings {
@@ -16,9 +19,13 @@ interface Settings {
   dryRunByDefault: boolean;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   activeProvider: 'claude-cli' | 'api';
+  /** Where a task works unless its form says otherwise. Absent: an isolated worktree. */
+  isolation?: 'worktree' | 'in-place';
+  /** Compare the roadmap with what a phase delivered when it is merged. Absent: yes. */
+  autoReconcile?: boolean;
 }
 
-export function SettingsPanel({ isOpen, onClose, onThemeChange }: SettingsPanelProps) {
+export function SettingsPanel({ isOpen, onClose, onThemeChange, onSaved }: SettingsPanelProps) {
   const [settings, setSettings] = useState<Settings>({
     theme: 'system',
     workspaceRoot: '',
@@ -31,7 +38,7 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange }: SettingsPanelP
   const [saving, setSaving] = useState(false);
   /** Pull-request settings are owned by the watcher; `null` until they have been read. */
   const [prSettings, setPrSettings] = useState<PrWatchSettingsBundle | null>(null);
-  const [repoNames, setRepoNames] = useState<Array<{ name: string }>>([]);
+  const [repoNames, setRepoNames] = useState<Array<{ name: string; path: string }>>([]);
 
   useEffect(() => {
     if (isOpen) {
@@ -52,7 +59,7 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange }: SettingsPanelP
         window.api.invoke('factory:list-repos').catch(() => []),
       ]);
       setPrSettings(bundle);
-      setRepoNames(repos.map((repo) => ({ name: repo.name })));
+      setRepoNames(repos.map((repo) => ({ name: repo.name, path: repo.path })));
     } catch (error) {
       console.error('Failed to load settings:', error);
     } finally {
@@ -67,6 +74,7 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange }: SettingsPanelP
       if (prSettings) {
         await window.api.invoke('pr-watch:save-settings', { defaults: prSettings.defaults, repos: prSettings.repos });
       }
+      onSaved?.({ isolation: settings.isolation ?? 'worktree', workspaceRoot: settings.workspaceRoot });
       onClose();
     } catch (error) {
       console.error('Failed to save settings:', error);
@@ -174,6 +182,45 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange }: SettingsPanelP
                   Push and pull-request creation are decided per run: the pipeline pauses at the
                   delivery step and asks you.
                 </div>
+              </div>
+
+              {/* Where tasks work, and the roadmap */}
+              <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-700">
+                <div>
+                  <label htmlFor="isolation-default" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Where tasks work
+                  </label>
+                  <select
+                    id="isolation-default"
+                    value={settings.isolation ?? 'worktree'}
+                    onChange={(e) => setSettings({ ...settings, isolation: e.target.value as 'worktree' | 'in-place' })}
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-900"
+                  >
+                    <option value="worktree">An isolated worktree (recommended)</option>
+                    <option value="in-place">My repository</option>
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    A worktree is a copy of the repository for the task alone: your folder is not touched and may have changes, and
+                    several tasks can run at once. Each task can still choose on its form.
+                  </p>
+                </div>
+
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.autoReconcile !== false}
+                    onChange={(e) => setSettings({ ...settings, autoReconcile: e.target.checked })}
+                    className="rounded border-slate-300 dark:border-slate-600"
+                  />
+                  <div className="flex-1">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300 block">Compare the roadmap with what a phase delivered</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      When a phase is merged, one cheap model call checks the phases still to come against what really changed.
+                    </span>
+                  </div>
+                </label>
+
+                <WorktreeList repos={repoNames} />
               </div>
 
               {/* Log Level */}

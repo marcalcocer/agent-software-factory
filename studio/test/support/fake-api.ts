@@ -74,6 +74,20 @@ export function openingARun(runIds: string[] = [RUN.round1, RUN.round2], alive: 
     'factory:get-events': (runId: string) => readRunEvents(runDir(runId)),
     'factory:get-pending-input': () => null,
     'factory:get-output': () => ({ lines: [], total: 0 }),
+    // Where the work is: the real runs worked in the repository, as the run record says.
+    'worktree:info': (runId: string) => {
+      const state = readRunState(runDir(runId), runId, alive.includes(runId));
+      return state
+        ? {
+            runId,
+            isolation: state.run.isolation ?? 'in-place',
+            path: state.run.workPath ?? state.repoPath,
+            branch: state.run.branch ?? null,
+            exists: true,
+            changedFiles: 0,
+          }
+        : null;
+    },
     'factory:get-rounds': (runId: string) => {
       const root = listOf([runId])[0]!.rootRunId ?? runId;
       return listOf(runIds, alive)
@@ -100,6 +114,8 @@ export function appHandlers(extra: Record<string, Handler> = {}): Record<string,
     }),
     'factory:list-repos': () => [{ name: 'invest-track', path: REPO_PATH, recentRuns: 2 }],
     'pr-watch:get': () => idleWatcher(),
+    // No project by default: the repository's tasks are single pull requests.
+    'project:list': () => [],
     ...extra,
   };
 }

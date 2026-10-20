@@ -1,8 +1,21 @@
 import type { PipelineConfig } from '../../shared/types';
 import { PipelineSelector } from './PipelineSelector';
 
+export type Isolation = 'worktree' | 'in-place';
+export type Phasing = 'auto' | 'on' | 'off';
+
 interface TaskInputProps {
   repoName: string;
+  /** The repository's folder, for the preview of where an in-place task would work. */
+  repoPath?: string;
+  /** Where checkouts are kept (`<workspace>/.factory/worktrees/...`), for the preview of the folder a task would get. */
+  workspaceRoot?: string;
+  /** Where the task works: a checkout of its own (default), or the user's repository. */
+  isolation: Isolation;
+  onIsolationChange: (isolation: Isolation) => void;
+  /** Whether the architect may split a big request into phases. */
+  phasing: Phasing;
+  onPhasingChange: (phasing: Phasing) => void;
   value: string;
   onChange: (value: string) => void;
   onSubmit: (task: string, pipeline?: PipelineConfig) => void;
@@ -11,10 +24,71 @@ interface TaskInputProps {
   pipeline: PipelineConfig;
   onPipelineChange: (config: PipelineConfig) => void;
   /**
-   * Another run uses this repository's working copy, so a task cannot start now. The draft can still be
-   * written meanwhile; `onOpen` takes the user to the run that is in the way.
+   * Another run uses the user's repository, so a task that would work there cannot start now. The draft can
+   * still be written meanwhile; `onOpen` takes the user to the run that is in the way. A task in a checkout
+   * of its own is not held up.
    */
   blocked?: { message: string; onOpen?: () => void };
+}
+
+const stripTrailingSlash = (value: string): string => value.replace(/\/+$/, '');
+
+/** Where the task works, shown before it starts so nothing about its folder is a surprise. */
+function ExecutionOptions({
+  repoName,
+  repoPath,
+  workspaceRoot,
+  isolation,
+  onIsolationChange,
+  phasing,
+  onPhasingChange,
+}: Pick<TaskInputProps, 'repoName' | 'repoPath' | 'workspaceRoot' | 'isolation' | 'onIsolationChange' | 'phasing' | 'onPhasingChange'>) {
+  const folder = `${stripTrailingSlash(workspaceRoot ?? '<workspace>')}/.factory/worktrees/${repoName}/<task id>`;
+  const radio = 'mt-0.5';
+  return (
+    <fieldset className="space-y-2 text-sm text-slate-700 dark:text-slate-200" data-testid="execution-options">
+      <legend className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Where should it work?</legend>
+      <label className="flex items-start gap-2">
+        <input type="radio" name="isolation" className={radio} checked={isolation === 'worktree'} onChange={() => onIsolationChange('worktree')} />
+        <span>
+          <span className="font-medium">Isolated worktree</span> <span className="text-xs text-slate-500">(recommended)</span>
+          <span className="block text-xs text-slate-500 dark:text-slate-400">Your folder is not touched and may have changes; other tasks can run at the same time.</span>
+        </span>
+      </label>
+      <label className="flex items-start gap-2">
+        <input type="radio" name="isolation" className={radio} checked={isolation === 'in-place'} onChange={() => onIsolationChange('in-place')} />
+        <span>
+          <span className="font-medium">My repository</span>
+          <span className="block text-xs text-slate-500 dark:text-slate-400">It switches the branch there, and needs it to have no uncommitted changes.</span>
+        </span>
+      </label>
+      <p data-testid="isolation-preview" className="text-xs text-slate-500 dark:text-slate-400">
+        {isolation === 'worktree' ? (
+          <>
+            It gets a copy of its own, on its own branch, in <code className="font-mono break-all">{folder}</code>. The exact folder is shown on the run, once it starts.
+          </>
+        ) : (
+          <>
+            It works in <code className="font-mono break-all">{repoPath ?? repoName}</code> itself.
+          </>
+        )}
+      </p>
+      <label className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-slate-600 dark:text-slate-300">Phases:</span>
+        <select
+          aria-label="Plan in phases"
+          value={phasing}
+          onChange={(event) => onPhasingChange(event.target.value as Phasing)}
+          className="px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900"
+        >
+          <option value="auto">Let the architect decide</option>
+          <option value="on">Plan in phases</option>
+          <option value="off">One pull request</option>
+        </select>
+        <span className="text-slate-500 dark:text-slate-400">A request too big for one reviewable pull request is split; each phase is merged before the next.</span>
+      </label>
+    </fieldset>
+  );
 }
 
 function BlockedNotice({ blocked }: { blocked: NonNullable<TaskInputProps['blocked']> }) {
@@ -38,7 +112,12 @@ function BlockedNotice({ blocked }: { blocked: NonNullable<TaskInputProps['block
   );
 }
 
-export function TaskInput({ repoName, value, onChange, onSubmit, loading, hasHistory, pipeline, onPipelineChange, blocked }: TaskInputProps) {
+export function TaskInput(props: TaskInputProps) {
+  const { repoName, value, onChange, onSubmit, loading, hasHistory, pipeline, onPipelineChange, isolation } = props;
+  // Only a task that works in the user's own repository waits for whatever else is using it.
+  const blocked = isolation === 'in-place' ? props.blocked : undefined;
+  const options = <ExecutionOptions {...props} />;
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!value.trim() || blocked) return;
@@ -72,6 +151,7 @@ export function TaskInput({ repoName, value, onChange, onSubmit, loading, hasHis
               Run
             </button>
           </div>
+          {options}
           <PipelineSelector value={pipeline} onChange={onPipelineChange} />
         </div>
       </form>
@@ -103,6 +183,8 @@ export function TaskInput({ repoName, value, onChange, onSubmit, loading, hasHis
           The factory will plan, implement, test, review, and document your request.
         </p>
       </div>
+
+      {options}
 
       <PipelineSelector value={pipeline} onChange={onPipelineChange} />
 

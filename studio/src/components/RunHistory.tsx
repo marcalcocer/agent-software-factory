@@ -17,6 +17,8 @@ interface Run {
   rootRunId?: string;
   round?: number;
   pullRequestNumber?: number;
+  /** "Phase 2 of 4 · Redesign the frontend": set for a run that implements a phase of a project. */
+  phaseLabel?: string;
   summary?: {
     durationMs: number;
     tokensUsed: number;
@@ -160,6 +162,11 @@ export function RunHistory({ runs, loading, onSelectRun, onResume, onRename, onD
                     </span>
                   )}
                 </div>
+                {run.phaseLabel && (
+                  <div data-testid="phase-badge" className="mb-0.5 text-xs font-medium text-purple-700 dark:text-purple-300">
+                    {run.phaseLabel}
+                  </div>
+                )}
                 {run.round && run.round > 1 ? (
                   <div className="mb-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300">
                     ↳ Round {run.round} of this task

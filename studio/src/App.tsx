@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AuthProvider, FactoryRun, PipelineConfig, PrMergeNotice, PrMergeResult, PrWatchState } from '@shared/types';
+import type { AuthProvider, FactoryRun, PipelineConfig, PrMergeNotice, PrMergeResult, PrWatchState, Project, ProjectPhase } from '@shared/types';
 import { Sidebar } from './components/Sidebar';
 import { RepoTabs } from './components/RepoTabs';
-import { TaskInput } from './components/TaskInput';
+import { TaskInput, type Isolation, type Phasing } from './components/TaskInput';
+import { RoadmapPanel } from './components/RoadmapPanel';
 import { RunHistory } from './components/RunHistory';
 import { RunDetails } from './components/RunDetails';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -36,11 +37,25 @@ interface Run {
   rootRunId?: string;
   round?: number;
   pullRequestNumber?: number;
+  /** Where the work happens. A run from before checkouts existed worked in the repository. */
+  isolation?: 'worktree' | 'in-place';
+  /** The phase of a project this run implements. */
+  phaseId?: string;
   summary?: {
     durationMs: number;
     tokensUsed: number;
     stepsCompleted: number;
   };
+}
+
+/** "Phase 2 of 4 · Redesign the frontend" - for a run that implements a phase. */
+function phaseLabelOf(projects: Project[], phaseId: string | undefined): string | undefined {
+  if (!phaseId) return undefined;
+  for (const project of projects) {
+    const phase = project.phases.find((candidate) => candidate.id === phaseId);
+    if (phase) return `Phase ${phase.ordinal} of ${project.phases.filter((other) => other.status !== 'SKIPPED' || other.id === phase.id).length} · ${project.title}`;
+  }
+  return undefined;
 }
 
 function App() {
@@ -83,6 +98,14 @@ function App() {
   // Pull-request watcher: the main process looks for review comments in the background and pushes
   // its view of every open pull request here.
   const [prWatch, setPrWatch] = useState<PrWatchState | null>(null);
+
+  // Where a new task works, and whether the architect may split it into phases. Both start from Settings.
+  const [isolation, setIsolation] = useState<Isolation>('worktree');
+  const [phasing, setPhasing] = useState<Phasing>('auto');
+  const [workspaceRoot, setWorkspaceRoot] = useState<string | undefined>(undefined);
+  // The projects (big requests split into phases) of each repository, read through the factory.
+  const [projectsByRepo, setProjectsByRepo] = useState<Record<string, Project[]>>({});
+  const [projectsError, setProjectsError] = useState<string | null>(null);
   /** Merges just done (or rehearsed): a merged pull request leaves the list, so its outcome is kept here. */
   const [mergeNotices, setMergeNotices] = useState<PrMergeNotice[]>([]);
 
@@ -104,9 +127,16 @@ function App() {
     });
 
   const activeRepoPath = repos.find((repo) => repo.name === activeTab)?.path ?? null;
-  const repoRuns = (activeRepoPath && runsByRepo[activeRepoPath]) || [];
-  /** A run that is using this repository's working copy: no other task can start until it is done. */
-  const busyRun = repoRuns.find((run) => run.status === 'running' || run.status === 'waiting');
+  const projects = (activeRepoPath && projectsByRepo[activeRepoPath]) || [];
+  const repoRuns = ((activeRepoPath && runsByRepo[activeRepoPath]) || []).map((run) => {
+    const phaseLabel = phaseLabelOf(projects, run.phaseId);
+    return phaseLabel ? { ...run, phaseLabel } : run;
+  });
+  /**
+   * A run that is using the user's own repository: a task that would work there cannot start until it is
+   * done. A run in a checkout of its own uses nothing but that checkout, so it is not in the way.
+   */
+  const busyRun = repoRuns.find((run) => (run.status === 'running' || run.status === 'waiting') && run.isolation !== 'worktree');
 
   // Apply the theme to the document root and follow OS changes while in "system" mode.
   useEffect(() => {
@@ -120,6 +150,7 @@ function App() {
       const repo = repos.find(r => r.name === activeTab);
       if (repo) {
         loadRunsForRepo(repo.path);
+        loadProjects(repo.path);
       }
     }
   }, [activeTab, repos]);
@@ -171,7 +202,11 @@ function App() {
 
     // Restore the saved theme
     window.api.invoke('settings:get')
-      .then((settings) => setTheme(settings.global.theme))
+      .then((settings) => {
+        setTheme(settings.global.theme);
+        setIsolation(settings.global.isolation ?? 'worktree');
+        setWorkspaceRoot(settings.global.workspaceRoot);
+      })
       .catch(() => {});
 
     // Subscribe to factory events
@@ -180,7 +215,11 @@ function App() {
     const reloadVisibleRuns = () => {
       const { activeTab: tab, repos: allRepos } = latest.current;
       const repo = allRepos.find((r) => r.name === tab);
-      if (repo) loadRunsForRepo(repo.path);
+      if (repo) {
+        loadRunsForRepo(repo.path);
+        // A run on a phase changes where the project stands.
+        loadProjects(repo.path);
+      }
       // Keep the sidebar's per-repository run counts current as well.
       loadRepositories();
     };
@@ -226,12 +265,27 @@ function App() {
     // switched repository and back.
     const unsubscribeStarted = window.api.on('factory:started', () => reloadVisibleRuns());
 
+    // A phase was merged, or the roadmap was compared with what it delivered: the project moved.
+    const unsubscribeProjects = window.api.on('project:changed', (repoPath: string) => loadProjects(repoPath));
+
     return () => {
       unsubscribeCompleted();
       unsubscribeError();
       unsubscribeStarted();
+      unsubscribeProjects();
     };
   }, []);
+
+  /** The projects of a repository, from the factory. A repository with none (or a factory that cannot say) shows none. */
+  const loadProjects = async (repoPath: string) => {
+    try {
+      const list = await window.api.invoke('project:list', repoPath);
+      setProjectsByRepo((previous) => ({ ...previous, [repoPath]: list }));
+      setProjectsError(null);
+    } catch (err) {
+      setProjectsError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   const loadRepositories = async () => {
     setReposLoading(true);
@@ -280,6 +334,8 @@ function App() {
         rootRunId: fr.rootRunId,
         round: fr.round,
         pullRequestNumber: fr.pullRequest?.number,
+        ...(fr.isolation ? { isolation: fr.isolation } : {}),
+        ...(fr.phaseId ? { phaseId: fr.phaseId } : {}),
         summary: fr.tokens
           ? {
               durationMs: fr.finishedAt ? new Date(fr.finishedAt).getTime() - new Date(fr.startedAt).getTime() : 0,
@@ -358,6 +414,8 @@ function App() {
         maxAttempts: settings.global.defaultMaxAttempts,
         dryRun: settings.global.dryRunByDefault,
         pipeline: pipeline || pipelineConfig,
+        isolation,
+        phasing,
       });
 
       // It is on disk already (the factory records a run before it announces it); show it right away.
@@ -368,6 +426,7 @@ function App() {
         task,
         status: 'running',
         startTime: new Date(),
+        isolation,
       };
       if (activeRepoPath) {
         setRunsByRepo((previous) => ({
@@ -386,6 +445,34 @@ function App() {
       setRunLoading(false); // Only stop loading on error during submission
       setRunningRepo(null);
     }
+  };
+
+  /**
+   * Starts a run on one phase of a project. Like a task the user typed, it opens on screen straight away.
+   * Rejects with the factory's reason when it cannot start (the phase before it is not merged yet, ...).
+   */
+  const handleStartPhase = async (_project: Project, phase: ProjectPhase) => {
+    if (!activeTab || !activeRepoPath) return;
+    setError(null);
+    const result = await window.api.invoke('project:run-phase', { repoPath: activeRepoPath, phaseId: phase.id });
+
+    const newRun: Run = {
+      id: result.runId,
+      repoName: activeTab,
+      title: phase.title,
+      task: phase.title,
+      status: 'running',
+      startTime: new Date(),
+      phaseId: phase.id,
+    };
+    setRunsByRepo((previous) => ({
+      ...previous,
+      [activeRepoPath]: [newRun, ...(previous[activeRepoPath] ?? []).filter((run) => run.id !== newRun.id)],
+    }));
+    setRunningRepo(activeTab);
+    setActiveRunId(result.runId);
+    setOpenRunId(result.runId);
+    loadProjects(activeRepoPath);
   };
 
   /** Renames a run: shown at once, stored with the run, put back if the store refuses. */
@@ -723,6 +810,7 @@ function App() {
                         onRevise={handlePrRevise}
                         onDismiss={(key) => window.api.invoke('pr-watch:dismiss', key)}
                         onPostReplies={(key) => window.api.invoke('pr-watch:post-replies', key)}
+                        onDecideScope={(key, decisions) => window.api.invoke('pr-watch:decide-scope', key, decisions)}
                         onOpenRun={handleOpenRun}
                         onApprove={(key, headSha) => window.api.invoke('pr-watch:approve', key, headSha)}
                         onWithdrawApproval={(key) => window.api.invoke('pr-watch:withdraw-approval', key)}
@@ -732,8 +820,28 @@ function App() {
                         onDismissNotice={(id) => setMergeNotices((previous) => previous.filter((notice) => notice.id !== id))}
                       />
 
+                      <RoadmapPanel
+                        projects={projects}
+                        error={projectsError}
+                        onReload={() => activeRepoPath && loadProjects(activeRepoPath)}
+                        onProjectChanged={(updated) =>
+                          activeRepoPath &&
+                          setProjectsByRepo((previous) => ({
+                            ...previous,
+                            [activeRepoPath]: (previous[activeRepoPath] ?? []).map((project) => (project.id === updated.id ? updated : project)),
+                          }))
+                        }
+                        onStartPhase={handleStartPhase}
+                      />
+
                       <TaskInput
                         repoName={activeTab}
+                        {...(activeRepoPath ? { repoPath: activeRepoPath } : {})}
+                        {...(workspaceRoot ? { workspaceRoot } : {})}
+                        isolation={isolation}
+                        onIsolationChange={setIsolation}
+                        phasing={phasing}
+                        onPhasingChange={setPhasing}
                         value={taskDrafts[activeTab] || ''}
                         onChange={(value) => setTaskDrafts({ ...taskDrafts, [activeTab]: value })}
                         onSubmit={handleRunTask}
@@ -746,8 +854,8 @@ function App() {
                               blocked: {
                                 message:
                                   busyRun.status === 'running'
-                                    ? `"${busyRun.title}" is still running in this repository and uses the same working copy. A new task can start when it is done.`
-                                    : `"${busyRun.title}" is waiting for you in this repository and uses the same working copy. Answer it or close it to start a new task.`,
+                                    ? `"${busyRun.title}" is still running in this repository and uses the same working copy. A new task can start when it is done - or choose an isolated worktree to start it now.`
+                                    : `"${busyRun.title}" is waiting for you in this repository and uses the same working copy. Answer it or close it to start a new task - or choose an isolated worktree to start it now.`,
                                 onOpen: () => setOpenRunId(busyRun.id),
                               },
                             }
@@ -782,6 +890,10 @@ function App() {
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onThemeChange={setTheme}
+        onSaved={(saved) => {
+          setIsolation(saved.isolation);
+          setWorkspaceRoot(saved.workspaceRoot);
+        }}
       />
 
       <ConfirmModal

@@ -134,21 +134,53 @@ describe('leaving a run that is still going', () => {
     expect(api.callsTo('factory:cancel')).toEqual([]);
   });
 
-  it('does not let a second task start in the same working copy meanwhile', async () => {
+  it('does not let a task that works in the user\'s repository start while another one uses it', async () => {
     const api = installFakeApi(
       appHandlers({
-        'factory:list': () => listOf([RUN.round1, RUN.round2], [RUN.round2]),
+        'factory:list': () => listOf([RUN.round1, RUN.round2], [RUN.round2]), // round 2 is going; the real runs worked in the repository
       }),
     );
     const user = await openRepository(api);
 
+    await user.click(await screen.findByRole('radio', { name: /My repository/ }));
+
     const notice = await screen.findByTestId('task-blocked');
     expect(notice.textContent).toContain('is still running in this repository');
     expect(notice.textContent).toContain('uses the same working copy');
+    expect(notice.textContent).toContain('choose an isolated worktree to start it now');
 
     await user.type(screen.getByPlaceholderText(/Describe your next task/), 'Another task entirely');
     expect((screen.getByRole('button', { name: 'Run' }) as HTMLButtonElement).disabled).toBe(true);
     expect(api.callsTo('factory:run-task')).toEqual([]);
+  });
+
+  it('starts a task in a checkout of its own meanwhile - it does not use the repository the other one is using', async () => {
+    const api = installFakeApi(
+      appHandlers({
+        'factory:list': () => listOf([RUN.round1, RUN.round2], [RUN.round2]),
+        'factory:run-task': () => new Promise(() => {}),
+      }),
+    );
+    const user = await openRepository(api);
+
+    await screen.findByText(/Round 2 of this task/);
+    expect(screen.queryByTestId('task-blocked')).toBeNull(); // the default is an isolated worktree
+    await user.type(screen.getByPlaceholderText(/Describe your next task/), 'Another task entirely');
+    await user.click(screen.getByRole('button', { name: 'Run' }));
+
+    await waitFor(() => expect(api.callsTo('factory:run-task').length).toBe(1));
+    expect(api.callsTo('factory:run-task')[0]![0]).toMatchObject({ task: 'Another task entirely', isolation: 'worktree', phasing: 'auto' });
+  });
+
+  it('is not held up by a run that works in a checkout of its own, even when it chooses to work in the repository', async () => {
+    const inItsOwnCheckout = listOf([RUN.round1, RUN.round2], [RUN.round2]).map((run) => ({ ...run, isolation: 'worktree' as const, workPath: '/home/dev/workspace/.factory/worktrees/invest-track/f0042' }));
+    const api = installFakeApi(appHandlers({ 'factory:list': () => inItsOwnCheckout }));
+    const user = await openRepository(api);
+
+    await user.click(await screen.findByRole('radio', { name: /My repository/ }));
+
+    await screen.findByText(/Round 2 of this task/);
+    expect(screen.queryByTestId('task-blocked')).toBeNull();
   });
 
   it('lets a task start when nothing is running there', async () => {
