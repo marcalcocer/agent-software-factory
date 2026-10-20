@@ -1373,6 +1373,13 @@ const codeReviewStep = createStep({
         verdict: state.qaReport?.verdict,
         totals: state.qaReport?.totals,
         weakenedVerification: state.qaReport?.weakenedVerification,
+        // What QA flagged, so the review builds on it instead of finding it again from scratch (the
+        // same one-line fix was reported separately by QA and by the reviewer in a real run).
+        bugReports: state.qaReport?.bugReports?.map((bug) => ({
+          title: bug.title,
+          severity: bug.severity,
+          evidence: bug.evidence,
+        })),
       }),
       promptSection('Changes under review', changes?.text),
       [
