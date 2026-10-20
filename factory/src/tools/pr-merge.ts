@@ -49,6 +49,7 @@ import {
   type Mergeability,
 } from './pr-merge-rules.ts';
 import { checkPullRequests } from './pr-watch.ts';
+import { settlePullRequest, type SettledPhase } from './pr-lifecycle.ts';
 import { pullRequestKey, setPullRequestState } from './pr-registry.ts';
 
 /** `gh` must never wait for a keypress, colour its output or announce updates. */
@@ -374,6 +375,8 @@ export interface MergeOutcome {
   headBranch?: string;
   /** What else happened - or deliberately did not - around the merge. */
   notes: string[];
+  /** The phase of a project this pull request was, and what comes next in it. */
+  phase?: SettledPhase;
 }
 
 async function deleteRemoteBranch(repoPath: string, branch: string): Promise<{ ok: boolean; reason?: string }> {
@@ -417,6 +420,8 @@ async function tidyWorkingCopy(input: {
   mergedHeadSha: string;
   allowSwitch: boolean;
   deleteLocalBranch: boolean;
+  /** The task worked in a checkout of its own, so the user's branch is deliberately left where it is: say if it is behind. */
+  explainUntouched?: boolean;
 }): Promise<string[]> {
   const { repoPath, headBranch, baseBranch } = input;
   const notes: string[] = [];
@@ -480,6 +485,14 @@ async function tidyWorkingCopy(input: {
           ? `Deleted the local branch ${headBranch}.`
           : `Could not delete the local branch ${headBranch}: ${firstLine(removed.stderr)}`,
       );
+    }
+  }
+
+  if (input.explainUntouched && current !== headBranch) {
+    const local = await refSha(repoPath, `refs/heads/${baseBranch}`);
+    const remote = await refSha(repoPath, `refs/remotes/origin/${baseBranch}`);
+    if (local && remote && local !== remote && (await isAncestor(repoPath, local, remote))) {
+      notes.push(`${baseBranch} on GitHub now has the merged change; your local ${baseBranch} does not yet. Your repository was not touched - pull when you want it.`);
     }
   }
 
@@ -578,6 +591,18 @@ export async function mergePullRequest(options: MergeOptions): Promise<MergeOutc
     // The next `pr-check` finds out from GitHub anyway.
   }
 
+  // The roadmap moves on, and the task's checkout goes - BEFORE the local branch is deleted below: git
+  // will not delete a branch that is checked out, and the checkout is where this branch is checked out.
+  const settled = await settlePullRequest({
+    repoPath,
+    number,
+    state: 'MERGED',
+    mergeCommit,
+    mergedAt,
+  });
+  notes.push(...settled.notes);
+  const checkoutKept = settled.checkout !== null && !settled.checkout.removed;
+
   let remoteDeleted = false;
   if (options.deleteBranch) {
     const defaultBranch = await getDefaultBranch(repoPath);
@@ -614,9 +639,13 @@ export async function mergePullRequest(options: MergeOptions): Promise<MergeOutc
         baseBranch: facts.baseBranch,
         mergedHeadSha: facts.headSha,
         allowSwitch: options.returnToBase,
-        deleteLocalBranch: remoteDeleted,
+        deleteLocalBranch: remoteDeleted && !checkoutKept,
+        explainUntouched: settled.checkout !== null,
       })),
     );
+    if (checkoutKept && remoteDeleted) {
+      notes.push(`Kept the local branch ${facts.headBranch}: it is still checked out at ${settled.checkout!.path}.`);
+    }
   } catch (error) {
     notes.push(`Your working copy could not be tidied: ${firstLine((error as Error).message)}`);
   }
@@ -627,5 +656,6 @@ export async function mergePullRequest(options: MergeOptions): Promise<MergeOutc
     baseBranch: facts.baseBranch,
     headBranch: facts.headBranch,
     notes,
+    ...(settled.phase ? { phase: settled.phase } : {}),
   };
 }

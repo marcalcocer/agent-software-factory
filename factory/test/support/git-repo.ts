@@ -3,6 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { withStore } from '../../src/initiatives/store.ts';
+import { generateRunId, openRunTrace } from '../../src/tools/logger-tools.ts';
+import { registerPullRequest } from '../../src/tools/pr-registry.ts';
+import { ensureWorktree } from '../../src/tools/worktree.ts';
+
 export const BIG_CHANGE_FILES = 40;
 
 const body = (file: number, version: string): string =>
@@ -111,4 +116,57 @@ export function createWorkspaceRepo(): WorkspaceRepo {
   };
 
   return { workspace, repo, remote, git, gitIn, pushFromElsewhere, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+}
+
+/* -------------------------------------------------------------------------- */
+/* A task that has delivered a pull request                                    */
+/* -------------------------------------------------------------------------- */
+
+export interface DeliveredTask {
+  runId: string;
+  taskId: string;
+  branch: string;
+  /** The checkout the task worked in. */
+  workPath: string;
+  /** The commit the branch is at (and on `origin`). */
+  headSha: string;
+  initiativeId: string;
+}
+
+/**
+ * The state a task leaves behind when its pull request is open: a checkout with one commit pushed to
+ * `origin`, the run's record saying where it worked, the pull request in the registry, and the phase of a
+ * three-phase project linked to it. Needs `FACTORY_WORKSPACE_ROOT` and `FACTORY_LOG_DIR` to be set.
+ */
+export async function deliverTask(ws: WorkspaceRepo, options: { taskId?: string; number?: number; phases?: boolean } = {}): Promise<DeliveredTask> {
+  const taskId = options.taskId ?? 'f0001';
+  const number = options.number ?? 8;
+  const branch = `factory/${taskId}/feat-greeting`;
+  const runId = generateRunId('app');
+
+  const made = await ensureWorktree({ mainRepoPath: ws.repo, taskId, branch, baseBranch: 'main', freshStart: true });
+  fs.writeFileSync(path.join(made.path, 'src', 'greeting.js'), 'module.exports = (name) => `hello ${name}`;\n');
+  ws.gitIn(made.path, 'add', '-A');
+  ws.gitIn(made.path, 'commit', '-q', '-m', `feat: greeting\n\nFactory-Task: ${taskId}`);
+  ws.gitIn(made.path, 'push', '-q', '-u', 'origin', branch);
+  const headSha = ws.gitIn(made.path, 'rev-parse', 'HEAD').trim();
+
+  openRunTrace({
+    runId, task: 'Add a greeting helper', repoPath: ws.repo, repoName: 'app', branch, baseBranch: 'main', taskId,
+    title: 'Add a greeting helper', titleSource: 'agent', kind: 'run', rootRunId: runId, round: 1,
+    isolation: 'worktree', workPath: made.path, dryRun: false, startedAt: new Date().toISOString(),
+  });
+  await registerPullRequest({ repoPath: ws.repo, number, url: `https://github.com/o/app/pull/${number}`, title: 'Add a greeting helper', headBranch: branch, baseBranch: 'main', runId });
+
+  const initiativeId = await withStore(async (store) => {
+    const created = await store.createInitiative({ repoPath: ws.repo, title: 'Add a greeting helper', goal: 'Greet users', firstPhase: { title: 'Greeting helper' } });
+    await store.linkRun(created.phases[0]!.id, { taskId, rootRunId: runId, branch });
+    const set = options.phases === false
+      ? created
+      : await store.setRoadmap(created.id, { title: 'Greetings', phases: [{ title: 'Greeting helper' }, { title: 'Use it in the entry point' }, { title: 'Localise it' }] });
+    await store.linkPullRequest(set.phases[0]!.id, { number, url: `https://github.com/o/app/pull/${number}`, branch });
+    return created.id;
+  });
+
+  return { runId, taskId, branch, workPath: made.path, headSha, initiativeId };
 }

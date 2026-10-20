@@ -11,6 +11,7 @@ import path from 'node:path';
 
 import { fetchPullRequestReview, type PullRequestComment } from './github-tools.ts';
 import { assessMerge } from './pr-merge-rules.ts';
+import { settlePullRequest, type SettleResult } from './pr-lifecycle.ts';
 import {
   backfillFromRuns,
   loadRegistry,
@@ -49,6 +50,11 @@ export interface PullRequestCheck {
   mergeWarnings?: string[];
   /** Why this pull request could not be checked this time (the others still were). */
   error?: string;
+  /**
+   * Set once, by the check that found the pull request over (merged or closed on GitHub): what that did to
+   * the project it belongs to, and to the task's checkout.
+   */
+  settled?: SettleResult;
 }
 
 export interface CheckResult {
@@ -130,7 +136,8 @@ export async function checkPullRequests(options: CheckOptions = {}): Promise<Che
       }
 
       if (state !== 'OPEN') {
-        return { ...base(entry), title: review.title, state, pending: [] } satisfies PullRequestCheck;
+        const settled = await settlePullRequest({ repoPath: entry.repoPath, number: entry.number, state });
+        return { ...base(entry), title: review.title, state, pending: [], settled } satisfies PullRequestCheck;
       }
 
       const handled = new Set(entry.handledCommentIds);
@@ -170,7 +177,8 @@ export async function checkPullRequests(options: CheckOptions = {}): Promise<Che
       // an error card nobody can clear, helps no one: stop watching it.
       if (/could not resolve to a pullrequest/i.test(message)) {
         await setPullRequestState(entry.key, 'CLOSED');
-        return { ...base(entry), state: 'CLOSED', pending: [] } satisfies PullRequestCheck;
+        const settled = await settlePullRequest({ repoPath: entry.repoPath, number: entry.number, state: 'CLOSED' });
+        return { ...base(entry), state: 'CLOSED', pending: [], settled } satisfies PullRequestCheck;
       }
       return { ...base(entry), state: entry.state, pending: [], error: message } satisfies PullRequestCheck;
     }
