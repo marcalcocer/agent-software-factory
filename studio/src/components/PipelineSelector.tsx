@@ -11,7 +11,12 @@ interface StageInfo {
   label: string;
   description: string;
   warningWhenDisabled: string;
+  /** Another stage this one cannot work without: it is switched off, and says why, while that one is off. */
+  requires?: { id: keyof PipelineConfig; because: string };
 }
+
+/** Stages from before a stage existed have no entry for it: absent means on. */
+const isOn = (config: PipelineConfig, id: keyof PipelineConfig): boolean => config[id] !== false;
 
 const OPTIONAL_STAGES: StageInfo[] = [
   {
@@ -38,6 +43,13 @@ const OPTIONAL_STAGES: StageInfo[] = [
     description: 'Update the README, changelog and docs when the change makes them stale',
     warningWhenDisabled: 'Documentation will not be checked or updated (the pull-request text is still written)',
   },
+  {
+    id: 'polish',
+    label: 'Polish',
+    description: 'Fix the minor findings of QA, the review and the security audit in one pass, checked by the tests and the build',
+    warningWhenDisabled: 'Minor findings will only be listed in the pull request, not fixed',
+    requires: { id: 'qa', because: 'Needs QA Testing, which checks the fixes' },
+  },
 ];
 
 const MANDATORY_STAGES = [
@@ -52,11 +64,13 @@ export function PipelineSelector({ value, onChange }: PipelineSelectorProps) {
   const [expanded, setExpanded] = useState(false);
 
   const handleToggle = (stageId: keyof PipelineConfig) => {
-    onChange({ ...value, [stageId]: !value[stageId] });
+    onChange({ ...value, [stageId]: !isOn(value, stageId) });
   };
 
-  const skippedStages = OPTIONAL_STAGES.filter((stage) => !value[stage.id]);
-  const allEnabled = OPTIONAL_STAGES.every((stage) => value[stage.id]);
+  /** On, and not held back by a stage it needs. */
+  const runs = (stage: StageInfo): boolean => isOn(value, stage.id) && (!stage.requires || isOn(value, stage.requires.id));
+  const skippedStages = OPTIONAL_STAGES.filter((stage) => !runs(stage));
+  const allEnabled = skippedStages.length === 0;
 
   return (
     <div className="border border-slate-300 dark:border-slate-600 rounded-md overflow-hidden">
@@ -128,15 +142,19 @@ export function PipelineSelector({ value, onChange }: PipelineSelectorProps) {
             </h4>
             <div className="space-y-2">
               {OPTIONAL_STAGES.map((stage) => {
-                const enabled = value[stage.id];
+                const enabled = runs(stage);
+                const held = Boolean(stage.requires) && !isOn(value, stage.requires!.id);
                 return (
                   <label
                     key={stage.id}
-                    className="flex items-start gap-3 p-2 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                    className={`flex items-start gap-3 p-2 rounded-md transition-colors ${
+                      held ? 'opacity-70' : 'hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer'
+                    }`}
                   >
                     <input
                       type="checkbox"
                       checked={enabled}
+                      disabled={held}
                       onChange={() => handleToggle(stage.id)}
                       className="mt-1 w-4 h-4 text-blue-600 border-slate-300 dark:border-slate-600 rounded focus:ring-2 focus:ring-blue-500"
                     />
@@ -149,6 +167,7 @@ export function PipelineSelector({ value, onChange }: PipelineSelectorProps) {
                       </div>
                       {!enabled && (
                         <div className="flex items-center gap-1 mt-1 text-xs text-amber-600 dark:text-amber-400">
+                          {held ? <span className="font-medium">{stage.requires!.because}.&nbsp;</span> : null}
                           <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                             <path
                               fillRule="evenodd"

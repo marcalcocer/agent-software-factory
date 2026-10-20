@@ -577,7 +577,7 @@ ipcMain.handle('factory:run-task', async (_event, params: {
   task: string;
   maxAttempts?: number;
   dryRun?: boolean;
-  pipeline?: { qa?: boolean; review?: boolean; security?: boolean; documentation?: boolean };
+  pipeline?: { qa?: boolean; review?: boolean; security?: boolean; documentation?: boolean; polish?: boolean };
 }): Promise<{ runId: string }> => {
   // One run at a time per working copy. A run switches the repository's branch and edits its files,
   // and a run parked at a human gate has its branch checked out and will commit onto whatever branch
@@ -621,6 +621,7 @@ ipcMain.handle('factory:run-task', async (_event, params: {
     if (params.pipeline.review === false) args.push('--no-review');
     if (params.pipeline.security === false) args.push('--no-security');
     if (params.pipeline.documentation === false) args.push('--no-docs');
+    if (params.pipeline.polish === false) args.push('--no-polish');
   }
 
   return await startFactoryRun(args);

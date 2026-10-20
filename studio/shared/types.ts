@@ -109,6 +109,11 @@ export interface PipelineConfig {
   review: boolean;
   security: boolean;
   documentation: boolean;
+  /**
+   * Fix the minor findings of the gates in one checked pass. Absent in the record of a run from before
+   * the pass existed: read it as `polish !== false`.
+   */
+  polish?: boolean;
 }
 
 /** The three human-in-the-loop gates the workflow can pause on. */

@@ -445,6 +445,102 @@ export function AgentDetail({
     );
   }
 
+  // --- Polish pass ---
+  if (base === 'polish') {
+    const candidates: any[] = Array.isArray(data.candidates) ? data.candidates : [];
+    const applied = new Set<string>(Array.isArray(data.applied) ? data.applied : []);
+    const declined: Array<{ id: string; reason: string }> = Array.isArray(data.declined) ? data.declined : [];
+    const unanswered: string[] = Array.isArray(data.unanswered) ? data.unanswered : [];
+    const reported: Array<{ source: string; summary: string; reason: string }> = Array.isArray(data.reported) ? data.reported : [];
+    const files: string[] = Array.isArray(data.changedFiles) ? data.changedFiles : [];
+    const reasonOf = new Map(declined.map((entry) => [entry.id, entry.reason]));
+    const where = (c: any) => (c.file ? `${c.file}${c.line ? `:${c.line}` : ''}` : c.source === 'qa' ? 'found by QA' : '');
+    const fixed = candidates.filter((c) => applied.has(c.id));
+    const notFixed = candidates.filter((c) => !applied.has(c.id));
+
+    const finding = (c: any, note?: string) => (
+      <li key={c.id} className="text-sm text-slate-200">
+        <span className="font-mono text-xs text-slate-400 mr-2">{c.id}</span>
+        {c.problem}
+        {where(c) && <div className="text-xs font-mono text-slate-400 mt-0.5">{where(c)}</div>}
+        {note && <div className="text-xs text-amber-300 mt-0.5">{note}</div>}
+      </li>
+    );
+
+    return (
+      <div className="space-y-4">
+        {header}
+        {artifact.status === 'NONE' && (
+          <p className="text-sm text-slate-300">QA, the review and the security audit left no minor findings to fix.</p>
+        )}
+        {artifact.status === 'SKIPPED' && (
+          <p className="text-sm text-slate-300">
+            {data.reason === 'NEEDS_QA'
+              ? 'Skipped: the polish pass needs the QA stage, which runs the tests and the build that check its fixes.'
+              : 'Switched off for this task: the minor findings are listed in the pull request, not fixed.'}
+          </p>
+        )}
+        {(artifact.status === 'REVERTED' || artifact.status === 'FAILED') && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-sm text-amber-100">
+            <div className="font-semibold mb-0.5">
+              {artifact.status === 'REVERTED' ? 'Undone: the work is as it was before the polish' : 'The polish pass could not run'}
+            </div>
+            {data.detail}
+          </div>
+        )}
+        {artifact.status === 'DECLINED' && (
+          <p className="text-sm text-slate-300">
+            The developer read the findings and changed nothing{data.detail && data.reason === 'BLOCKED' ? `: ${data.detail}` : ''}.
+          </p>
+        )}
+        {artifact.status === 'APPLIED' && typeof data.developerSummary === 'string' && data.developerSummary !== '' && (
+          <Section title="What the developer says">
+            <p className="text-sm text-slate-300 leading-relaxed">{data.developerSummary}</p>
+          </Section>
+        )}
+        {fixed.length > 0 && (
+          <Section title={`Fixed (${fixed.length})`}>
+            <ul className="space-y-2">{fixed.map((c) => finding(c))}</ul>
+            {files.length > 0 && (
+              <p className="text-xs text-slate-400 mt-2">
+                Changed {files.length} file{files.length === 1 ? '' : 's'}, {data.changedLines} lines, after the review approved the code:
+                {' '}
+                <span className="font-mono">{files.join(', ')}</span>
+              </p>
+            )}
+          </Section>
+        )}
+        {notFixed.length > 0 && (
+          <Section title={`Not fixed (${notFixed.length})`}>
+            <ul className="space-y-2">
+              {notFixed.map((c) =>
+                finding(
+                  c,
+                  reasonOf.get(c.id)
+                    ? `Not fixed: ${reasonOf.get(c.id)}`
+                    : unanswered.includes(c.id) || artifact.status === 'REVERTED' || artifact.status === 'FAILED'
+                      ? 'Not fixed'
+                      : undefined,
+                ),
+              )}
+            </ul>
+          </Section>
+        )}
+        {reported.length > 0 && (
+          <Section title="Reported, never acted on">
+            <ul className="space-y-1.5">
+              {reported.map((item, index) => (
+                <li key={index} className="text-sm text-slate-300">
+                  {item.summary} <span className="text-xs text-slate-500">({item.reason})</span>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
+      </div>
+    );
+  }
+
   // --- Run namer ---
   if (base === 'run-namer') {
     return (

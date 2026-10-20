@@ -274,3 +274,54 @@ describe('derivePipeline and the step that names the task', () => {
     expect(derive(RUN.round2).nodes.some((node) => node.id === 'run-namer')).toBe(false);
   });
 });
+
+describe('derivePipeline and the polish pass', () => {
+  const passed = (extra: Array<Record<string, unknown>> = []) =>
+    readEvents(RUN.round1).slice(0, 22).concat(extra as never[]); // up to the gates passing
+  const gates = (): RunArtifact[] =>
+    readRunArtifacts(runDir(RUN.round1)).filter((a) => ['pm-architect', 'developer', 'qa-tester', 'triage', 'code-review', 'security'].includes(a.step));
+  const polish = (status: string, data: Record<string, unknown> = {}): RunArtifact => ({ step: 'polish', attempt: 1, status, data });
+  const derived = (artifacts: RunArtifact[], events: unknown[], runStatus = 'RUNNING', pipeline: PipelineConfig = ALL_STAGES) =>
+    derivePipeline({ artifacts, events: events as never[], pendingInput: null, runStatus, assumeAlive: false, pipeline });
+  const node = (d: DerivedPipeline, id: string) => d.nodes.find((entry) => entry.id === id);
+
+  it('shows Polish between Security and Docs, running while the developer fixes the findings', () => {
+    const d = derived(gates(), passed([{ type: 'polish_started' }]));
+
+    const ids = d.nodes.map((n) => n.id);
+    expect(ids.slice(ids.indexOf('reviewer'))).toEqual(['reviewer', 'security', 'polish', 'documentation', 'pr-writer', 'delivery']);
+    expect(d.runningIds).toEqual(['polish']);
+    expect(node(d, 'polish')).toMatchObject({ status: 'running', activity: expect.stringContaining('Fixing the minor findings') });
+  });
+
+  it('moves on to the documentation once the pass has its result', () => {
+    const d = derived([...gates(), polish('APPLIED', { applied: ['REV-1'], candidates: [{}, {}] })], passed([{ type: 'polish_started' }]));
+    expect(d.runningIds).toEqual(['documentation']);
+    expect(node(d, 'polish')).toMatchObject({
+      status: 'completed',
+      activity: 'Fixed 1 of 2 minor findings; the tests and the build passed again',
+    });
+  });
+
+  it.each([
+    ['NONE', {}, 'completed', 'Nothing to fix: the gates left no minor findings'],
+    ['DECLINED', {}, 'completed', 'The developer looked at the minor findings and changed nothing'],
+    ['REVERTED', { detail: 'The test suite failed after the fixes (exit 1).' }, 'retry', 'Undone: The test suite failed after the fixes (exit 1).'],
+    ['FAILED', { detail: 'usage limit' }, 'retry', 'Could not run: usage limit'],
+    ['SKIPPED', { reason: 'DISABLED' }, 'skipped', 'Disabled for this task'],
+    ['SKIPPED', { reason: 'NEEDS_QA' }, 'skipped', 'Skipped: it needs the QA stage to check its fixes'],
+  ])('reads %s %j as %s', (status, data, nodeStatus, activity) => {
+    const d = derived([...gates(), polish(status, data)], passed([{ type: 'polish_started' }]), 'DELIVERED');
+    expect(node(d, 'polish')).toMatchObject({ status: nodeStatus, activity });
+  });
+
+  it('is absent on runs from before the pass: they never logged it and have no artifact', () => {
+    expect(derive(RUN.round1).nodes.some((n) => n.id === 'polish')).toBe(false);
+    expect(derive(RUN.round2).nodes.some((n) => n.id === 'polish')).toBe(false);
+  });
+
+  it('reads a record with no polish setting as polish on', () => {
+    const d = derived([...gates(), polish('NONE')], passed([{ type: 'polish_started' }]), 'DELIVERED', { qa: true, review: true, security: true, documentation: true });
+    expect(node(d, 'polish')!.disabled).toBeFalsy();
+  });
+});

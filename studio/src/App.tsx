@@ -77,6 +77,7 @@ function App() {
     review: true,
     security: true,
     documentation: true,
+    polish: true,
   });
   
   // Pull-request watcher: the main process looks for review comments in the background and pushes

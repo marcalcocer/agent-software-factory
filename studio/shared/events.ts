@@ -45,7 +45,7 @@ export interface IPCChannels {
     task: string;
     maxAttempts?: number;
     dryRun?: boolean;
-    pipeline?: { qa?: boolean; review?: boolean; security?: boolean; documentation?: boolean };
+    pipeline?: { qa?: boolean; review?: boolean; security?: boolean; documentation?: boolean; polish?: boolean };
   }) => Promise<{ runId: string }>;
   'factory:resume': (params: {
     runId: string;

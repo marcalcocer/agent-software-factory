@@ -69,7 +69,7 @@ function humanizeError(raw: string): string {
   return msg;
 }
 
-const ALL_STAGES: PipelineConfig = { qa: true, review: true, security: true, documentation: true };
+const ALL_STAGES: PipelineConfig = { qa: true, review: true, security: true, documentation: true, polish: true };
 
 /** How often a live (or waiting) run is re-read from disk. */
 const POLL_MS = 2000;

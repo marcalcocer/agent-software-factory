@@ -109,6 +109,7 @@ const PER_ATTEMPT = new Set(['developer', 'qa-tester', 'reviewer', 'security', '
 const FAILED_STEP_FAMILY: Record<string, string> = {
   'prepare-run': 'prepare-run',
   'run-namer': 'run-namer',
+  polish: 'polish',
   plan: 'pm-architect',
   'pm-architect': 'pm-architect',
   developer: 'developer',
@@ -178,6 +179,18 @@ export function prWriterStatus(raw: string): NodeStatus {
   if (s === 'SKIPPED') return 'skipped';
   if (s === 'COMPLETED' || s === 'FALLBACK') return 'completed';
   return 'failed';
+}
+
+/**
+ * The polish pass's artifact. NONE (no minor findings), APPLIED and DECLINED (the developer looked and
+ * changed nothing) are all a pass that did its job; REVERTED (undone because the checks failed or it grew
+ * too large) and FAILED (it could not run) went back, which the strip shows as a retry; SKIPPED is off.
+ */
+export function polishStatus(raw: string): NodeStatus {
+  const s = raw.toUpperCase();
+  if (s === 'SKIPPED') return 'skipped';
+  if (s === 'REVERTED' || s === 'FAILED') return 'retry';
+  return 'completed'; // NONE | APPLIED | DECLINED
 }
 
 /**
@@ -349,6 +362,8 @@ interface FrontierContext {
   prepareDone: boolean;
   /** The run namer was asked (its event is in the log) - it is not asked on runs from before it existed. */
   namingStarted: boolean;
+  /** The polish pass began (its event is in the log). Older runs never log it, and have no such stage. */
+  polishStarted: boolean;
 }
 
 const isDone = (status: NodeStatus): boolean => status === 'completed' || status === 'skipped';
@@ -361,7 +376,7 @@ const isDone = (status: NodeStatus): boolean => status === 'completed' || status
  * "running" at once. A stage switched off in the pipeline is treated as already done: the
  * workflow writes its `SKIPPED` artifact within milliseconds, so it must never flash as running.
  */
-function inferFrontier({ idx, pipeline, prepareDone, namingStarted }: FrontierContext): string[] {
+function inferFrontier({ idx, pipeline, prepareDone, namingStarted, polishStarted }: FrontierContext): string[] {
   if (!prepareDone) return ['prepare-run'];
   if (namingStarted && !idx.latest('run-namer')) return ['run-namer'];
 
@@ -395,6 +410,9 @@ function inferFrontier({ idx, pipeline, prepareDone, namingStarted }: FrontierCo
     return idx.get('triage', attempt) ? [nextAttempt] : [`triage-${attempt}`];
   }
 
+  // The polish pass runs at the start of the step that follows the gates, before documentation.
+  if (polishStarted && !idx.latest('polish')) return ['polish'];
+
   if (!idx.latest('documentation') && pipeline.documentation !== false) return ['documentation'];
 
   // The PR writer has no switch: it always runs next. A run that already reached delivery without
@@ -415,6 +433,7 @@ function inferFrontier({ idx, pipeline, prepareDone, namingStarted }: FrontierCo
 const RUNNING_ACTIVITY: Record<string, string> = {
   'prepare-run': 'Preparing the repository and work branch...',
   'run-namer': 'Naming the task...',
+  polish: 'Fixing the minor findings, then checking the tests and the build...',
   'pm-architect': 'Analysing the task and the codebase...',
   'pm-architect-plan': 'Re-planning with your answers...',
   developer: 'Writing code and implementing the plan...',
@@ -425,6 +444,27 @@ const RUNNING_ACTIVITY: Record<string, string> = {
   documentation: 'Checking whether the documentation needs updating...',
   'pr-writer': 'Writing the commit message and the pull-request description...',
 };
+
+/** One line on the Polish node: what the pass did, or why it did not. */
+function polishActivity(art: RunArtifact): string | undefined {
+  const data = (art.data ?? {}) as { reason?: string; detail?: string; applied?: unknown[]; candidates?: unknown[] };
+  switch (art.status.toUpperCase()) {
+    case 'NONE':
+      return 'Nothing to fix: the gates left no minor findings';
+    case 'APPLIED':
+      return `Fixed ${data.applied?.length ?? 0} of ${data.candidates?.length ?? 0} minor findings; the tests and the build passed again`;
+    case 'DECLINED':
+      return 'The developer looked at the minor findings and changed nothing';
+    case 'REVERTED':
+      return `Undone: ${data.detail ?? 'the checks failed'}`;
+    case 'FAILED':
+      return `Could not run: ${data.detail ?? 'unknown reason'}`;
+    case 'SKIPPED':
+      return data.reason === 'NEEDS_QA' ? 'Skipped: it needs the QA stage to check its fixes' : 'Disabled for this task';
+    default:
+      return undefined;
+  }
+}
 
 function deliveryActivity(events: RunEventRecord[]): string {
   // Only the current attempt: after a retry, earlier actions (e.g. a push that already
@@ -478,6 +518,7 @@ export function derivePipeline(input: DeriveInput): DerivedPipeline {
   // The task is named from inside the prepare step, once the repository is known to be usable: from
   // then on the repository is prepared as far as anyone watching is concerned.
   const namingStarted = events.some((e) => e.type === 'run_naming');
+  const polishStarted = events.some((e) => e.type === 'polish_started');
   const prepareDone =
     events.some((e) => e.type === 'step_completed' && e.step === 'prepare-run') ||
     namingStarted ||
@@ -490,7 +531,7 @@ export function derivePipeline(input: DeriveInput): DerivedPipeline {
   // Which node(s) execute now - or, for a failed run, which one the failure belongs to.
   const frontier =
     lifecycle === 'running' || lifecycle === 'failed'
-      ? inferFrontier({ idx, pipeline, prepareDone, namingStarted })
+      ? inferFrontier({ idx, pipeline, prepareDone, namingStarted, polishStarted })
       : [];
 
   // The attempt cycle may have moved on to a developer node that has no artifact yet.
@@ -633,6 +674,8 @@ export function derivePipeline(input: DeriveInput): DerivedPipeline {
   }> = [
     { id: 'reviewer', name: 'Review', icon: '👀', step: 'reviewer', map: reviewStatus, disabled: pipeline.review === false },
     { id: 'security', name: 'Security', icon: '🔒', step: 'security', map: securityStatus, disabled: pipeline.security === false },
+    // Runs that predate the pass never log it and have no artifact: they do not get the node.
+    { id: 'polish', name: 'Polish', icon: '✨', step: 'polish', map: polishStatus, disabled: pipeline.polish === false || pipeline.qa === false },
     { id: 'documentation', name: 'Docs', icon: '📝', step: 'documentation', map: documentationStatus, disabled: pipeline.documentation === false },
     // Mandatory: no `disabled`, whatever the pipeline selection says.
     { id: 'pr-writer', name: 'PR Writer', icon: '✍️', step: 'pr-writer', map: prWriterStatus, disabled: false },
@@ -643,6 +686,7 @@ export function derivePipeline(input: DeriveInput): DerivedPipeline {
   for (const entry of single) {
     const art = idx.latest(entry.step);
     if (entry.id === 'pr-writer' && !art && reachedDelivery) continue;
+    if (entry.id === 'polish' && !art && !polishStarted) continue;
     specs.push({
       id: entry.id,
       name: entry.name,
@@ -719,6 +763,8 @@ export function derivePipeline(input: DeriveInput): DerivedPipeline {
             : 'Waiting for your decision';
     } else if (status === 'skipped' && spec.disabled && !spec.art) {
       activity = 'Disabled for this task';
+    } else if (spec.id === 'polish' && spec.art) {
+      activity = polishActivity(spec.art);
     } else if (spec.id === 'run-namer' && spec.art?.status === 'FALLBACK') {
       activity = 'Named from the request: the AI could not answer';
     } else if (status === 'skipped' && spec.art?.status === 'REUSED') {
