@@ -44,9 +44,20 @@ export interface FactoryRun {
    * always wins). Absent on runs from before titles were stored.
    */
   title?: string;
-  titleSource?: 'agent' | 'fallback' | 'round' | 'user';
+  /** `phase`: named by the roadmap phase it implements (no model was asked). */
+  titleSource?: 'agent' | 'fallback' | 'round' | 'phase' | 'user';
   /** `f0042`: one id for the task and all of its rounds. Absent on runs from before task ids. */
   taskId?: string;
+  /**
+   * Where the work happens: a checkout of its own (`worktree`) or the user's repository (`in-place`).
+   * A run from before checkouts existed worked in place.
+   */
+  isolation?: 'worktree' | 'in-place';
+  /** The folder the work happens in: the checkout, or the repository. */
+  workPath?: string;
+  /** The project and phase this run belongs to. */
+  initiativeId?: string;
+  phaseId?: string;
   status: RunStatus;
   attempts: number;
   branch?: string;
@@ -180,6 +191,8 @@ export interface PrFeedbackItem {
   author: string;
   excerpt: string;
   category: string;
+  /** FUTURE_PHASE only: the roadmap phase it belongs to (an id), `NEW` for none, null when the triage could not tell. */
+  targetPhase?: string | null;
   assignTo: string;
   reasoning: string;
   reply: string;
@@ -249,6 +262,48 @@ export interface PrCheckPullRequest {
   /** Worth knowing before merging (failing checks, ...). */
   mergeWarnings?: string[];
   error?: string;
+  /** Where the task's work is. Absent from a factory older than checkouts. */
+  workCopy?: WorkCopy;
+  /** The project this pull request is a phase of, when it has other phases. */
+  roadmap?: PullRequestRoadmap;
+  /** What the user decided about comments that belong to a later phase. */
+  scopeDecisions?: Array<{ commentId: string; decision: 'DEFER' | 'DO_NOW'; targetPhaseId: string | null }>;
+  /** Set by the check that found the pull request over (merged or closed on GitHub). */
+  settled?: { phase: SettledPhase | null; notes: string[] };
+}
+
+/** Where a task's work is, as the factory reports it. */
+export interface WorkCopy {
+  isolation: 'worktree' | 'in-place';
+  path: string;
+  /** The folder is there. */
+  exists: boolean;
+}
+
+export type PhaseStatus = 'PLANNED' | 'RUNNING' | 'IN_REVIEW' | 'MERGED' | 'SKIPPED';
+
+export interface PullRequestRoadmap {
+  initiativeId: string;
+  title: string;
+  /** The phase this pull request is. */
+  phaseId: string;
+  ordinal: number;
+  total: number;
+  phases: Array<{ id: string; ordinal: number; title: string; status: PhaseStatus }>;
+}
+
+/** The phase a pull request was, and where its project stands after it merged (or was closed). */
+export interface SettledPhase {
+  initiativeId: string;
+  initiativeTitle: string;
+  phaseId: string;
+  title: string;
+  ordinal: number;
+  total: number;
+  merged: boolean;
+  alreadySettled: boolean;
+  next: { phaseId: string; ordinal: number; title: string } | null;
+  initiativeDone: boolean;
 }
 
 export interface PrCheckResult {
@@ -265,6 +320,7 @@ export interface PrCheckResult {
  * - `pending`           comments are waiting; nothing started (automation is off, or they are old)
  * - `triaging`          the triage agent is classifying them
  * - `triaged`           classified; waiting for a decision (or for a round to be started)
+ * - `awaiting-scope`    some comments belong to a later phase; the user decides where each goes first
  * - `revising`          a round is running
  * - `awaiting-approval` a round is waiting for the human to approve the push
  * - `blocked`           cannot proceed without help (busy repo, dirty tree, a disagreement, a failure)
@@ -275,6 +331,7 @@ export type PrWatchStatus =
   | 'pending'
   | 'triaging'
   | 'triaged'
+  | 'awaiting-scope'
   | 'revising'
   | 'awaiting-approval'
   | 'blocked'
@@ -326,6 +383,8 @@ export interface PrMergeResult {
   headBranch?: string;
   /** What else happened - or deliberately did not - around the merge, in plain language. */
   notes: string[];
+  /** The phase of a project this pull request was, and what comes next in it. */
+  phase?: SettledPhase;
 }
 
 /** A merge the user just did, kept on screen until they dismiss it (the pull request itself is gone). */
@@ -357,6 +416,12 @@ export interface WatchedPullRequest {
   status: PrWatchStatus;
   /** Plain-language explanation of the status. */
   message: string;
+  /** Where the task's work is (its own checkout, or the user's repository). */
+  workCopy?: WorkCopy;
+  /** The project this pull request is a phase of, when it has other phases. */
+  roadmap?: PullRequestRoadmap;
+  /** Comments about a later phase: which wait for the user, which they said to do in this pull request. */
+  scope?: PrScopeView;
   /** Whether it can be merged, and whether the human approved it. */
   merge: PrMergeStatus;
   triage?: PrFeedbackSummary | null;
@@ -367,6 +432,27 @@ export interface WatchedPullRequest {
    * user (an answer, an approval) is not retryable: starting another one would collide with it.
    */
   retryable?: boolean;
+}
+
+/** A review comment that belongs to a later phase, waiting for the user to say where it goes. */
+export interface PrScopeComment {
+  id: string;
+  author: string;
+  /** The comment as written. */
+  body: string;
+  /** The triage's short quote of it. */
+  excerpt: string;
+  path?: string;
+  line?: number;
+  /** The phase the triage thinks it belongs to (an id), `NEW`, or null when it could not tell. */
+  suggestedPhaseId: string | null;
+}
+
+export interface PrScopeView {
+  /** Not decided yet: the pull request waits for these. */
+  undecided: PrScopeComment[];
+  /** The user said to do these in this pull request: they go into the next round. */
+  doNow: string[];
 }
 
 export interface PrWatchSettings {
@@ -430,6 +516,13 @@ export interface GlobalSettings {
   workspaceRoot: string;
   defaultMaxAttempts: number;
   dryRunByDefault: boolean; // Run in dry-run mode (no API calls, no git writes)
+  /**
+   * Where a task works unless the task form says otherwise: a checkout of its own (the default, your
+   * repository is not touched) or your repository itself.
+   */
+  isolation?: 'worktree' | 'in-place';
+  /** Compare the roadmap with what a phase delivered as soon as it is merged (default: on; one cheap model call). */
+  autoReconcile?: boolean;
 
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   activeProvider: 'claude-cli' | 'api';
@@ -450,4 +543,123 @@ export interface Settings {
   global: GlobalSettings;
   repos: Record<string, RepoSettings>;
   prWatch?: Partial<PrWatchSettings>;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Projects (initiatives) and their phases                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface ProjectPhase {
+  id: string;
+  ordinal: number;
+  title: string;
+  goal: string;
+  scope: string[];
+  acceptance: string[];
+  status: PhaseStatus;
+  /** Ids of the phases that must be delivered first. */
+  dependsOn: string[];
+  taskId: string | null;
+  rootRunId: string | null;
+  branch: string | null;
+  prNumber: number | null;
+  prUrl: string | null;
+  /** What the phase delivered, once merged. Empty until the roadmap has been compared with it. */
+  summary: string | null;
+  notes: Array<{ at: string; source: string; text: string }>;
+  /** It can be started now. */
+  ready: boolean;
+  /** A phase that waits but cannot start: what it is waiting for. */
+  blockedReason: string | null;
+}
+
+export interface ProjectBacklogItem {
+  id: string;
+  text: string;
+  severity: string;
+  source: string;
+  phaseId: string | null;
+  suggestedPhaseId: string | null;
+}
+
+export interface Project {
+  id: string;
+  title: string;
+  goal: string;
+  kind: 'quick' | 'project' | 'greenfield';
+  status: 'ACTIVE' | 'DONE' | 'ARCHIVED';
+  phases: ProjectPhase[];
+  /** The phase the user would start next. */
+  nextPhaseId: string | null;
+  /** What is still open in the backlog. */
+  backlog: ProjectBacklogItem[];
+}
+
+/** What the user can change in a roadmap (the factory checks it and refuses what would rewrite history). */
+export interface ProjectEdit {
+  title?: string;
+  goal?: string;
+  status?: 'ACTIVE' | 'ARCHIVED';
+  phases?: Array<{
+    id: string;
+    title?: string;
+    goal?: string;
+    scope?: string[];
+    acceptance?: string[];
+    status?: 'PLANNED' | 'SKIPPED';
+  }>;
+  addPhases?: Array<{ title: string; goal?: string; scope?: string[]; acceptance?: string[] }>;
+  backlog?: Array<{ id: string; status: 'OPEN' | 'DISMISSED' | 'PROMOTED'; phaseId?: string }>;
+}
+
+/** What comparing a merged phase with the roadmap concluded. */
+export interface PhaseReconcileReport {
+  summary: string;
+  changes: Array<{ phaseId: string; ordinal: number; status: 'DONE' | 'PARTIAL'; note: string }>;
+  backlogAdded: number;
+  source: 'agent' | 'none';
+  note?: string;
+}
+
+/** The outcome of one decision about a review comment that belongs to a later phase. */
+export interface ScopeDecisionResult {
+  commentId: string;
+  decision: 'DEFER' | 'DO_NOW';
+  ok: boolean;
+  error?: string;
+  target?: { phaseId: string; ordinal: number; title: string; created: boolean };
+  alreadyDecided?: boolean;
+  replied?: boolean;
+  replyError?: string;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Where a task works                                                          */
+/* -------------------------------------------------------------------------- */
+
+/** Where one run's work is, and what is in it - read from the run's record and the folder itself. */
+export interface WorktreeInfo {
+  runId: string;
+  isolation: 'worktree' | 'in-place';
+  /** The checkout, or the user's repository. */
+  path: string;
+  branch: string | null;
+  /** The folder is there (a checkout is removed when its pull request is over). */
+  exists: boolean;
+  /** Files with changes that are not committed (0 when the folder is gone). */
+  changedFiles: number;
+}
+
+/** One of the factory's checkouts of a repository (from `worktree-list`). */
+export interface WorktreeReport {
+  path: string;
+  taskId: string;
+  branch: string | null;
+  exists: boolean;
+  registered: boolean;
+  changedFiles: number;
+  title: string | null;
+  rootRunId: string | null;
+  pullRequest: { number: number; url: string; state: 'OPEN' | 'MERGED' | 'CLOSED' } | null;
+  stale: boolean;
 }

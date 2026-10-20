@@ -138,6 +138,11 @@ export function readRunState(
       ...(meta?.title || summary?.title ? { title: String(meta?.title || summary?.title) } : {}),
       ...(meta?.titleSource ? { titleSource: meta.titleSource } : {}),
       ...(meta?.taskId || summary?.taskId ? { taskId: String(meta?.taskId || summary?.taskId) } : {}),
+      // Where the work happens. A run from before checkouts existed (no record of it) worked in the repository.
+      isolation: meta?.isolation === 'worktree' ? 'worktree' : 'in-place',
+      workPath: String((meta?.isolation === 'worktree' && meta?.workPath) || repoPath),
+      ...(meta?.initiativeId || summary?.initiativeId ? { initiativeId: String(meta?.initiativeId || summary?.initiativeId) } : {}),
+      ...(meta?.phaseId || summary?.phaseId ? { phaseId: String(meta?.phaseId || summary?.phaseId) } : {}),
       status,
       attempts: summary?.attempts || 0,
       branch: summary?.branch ?? meta?.branch,

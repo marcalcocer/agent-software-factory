@@ -243,3 +243,62 @@ describe('the title of a run', () => {
     expect(() => renameRun(scratch, 'x')).toThrow('no record to rename');
   });
 });
+
+describe('where a run works, and which phase it is', () => {
+  let scratch: string;
+  beforeEach(() => {
+    scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-where-'));
+  });
+  afterEach(() => {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  });
+
+  /** A copy of a real run whose record says more than it did when it was made. */
+  const recorded = (meta: Record<string, unknown>, summary: Record<string, unknown> = {}) => {
+    copyRuns(scratch, [RUN.round1]);
+    const dir = path.join(scratch, RUN.round1);
+    for (const [file, extra] of [['run.json', meta], ['summary.json', summary]] as const) {
+      const existing = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+      fs.writeFileSync(path.join(dir, file), JSON.stringify({ ...existing, ...extra }));
+    }
+    return dir;
+  };
+
+  it('is the repository for a real run from before checkouts existed - it worked there', () => {
+    const { run, repoPath } = stateOf(RUN.round1)!;
+
+    expect(run).toMatchObject({ isolation: 'in-place', workPath: repoPath });
+    expect(run.initiativeId).toBeUndefined();
+    expect(run.phaseId).toBeUndefined();
+  });
+
+  it('is the checkout, when the run recorded one - and the run is still filed under the user\'s repository', () => {
+    const dir = recorded({ isolation: 'worktree', workPath: '/home/dev/workspace/.factory/worktrees/invest-track/f0042' });
+    const { run, repoPath } = readRunState(dir, RUN.round1, false)!;
+
+    expect(run).toMatchObject({ isolation: 'worktree', workPath: '/home/dev/workspace/.factory/worktrees/invest-track/f0042' });
+    expect(repoPath).toBe('/home/dev/workspace/invest-track');
+    expect(run.repoId).toBe('invest-track');
+  });
+
+  it('is the repository for a run that says it worked in place, whatever folder it wrote down', () => {
+    const dir = recorded({ isolation: 'in-place', workPath: '/home/dev/workspace/invest-track' });
+
+    expect(readRunState(dir, RUN.round1, false)!.run).toMatchObject({ isolation: 'in-place', workPath: '/home/dev/workspace/invest-track' });
+  });
+
+  it('does not take a work path for a checkout when the run did not say it used one', () => {
+    const dir = recorded({ workPath: '/somewhere/else' }); // no isolation: an old or odd record
+
+    expect(readRunState(dir, RUN.round1, false)!.run).toMatchObject({ isolation: 'in-place', workPath: '/home/dev/workspace/invest-track' });
+  });
+
+  it('knows the phase of a project a run implements, from the run or from its summary', () => {
+    expect(readRunState(recorded({ initiativeId: 'i0001', phaseId: 'i0001-p2' }), RUN.round1, false)!.run).toMatchObject({ initiativeId: 'i0001', phaseId: 'i0001-p2' });
+    expect(readRunState(recorded({}, { initiativeId: 'i0007', phaseId: 'i0007-p1' }), RUN.round1, false)!.run).toMatchObject({ initiativeId: 'i0007', phaseId: 'i0007-p1' });
+  });
+
+  it('keeps the name a phase gave its run', () => {
+    expect(readRunState(recorded({ title: 'Screens', titleSource: 'phase' }), RUN.round1, false)!.run).toMatchObject({ title: 'Screens', titleSource: 'phase' });
+  });
+});

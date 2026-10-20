@@ -17,6 +17,7 @@
  */
 import path from 'node:path';
 import type {
+  PhaseReconcileReport,
   PrCheckPullRequest,
   PrCheckResult,
   PrComment,
@@ -24,11 +25,13 @@ import type {
   PrMergeDraft,
   PrMergeResult,
   PrMergeStatus,
+  PrScopeView,
   PrWatchSettings,
   PrWatchSettingsBundle,
   PrWatchState,
   PrWatchStatus,
   RepoPrWatchOverrides,
+  ScopeDecisionResult,
   WatchedPullRequest,
 } from '../../shared/types';
 
@@ -113,6 +116,13 @@ export interface RoundInfo {
   waitingFor?: string;
 }
 
+/** What a run about to start needs for itself: see `WatcherDeps.findBusyRun`. */
+export interface BusyScope {
+  isolation: 'worktree' | 'in-place';
+  /** The task it continues, when it is a further round: two runs of one task share its checkout. */
+  rootRunId?: string | undefined;
+}
+
 export interface BusyRun {
   runId: string;
   reason: 'running' | 'waiting';
@@ -157,8 +167,12 @@ export interface WatcherDeps {
    * `userInitiated` lets the caller ask the user to sign in; a background start must never do that.
    */
   startRun(args: string[], options: { userInitiated: boolean }): Promise<{ runId: string }>;
-  /** A run that is using this repository's working copy right now (running, or waiting for a human). */
-  findBusyRun(repoPath: string): BusyRun | null;
+  /**
+   * A run that is in the way of this one right now (running, or waiting for a human). A task that works
+   * in a checkout of its own is only in the way of another run of the same task; one that works in the
+   * user's repository is in the way of every other run that does.
+   */
+  findBusyRun(repoPath: string, scope: BusyScope): BusyRun | null;
   /** Is the process of this run still going? (A run's directory outlives its process.) */
   isRunActive(runId: string): boolean;
   /** The rounds of this pull request, newest first. */
@@ -168,6 +182,10 @@ export interface WatcherDeps {
   isClean(repoPath: string): Promise<boolean>;
   /** Run everything offline with stubbed models (the Studio's "dry run by default" setting). */
   isDryRun(): boolean;
+  /** Compare the roadmap with what a phase delivered as soon as it is merged (default: on). */
+  autoReconcile?(): boolean;
+  /** A project's roadmap changed (a phase was settled or reconciled): whoever shows it should look again. */
+  projectsChanged?(repoPath: string): void;
   loadSettings(): Partial<PrWatchSettings> | undefined;
   saveSettings(settings: PrWatchSettings): void;
   /** Per-repository overrides, keyed by repository name. */
@@ -248,6 +266,46 @@ export function mergeStatusOf(pr: PrCheckPullRequest, approval: Approval | undef
     approval: current ? { headSha: current.headSha, approvedAt: current.approvedAt } : null,
     approvalOutdated: approval !== undefined && current === null,
   };
+}
+
+/** What a round of this pull request needs for itself: its task's checkout, or the user's repository. */
+export function busyScopeOf(pr: PrCheckPullRequest): BusyScope {
+  return { isolation: pr.workCopy?.isolation ?? 'in-place', rootRunId: pr.rootRunId };
+}
+
+/** The same, for a pull request as the watcher shows it. */
+export function busyScopeOfView(view: WatchedPullRequest): BusyScope {
+  return { isolation: view.workCopy?.isolation ?? 'in-place', rootRunId: view.rootRunId };
+}
+
+/**
+ * The pending comments that belong to a later phase, by what the user decided about them. `null` when the
+ * triage has none (or does not cover the pending comments: a stale triage is not acted on).
+ */
+export function scopeOf(pr: PrCheckPullRequest, triage: PrFeedbackSummary | null): PrScopeView | null {
+  if (!triageCovers(triage, pr.pending)) return null;
+  const items = new Map(triage!.items.map((item) => [item.commentId, item]));
+  const decided = new Map((pr.scopeDecisions ?? []).map((entry) => [entry.commentId, entry.decision]));
+
+  const view: PrScopeView = { undecided: [], doNow: [] };
+  for (const comment of pr.pending) {
+    const item = items.get(comment.id);
+    if (item?.category !== 'FUTURE_PHASE') continue;
+    const decision = decided.get(comment.id);
+    if (decision === 'DO_NOW') view.doNow.push(comment.id);
+    else if (decision === undefined) {
+      view.undecided.push({
+        id: comment.id,
+        author: comment.author,
+        body: comment.body,
+        excerpt: item.excerpt,
+        ...(comment.path ? { path: comment.path } : {}),
+        ...(comment.line === undefined ? {} : { line: comment.line }),
+        suggestedPhaseId: item.targetPhase ?? null,
+      });
+    }
+  }
+  return view.undecided.length === 0 && view.doNow.length === 0 ? null : view;
 }
 
 /** Does the triage cover every comment that is pending right now? A stale one must not be acted on. */
@@ -351,7 +409,21 @@ export function classifyPullRequest(input: ClassifyInput): Classification {
 
   // 3. Classified, waiting for the next step.
   if (covering) {
-    const needsCode = REVISION_ACTIONS.has(covering.action);
+    const scope = scopeOf(pr, covering);
+
+    // Some comments ask for something that belongs to a later phase. The user says where each goes
+    // before anything starts - the whole round waits, so what they decide goes in together.
+    if (scope && scope.undecided.length > 0) {
+      const later = plural(scope.undecided.length, 'comment asks', 'comments ask');
+      return {
+        status: 'awaiting-scope',
+        message: `${later} for something that belongs to a later phase. Choose where ${scope.undecided.length === 1 ? 'it goes' : 'each goes'}.`,
+        triage: covering,
+      };
+    }
+
+    // A comment the user said to do in this pull request is a round even when the triage thought it was for later.
+    const needsCode = REVISION_ACTIONS.has(covering.action) || (scope?.doNow.length ?? 0) > 0;
     const n = plural(pending.length, 'comment', 'comments');
     const needs = pending.length === 1 ? 'needs' : 'need';
 
@@ -431,18 +503,21 @@ const TRIAGE_TIMEOUT_MS = 15 * 60_000;
 /** One short agent call, and a few `gh` / `git` round trips. */
 const MERGE_DRAFT_TIMEOUT_MS = 5 * 60_000;
 const MERGE_TIMEOUT_MS = 5 * 60_000;
+/** One short agent call, and some reading of run directories. */
+const RECONCILE_TIMEOUT_MS = 5 * 60_000;
 /** Goes through the command line as one argument; far below what the OS allows for one. */
 const MAX_COMMIT_BODY_CHARS = 50_000;
 
 const STATUS_ORDER: Record<PrWatchStatus, number> = {
   'awaiting-approval': 0,
-  blocked: 1,
-  error: 2,
-  revising: 3,
-  triaging: 4,
-  triaged: 5,
-  pending: 6,
-  idle: 7,
+  'awaiting-scope': 1,
+  blocked: 2,
+  error: 3,
+  revising: 4,
+  triaging: 5,
+  triaged: 6,
+  pending: 7,
+  idle: 8,
 };
 
 export class PrWatcher {
@@ -474,6 +549,8 @@ export class PrWatcher {
   /** Rounds started here that have no record on disk yet, by pull request (see `StartedRound`). */
   private readonly startedRounds = new Map<string, StartedRound>();
   private readonly jobErrors = new Map<string, { message: string; signature: string }>();
+  /** Phases the roadmap is being compared with right now. */
+  private readonly reconciling = new Set<string>();
 
   constructor(private readonly deps: WatcherDeps) {
     this.settings = normalizePrWatchSettings(deps.loadSettings());
@@ -624,6 +701,13 @@ export class PrWatcher {
         this.lastCheckedAt = payload.checkedAt;
         this.views = this.buildViews(payload);
         this.forgetClosed(payload);
+        // A pull request merged (or closed) on GitHub was settled by this very check: the roadmap moved.
+        for (const pr of payload.pullRequests) {
+          const phase = pr.settled?.phase;
+          if (!phase) continue;
+          this.deps.projectsChanged?.(pr.repoPath);
+          if (phase.merged && !phase.alreadySettled) this.reconcileAfterMerge(phase, pr.repoPath);
+        }
       }
     } catch (error) {
       this.checkError = (error as Error).message;
@@ -673,13 +757,14 @@ export class PrWatcher {
       .filter((pr) => pr.state === 'OPEN')
       .map((pr): WatchedPullRequest => {
         const rounds = this.deps.listRounds(pr.repoPath, pr.number, pr.rootRunId);
+        const triage = this.deps.latestTriage(pr.repoPath, pr.number);
         const classification = classifyPullRequest({
           pr,
           inFlightTriage: this.triaging.has(pr.key),
           jobError: this.jobErrors.get(pr.key),
           rounds,
-          triage: this.deps.latestTriage(pr.repoPath, pr.number),
-          busy: this.deps.findBusyRun(pr.repoPath),
+          triage,
+          busy: this.deps.findBusyRun(pr.repoPath, busyScopeOf(pr)),
           starting: this.unrecordedRound(pr.key, rounds),
           launching: this.launching.get(pr.key),
           attemptedRevise: this.memory.reviseAttempts[pr.key],
@@ -703,6 +788,9 @@ export class PrWatcher {
           status: classification.status,
           message: classification.message,
           merge: mergeStatusOf(pr, this.memory.approvals[pr.key]),
+          ...(pr.workCopy ? { workCopy: pr.workCopy } : {}),
+          ...(pr.roadmap ? { roadmap: pr.roadmap } : {}),
+          ...(scopeOf(pr, classification.triage) ? { scope: scopeOf(pr, classification.triage)! } : {}),
           triage: classification.triage,
           revisionRunId: classification.revisionRunId ?? null,
           retryable: classification.retryable === true,
@@ -744,17 +832,20 @@ export class PrWatcher {
           continue;
         }
 
-        // Revision: the triage must be current, call for code, and have nothing a human must decide.
+        // Revision: the triage must be current, call for code, and have nothing a human must decide -
+        // not a blocker, and not a comment about a later phase that has no home yet (that is the status
+        // `awaiting-scope`, which never gets here).
         if (
           view.status === 'triaged' &&
           settings.autoRevise &&
           view.triage &&
-          REVISION_ACTIONS.has(view.triage.action) &&
+          (REVISION_ACTIONS.has(view.triage.action) || (view.scope?.doNow.length ?? 0) > 0) &&
           view.triage.blockers.length === 0 &&
           this.memory.reviseAttempts[view.key] !== signatureOf(view.pending)
         ) {
-          // Not yet possible (working copy in use, uncommitted changes): not an error, try next time.
-          if (this.deps.findBusyRun(view.repoPath) || !(await this.deps.isClean(view.repoPath))) continue;
+          // Not yet possible (the task's working copy is in use, or - in the user's own repository -
+          // it has uncommitted changes): not an error, try next time.
+          if (this.deps.findBusyRun(view.repoPath, busyScopeOfView(view)) || !(await this.isWorkingCopyReady(view))) continue;
           await this.revise(view.key, { auto: true }).catch((error: Error) =>
             this.deps.log?.(`automatic round for ${view.key} not started: ${error.message}`),
           );
@@ -852,7 +943,7 @@ export class PrWatcher {
         return fail('These comments have not been triaged yet. Triage them first.');
       }
 
-      const busy = this.deps.findBusyRun(view.repoPath);
+      const busy = this.deps.findBusyRun(view.repoPath, busyScopeOfView(view));
       if (busy) {
         // A round of this very pull request was dealt with above, so this is always some other run.
         const shared = 'in this repository and uses the same working copy';
@@ -862,7 +953,7 @@ export class PrWatcher {
             : `Another run is waiting for your input ${shared}: ${nameOfRun(busy)}. Answer it or close it, then try again.`,
         );
       }
-      if (!(await this.deps.isClean(view.repoPath))) {
+      if (!(await this.isWorkingCopyReady(view))) {
         return fail(
           'The repository has uncommitted changes. Commit or stash them so the factory can start the round on a clean working copy.',
         );
@@ -930,6 +1021,81 @@ export class PrWatcher {
     });
     if (result.code !== 0) throw new Error(summarizeFailure(result));
     await this.refresh();
+  }
+
+  /**
+   * Can a round start in this pull request's working copy? A task that works in a checkout of its own
+   * always can - the checkout is made clean, and what the user has open in their repository does not matter.
+   * One that works in the user's repository needs it clean.
+   */
+  private async isWorkingCopyReady(view: WatchedPullRequest): Promise<boolean> {
+    if (view.workCopy?.isolation === 'worktree') return true;
+    return await this.deps.isClean(view.repoPath);
+  }
+
+  /* ---- where review comments about a later phase go ---- */
+
+  /**
+   * Carries out what the user decided about comments that belong to a later phase: defer to a phase (or a
+   * new one), or do them in this pull request. Looks again afterwards, so the card shows what is left.
+   */
+  async decideScope(
+    key: string,
+    decisions: Array<{ commentId: string; decision: 'DEFER' | 'DO_NOW'; targetPhase?: string | null }>,
+  ): Promise<ScopeDecisionResult[]> {
+    const view = this.viewOf(key);
+    if (decisions.length === 0) throw new Error('There is nothing to decide.');
+
+    const args = ['scope-decide', '--repo', view.repoPath, '--pr', String(view.number), '--decisions', JSON.stringify(decisions)];
+    if (this.settingsFor(view.repoPath).replyOnGitHub) args.push('--reply');
+    if (this.deps.isDryRun()) args.push('--dry-run');
+
+    const result = await this.deps.runCli(args, { timeoutMs: CHECK_TIMEOUT_MS });
+    const payload = parseMarkerLine<{ results?: ScopeDecisionResult[]; error?: string }>(result.stdout, 'SCOPE_DECIDE_JSON');
+
+    // What was decided changes what is pending (a deferred comment is settled): look again either way.
+    // With the automation on: once the last comment has its home, the round the user chose to have
+    // started automatically starts now, not at the next poll.
+    await this.refresh();
+    this.deps.projectsChanged?.(view.repoPath);
+
+    if (!payload || payload.error || !payload.results) throw new Error(payload?.error ?? summarizeFailure(result));
+    return payload.results;
+  }
+
+  /* ---- the roadmap after a phase is delivered ---- */
+
+  /**
+   * Compares a merged phase with what is still planned (one cheap model call), so the next phase is
+   * planned against what exists. Runs at most once at a time per phase; `force` asks again for one that was done.
+   * Never throws for a comparison that could not be made - the factory says so in the report's note.
+   */
+  async reconcile(phaseId: string, options: { force?: boolean } = {}): Promise<PhaseReconcileReport | null> {
+    if (this.reconciling.has(phaseId)) return null;
+    this.reconciling.add(phaseId);
+    try {
+      const args = ['phase-reconcile', '--phase', phaseId];
+      if (options.force) args.push('--force');
+      if (this.deps.isDryRun()) args.push('--dry-run');
+
+      const result = await this.deps.runCli(args, { timeoutMs: RECONCILE_TIMEOUT_MS });
+      const payload = parseMarkerLine<{ report?: PhaseReconcileReport | null; error?: string }>(result.stdout, 'PHASE_RECONCILE_JSON');
+      if (!payload || payload.error) throw new Error(payload?.error ?? summarizeFailure(result));
+      return payload.report ?? null;
+    } finally {
+      this.reconciling.delete(phaseId);
+    }
+  }
+
+  /**
+   * A phase has just been delivered (merged here, or found merged on GitHub): compare the roadmap with it,
+   * unless the user switched that off. Runs in the background; the screen hears about it afterwards.
+   */
+  private reconcileAfterMerge(phase: { phaseId: string } | null | undefined, repoPath: string): void {
+    if (!phase || this.deps.autoReconcile?.() === false) return;
+    this.reconcile(phase.phaseId)
+      .catch((error: Error) => this.deps.log?.(`could not compare the roadmap with ${phase.phaseId}: ${error.message}`))
+      .finally(() => this.deps.projectsChanged?.(repoPath));
   }
 
   /* ---- merging ---- */
@@ -1040,7 +1206,7 @@ export class PrWatcher {
     try {
       // Putting the user's working copy back on the base branch switches its checkout, which would
       // pull the rug from under a run that is still using it. The merge itself does not need it.
-      const returnToBase = this.deps.findBusyRun(view.repoPath) === null;
+      const returnToBase = this.deps.findBusyRun(view.repoPath, { isolation: 'in-place' }) === null;
 
       // `--flag=value`: a subject or body that starts with "--" must not be taken for a flag.
       const args = [
@@ -1071,6 +1237,8 @@ export class PrWatcher {
         this.deps.saveMemory(this.memory);
         this.deps.log?.(`${key} merged${outcome.mergeCommit ? ` as ${outcome.mergeCommit.slice(0, 7)}` : ''}`);
         await this.refresh();
+        this.deps.projectsChanged?.(view.repoPath);
+        this.reconcileAfterMerge(outcome.phase, view.repoPath);
       }
       return outcome;
     } finally {

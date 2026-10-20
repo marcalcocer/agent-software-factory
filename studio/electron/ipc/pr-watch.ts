@@ -86,6 +86,9 @@ const watcher = new PrWatcher({
   latestTriage: (repoPath, number) => findLatestPrFeedback(LOGS_DIR, repoPath, number),
   isClean,
   isDryRun: () => loadSettings().global.dryRunByDefault === true,
+  autoReconcile: () => loadSettings().global.autoReconcile !== false,
+  // A phase was settled or compared with the roadmap: the screen that shows the project looks again.
+  projectsChanged: (repoPath: string) => mainWindow?.webContents.send('project:changed', repoPath),
 
   loadSettings: () => loadSettings().prWatch,
   saveSettings: (prWatch: PrWatchSettings) => saveSettings({ ...loadSettings(), prWatch }),
@@ -129,6 +132,15 @@ ipcMain.handle(
   ): Promise<PrWatchSettingsBundle> => watcher.saveSettings(bundle),
 );
 ipcMain.handle('pr-watch:triage', async (_event, key: string): Promise<void> => watcher.triage(key));
+ipcMain.handle(
+  'pr-watch:decide-scope',
+  async (_event, key: string, decisions: Array<{ commentId: string; decision: 'DEFER' | 'DO_NOW'; targetPhase?: string | null }>) =>
+    watcher.decideScope(key, decisions),
+);
+ipcMain.handle(
+  'project:reconcile',
+  async (_event, phaseId: string, options?: { force?: boolean }) => watcher.reconcile(phaseId, options ?? {}),
+);
 ipcMain.handle(
   'pr-watch:revise',
   async (_event, key: string, options?: { task?: string; action?: 'RERUN_IMPLEMENTATION' | 'RERUN_PLANNING' }) =>

@@ -21,6 +21,7 @@ import type {
 const ANSWERED_AT_TRIAGE = new Set(['QUESTION', 'PRAISE_OR_NOTE']);
 
 const STATUS_STYLE: Record<PrWatchStatus, { label: string; chip: string; pulse?: boolean }> = {
+  'awaiting-scope': { label: 'Choose where it goes', chip: 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200' },
   idle: { label: 'Up to date', chip: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200' },
   pending: { label: 'New comments', chip: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200' },
   triaging: { label: 'Reading comments', chip: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200', pulse: true },

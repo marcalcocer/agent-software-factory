@@ -21,8 +21,12 @@ import {
   readRunEvents as readEventsIn,
   readRunState as readRunStateIn,
 } from '../services/run-state.js';
+import { conflictingRun, type RunProbe } from '../services/busy.js';
 import { ensureClaudeAuth } from '../services/claude-auth.js';
+import type { BusyScope } from '../services/pr-watcher.js';
+import { effectiveIsolation, runTaskArgs } from '../services/run-args.js';
 import { mainWindow } from '../main.js';
+import { loadSettings } from './settings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -211,7 +215,7 @@ const isTriageRun = (run: { kind?: string; task: string }): boolean =>
   run.kind === 'pr-feedback' || run.task.startsWith('PR feedback triage for #');
 
 /** State of a run derived from everything it left on disk (see `services/run-state.ts`). */
-const readRunState = (runId: string) =>
+export const readRunState = (runId: string) =>
   readRunStateIn(runDirOf(runId), runId, activeRuns.has(runId));
 
 /** Last bytes kept of a command's output: enough to find its result line, bounded in memory. */
@@ -261,26 +265,36 @@ const samePath = (a: string, b: string): boolean => path.resolve(a) === path.res
  */
 export function findBusyRun(
   repoPath: string,
+  scope: BusyScope,
 ): { runId: string; reason: 'running' | 'waiting'; task?: string } | null {
-  for (const runId of activeRuns.keys()) {
+  const probes: RunProbe[] = [];
+  const probe = (runId: string, reason: RunProbe['reason']): RunProbe => {
     const state = readRunState(runId);
-    // Just spawned: its repository is not known yet. Assume it is this one rather than collide.
-    if (!state) return { runId, reason: 'running' };
-    if (state.repoPath && samePath(state.repoPath, repoPath)) {
-      return { runId, reason: 'running', ...(state.run.task ? { task: state.run.task } : {}) };
-    }
-  }
+    return {
+      runId,
+      reason,
+      info: state
+        ? {
+            repoPath: state.repoPath,
+            isolation: state.run.isolation ?? 'in-place',
+            rootRunId: state.run.rootRunId,
+            task: state.run.task || undefined,
+          }
+        : null,
+    };
+  };
 
-  if (!fs.existsSync(LOGS_DIR)) return null;
-  for (const entry of fs.readdirSync(LOGS_DIR, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    if (!fs.existsSync(path.join(LOGS_DIR, entry.name, 'pending-input.json'))) continue;
-    const state = readRunState(entry.name);
-    if (state && state.repoPath && samePath(state.repoPath, repoPath) && state.run.kind !== 'pr-feedback') {
-      return { runId: entry.name, reason: 'waiting', ...(state.run.task ? { task: state.run.task } : {}) };
+  for (const runId of activeRuns.keys()) probes.push(probe(runId, 'running'));
+
+  if (fs.existsSync(LOGS_DIR)) {
+    for (const entry of fs.readdirSync(LOGS_DIR, { withFileTypes: true })) {
+      if (!entry.isDirectory() || activeRuns.has(entry.name)) continue;
+      if (!fs.existsSync(path.join(LOGS_DIR, entry.name, 'pending-input.json'))) continue;
+      if (readRunState(entry.name)?.run.kind === 'pr-feedback') continue;
+      probes.push(probe(entry.name, 'waiting'));
     }
   }
-  return null;
+  return conflictingRun(probes, repoPath, scope);
 }
 
 /** Is a process of this app still going for the run? (A run's directory outlives its process.) */
@@ -578,19 +592,24 @@ ipcMain.handle('factory:run-task', async (_event, params: {
   maxAttempts?: number;
   dryRun?: boolean;
   pipeline?: { qa?: boolean; review?: boolean; security?: boolean; documentation?: boolean; polish?: boolean };
+  isolation?: 'worktree' | 'in-place';
+  phasing?: 'auto' | 'on' | 'off';
 }): Promise<{ runId: string }> => {
-  // One run at a time per working copy. A run switches the repository's branch and edits its files,
-  // and a run parked at a human gate has its branch checked out and will commit onto whatever branch
-  // is there when it resumes: a second task started now would corrupt either.
+  const isolation = effectiveIsolation(params.isolation, loadSettings().global);
+
+  // A task that works in the user's own repository switches the branch there and edits its files, and a
+  // run parked at a human gate has its branch checked out and will commit onto whatever branch is there
+  // when it resumes: a second task in that folder would corrupt either. A task in a checkout of its own
+  // uses none of that, so it starts whatever else is going.
   if (params.repoPath) {
-    const busy = findBusyRun(params.repoPath);
+    const busy = findBusyRun(params.repoPath, { isolation });
     if (busy) {
       const task = busy.task?.replace(/\s+/g, ' ').trim();
       const what = task ? `"${task.length > 60 ? `${task.slice(0, 57)}...` : task}"` : `run ${busy.runId}`;
       throw new Error(
         busy.reason === 'running'
-          ? `${what} is still running in this repository and uses the same working copy. Wait for it to finish, or stop it, then start the task.`
-          : `${what} is waiting for your input in this repository and uses the same working copy. Answer it or close it, then start the task.`,
+          ? `${what} is still running in this repository and uses the same working copy. Wait for it to finish, or stop it, then start the task - or run this one in a checkout of its own.`
+          : `${what} is waiting for your input in this repository and uses the same working copy. Answer it or close it, then start the task - or run this one in a checkout of its own.`,
       );
     }
   }
@@ -601,30 +620,17 @@ ipcMain.handle('factory:run-task', async (_event, params: {
     throw new Error('Authentication required. Please log in to Claude CLI.');
   }
 
-  // Build CLI args
-  const args = [
-    'run',
-    '--repo', params.repo,
-    '--task', params.task,
-  ];
-
-  if (params.maxAttempts) {
-    args.push('--max-attempts', String(params.maxAttempts));
-  }
-  if (params.dryRun) {
-    args.push('--dry-run');
-  }
-
-  // Pipeline configuration flags
-  if (params.pipeline) {
-    if (params.pipeline.qa === false) args.push('--no-qa');
-    if (params.pipeline.review === false) args.push('--no-review');
-    if (params.pipeline.security === false) args.push('--no-security');
-    if (params.pipeline.documentation === false) args.push('--no-docs');
-    if (params.pipeline.polish === false) args.push('--no-polish');
-  }
-
-  return await startFactoryRun(args);
+  return await startFactoryRun(
+    runTaskArgs({
+      repo: params.repo,
+      task: params.task,
+      maxAttempts: params.maxAttempts,
+      dryRun: params.dryRun,
+      pipeline: params.pipeline,
+      isolation,
+      phasing: params.phasing,
+    }),
+  );
 });
 
 /**

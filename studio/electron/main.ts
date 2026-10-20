@@ -11,6 +11,7 @@ import './ipc/factory.js';
 import './ipc/settings.js';
 import './ipc/git.js';
 import './ipc/pr-watch.js';
+import './ipc/projects.js';
 import { installExternalLinkHandlers } from './services/external-links.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
