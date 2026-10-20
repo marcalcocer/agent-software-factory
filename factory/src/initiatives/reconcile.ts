@@ -16,6 +16,7 @@ import { pullRequestKey } from '../tools/pr-registry.ts';
 import { composePrompt, invokeAgent, promptSection } from '../utils/agent-runner.ts';
 import { getFactoryConfig } from '../utils/factory-config.ts';
 import { phaseReconcileSchema, type PhaseReconcile } from '../utils/schemas.ts';
+import { clip } from './phasing.ts';
 import {
   withStore,
   type BacklogRow,
@@ -102,11 +103,6 @@ export function digestOfRuns(rootRunId: string, logDir: string = getFactoryConfi
 /* -------------------------------------------------------------------------- */
 /* The digest the agent reads                                                  */
 /* -------------------------------------------------------------------------- */
-
-const clip = (text: string, max: number): string => {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}\u2026`;
-};
 
 export interface ReconcileInput {
   initiative: InitiativeWithPhases;

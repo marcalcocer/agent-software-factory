@@ -19,10 +19,15 @@ import path from 'node:path';
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
 
+import { renderRoadmapForTriage } from '../initiatives/phasing.ts';
+import { normalizeTriage, type RoadmapTargets } from '../initiatives/scope.ts';
+import { withStore } from '../initiatives/store.ts';
 import { viewDiff } from '../tools/diff-view.ts';
 import { getFullDiff } from '../tools/git-tools.ts';
-import { markCommentsHandled, pullRequestKey } from '../tools/pr-registry.ts';
+import { checkoutOf } from '../tools/pr-lifecycle.ts';
+import { loadRegistry, markCommentsHandled, pullRequestKey } from '../tools/pr-registry.ts';
 import { ANSWERED_AT_TRIAGE } from '../tools/pr-reply.ts';
+import { reviveWorktree } from '../tools/worktree.ts';
 import {
   fetchPullRequestReview,
   postPullRequestComment,
@@ -33,6 +38,7 @@ import {
   appendEvent,
   createRunTrace,
   generateRunId,
+  readArtifact,
   traceDirFor,
   writeArtifact,
   writeContextBlock,
@@ -59,7 +65,13 @@ export const prFeedbackTaskSchema = z.object({
 
 const feedbackContextSchema = z.object({
   runId: z.string(),
+  /** The user's repository: what the pull request and its project are filed under. */
   repoPath: z.string(),
+  /**
+   * Where the pull request's code is: the task's own checkout when it worked in one, otherwise the
+   * repository. The user's repository has whatever branch the user has, not necessarily this one.
+   */
+  workPath: z.string(),
   repoName: z.string(),
   pullRequest: z.number().int(),
   prTitle: z.string(),
@@ -104,6 +116,22 @@ const fetchFeedbackStep = createStep({
     const repoName = path.basename(repoPath);
     const effectiveRunId = runId ?? generateRunId(`${repoName}-prfeedback`);
 
+    // The code under review is in the task's checkout when there is one (it is made again if it was removed).
+    let workPath = repoPath;
+    const registered = loadRegistry().pullRequests[pullRequestKey(repoPath, inputData.pullRequest)];
+    const checkout = checkoutOf(registered?.rootRunId);
+    if (checkout) {
+      const meta = readArtifact(registered!.rootRunId, 'run.json') as { branch?: string; baseBranch?: string } | null;
+      const revived = await reviveWorktree({
+        isolation: 'worktree',
+        workPath: checkout,
+        repoPath,
+        branch: registered!.headBranch || meta?.branch,
+        baseBranch: registered!.baseBranch || meta?.baseBranch,
+      });
+      workPath = revived?.path ?? checkout;
+    }
+
     const fetched = await fetchPullRequestReview(repoPath, inputData.pullRequest, {
       ...(inputData.includeResolved === undefined
         ? {}
@@ -144,6 +172,7 @@ const fetchFeedbackStep = createStep({
     return {
       runId: effectiveRunId,
       repoPath,
+      workPath,
       repoName,
       pullRequest: review.number,
       prTitle: review.title,
@@ -181,6 +210,29 @@ function renderComments(comments: PullRequestComment[]): string {
     .join('\n\n');
 }
 
+/**
+ * The roadmap of the project this pull request is a phase of - for the triage to tell a comment about
+ * this pull request from a request for a later phase. `null` for a plain task (a project of one phase has
+ * no later phase) and when the store cannot be read: the review then works exactly as it always did.
+ */
+async function roadmapForReview(
+  repoPath: string,
+  pullRequest: number,
+): Promise<{ text: string; targets: NonNullable<RoadmapTargets> } | null> {
+  try {
+    return await withStore(async (store) => {
+      const phase = await store.findPhaseByPullRequest(repoPath, pullRequest);
+      const initiative = phase ? await store.getInitiative(phase.initiativeId) : null;
+      if (!phase || !initiative) return null;
+      const text = renderRoadmapForTriage(initiative, phase.id);
+      if (!text) return null;
+      return { text, targets: { planned: new Set(initiative.phases.filter((other) => other.status === 'PLANNED').map((other) => other.id)) } };
+    });
+  } catch {
+    return null;
+  }
+}
+
 const triageFeedbackStep = createStep({
   id: 'triage-feedback',
   description:
@@ -213,7 +265,7 @@ const triageFeedbackStep = createStep({
     // The whole diff of the branch against its base, saved complete. What the agent is shown of it is
     // condensed to the budget, with a manifest of what was left out (see `diff-view.ts`): this used to
     // be cut at 24,062 characters by the process output cap, and the agent was not told.
-    const diff = await getFullDiff(context.repoPath, { baseRef: context.baseBranch });
+    const diff = await getFullDiff(context.workPath, { baseRef: context.baseBranch });
     const patchFile = path.join(traceDirFor(context.runId), 'context', 'pr-diff');
     writeContextBlock(context.runId, 'pr-diff', diff.diff);
     writeContextBlock(context.runId, 'pr-comments', renderComments(context.comments));
@@ -222,15 +274,18 @@ const triageFeedbackStep = createStep({
       patchFile: getFactoryConfig().provider === 'claude-cli' ? patchFile : null,
     });
 
+    const roadmap = await roadmapForReview(context.repoPath, context.pullRequest);
+
     const prompt = composePrompt(
       '# Pull request under review',
       '',
       `- Number: #${context.pullRequest}`,
       `- Title: ${context.prTitle}`,
       `- Branch: ${context.headBranch} -> ${context.baseBranch}`,
-      `- Repository: ${context.repoPath}`,
+      `- Repository: ${context.workPath}`,
       '',
       promptSection('Changes of the branch against its base', changes.text),
+      promptSection('Roadmap', roadmap?.text),
       '',
       '# Unresolved reviewer feedback',
       '',
@@ -250,7 +305,7 @@ const triageFeedbackStep = createStep({
       prompt,
       schema: feedbackTriageReportSchema,
       runId: context.runId,
-      repoPath: context.repoPath,
+      repoPath: context.workPath,
       repoName: context.repoName,
       maxSteps: 40,
       dryRunResult: {
@@ -262,7 +317,9 @@ const triageFeedbackStep = createStep({
       },
     });
 
-    const report = result.object;
+    // What the agent said, made safe to act on (see `normalizeTriage`). The artifact keeps both.
+    const { report, corrections } = normalizeTriage(result.object, roadmap?.targets ?? null);
+    if (corrections.length > 0) appendEvent(context.runId, { type: 'triage_corrected', corrections });
 
     writeArtifact({
       runId: context.runId,
@@ -270,7 +327,7 @@ const triageFeedbackStep = createStep({
       status: report.overallAction,
       model: result.servedByModel,
       durationMs: result.durationMs,
-      data: report,
+      data: corrections.length > 0 ? { ...report, corrections, asAnswered: result.object } : report,
     });
 
     logger?.info?.('[factory] feedback triage finished', {
@@ -304,6 +361,7 @@ const postRepliesStep = createStep({
 
     let repliesPosted = 0;
     const commentCategory = new Map(report.items.map((item) => [item.commentId, item.category]));
+    const commentTarget = new Map(report.items.map((item) => [item.commentId, item.targetPhase ?? null]));
     const commentReply = new Map(report.items.map((item) => [item.commentId, item.reply]));
 
     // Which replies may be posted now is decided in one place (see `pr-reply.ts`): answers to
@@ -390,6 +448,7 @@ const postRepliesStep = createStep({
         ...(comment.path ? { path: comment.path } : {}),
         ...(comment.line === undefined ? {} : { line: comment.line }),
         ...(commentCategory.get(comment.id) ? { category: commentCategory.get(comment.id) } : {}),
+        ...(commentCategory.get(comment.id) === 'FUTURE_PHASE' ? { targetPhase: commentTarget.get(comment.id) } : {}),
         ...(commentReply.get(comment.id) ? { reply: commentReply.get(comment.id) } : {}),
       })),
       finishedAt: new Date().toISOString(),

@@ -240,7 +240,7 @@ function describeReviewComment(comment: Revision['comments'][number]): string {
 }
 
 /** Comments that do not ask for a code change: they are answered (or left to a human), not implemented. */
-const NOT_A_CHANGE_REQUEST: ReadonlySet<string> = new Set([...ANSWERED_AT_TRIAGE, 'BLOCKER_DISAGREEMENT']);
+const NOT_A_CHANGE_REQUEST: ReadonlySet<string> = new Set([...ANSWERED_AT_TRIAGE, 'BLOCKER_DISAGREEMENT', 'FUTURE_PHASE']);
 
 /** An uncategorised comment is assumed to ask for something: better to act on it than to ignore it. */
 const asksForChange = (comment: Revision['comments'][number]): boolean =>

@@ -56,6 +56,7 @@ if (args[0] === 'pr' && args[1] === 'view') {
 }
 
 if (args[0] === 'pr' && args[1] === 'list') out([]);
+if (args[0] === 'pr' && args[1] === 'comment') process.exit(0); // the call is logged: that is how a test sees what was said
 
 if (args[0] === 'pr' && args[1] === 'merge') {
   if (state.mergeFails) fail(state.mergeFails);

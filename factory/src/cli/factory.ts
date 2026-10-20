@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { asBoolean, asInteger, asString, errorMessageOf, printMarker, type FlagValue } from './flags.ts';
-import { commandInitiativeEdit, commandInitiativeList, commandPhaseReconcile } from './initiatives.ts';
+import { commandInitiativeEdit, commandInitiativeList, commandPhaseReconcile, commandScopeDecide } from './initiatives.ts';
 import { commandWorktreeCheckout, commandWorktreeGc, commandWorktreeList, commandWorktreeRemove } from './worktrees.ts';
 import { parsePipelineFlags } from './pipeline-flags.ts';
 import { parseDeliveryEditsJson } from '../utils/delivery-edits.ts';
@@ -97,6 +97,7 @@ Commands:
   initiative-list  List the projects of a repository: phases, what can start, the backlog
   initiative-edit  Rename, reword, skip or add phases of a project; set backlog items aside
   phase-reconcile  After a phase is merged, compare what it delivered with the phases still to come
+  scope-decide     Say where a review comment about a later phase goes: a phase, or this pull request
   worktree-list    List the checkouts the factory made for tasks: where, which task, what is in them
   worktree-remove  Remove one checkout (the branch stays)
   worktree-gc      Remove the checkouts of tasks whose pull request is over
@@ -216,6 +217,17 @@ worktree-checkout flags:
   --path <folder>           The task's checkout (required). It must have no uncommitted changes, and
                             neither may your repository: the branch is checked out there, over it.
                             Prints WORKTREE_CHECKOUT_JSON {ok, branch?, error?}.
+
+scope-decide flags:
+  --repo <name|path>        Target repository (required)
+  --pr <number>             The pull request (required)
+  --decisions '<json>'      What to do with each comment (required), e.g.
+                            '[{"commentId":"IC_1","decision":"DEFER","targetPhase":"i0001-p3"}]'
+                            DEFER: the comment becomes part of that phase (an id, or NEW for a phase of
+                            its own; omitted: the one the triage suggested) and is settled.
+                            DO_NOW: it stays for the next round, which plans it in.
+  --reply                   Acknowledge a deferral on GitHub
+                            Prints SCOPE_DECIDE_JSON {results, initiativeId}.
 
 Examples:
   npm run factory -- run --repo invest-track --task "Add pagination to GET /api/positions"
@@ -1093,16 +1105,22 @@ async function commandRevise(flags: Record<string, FlagValue>): Promise<number> 
     return 2;
   }
 
+  // What the user decided about the comments that belong to a later phase: until they decide, those wait.
+  const { withStore } = await import('../initiatives/store.ts');
+  const scopeDecisions = await withStore((store) => store.listScopeDecisions(pullRequestKey(repoPath, number)));
+
   const composed = composeRevision({
     entry,
     triage,
     ...(requested && isRevisionAction(requested) ? { action: requested } : {}),
     replyOnGitHub: asBoolean(flags.reply) === true,
+    scopeDecisions: scopeDecisions.map((row) => ({ commentId: row.commentId, decision: row.decision })),
   });
   if (!composed.ok) {
     process.stderr.write(`${composed.reason}\n`);
     return 2;
   }
+  for (const note of composed.notes) process.stdout.write(`${note}\n`);
 
   // An edited task wins over the triage agent's draft.
   const task = asString(flags.task) ?? composed.task;
@@ -1300,6 +1318,8 @@ async function main(): Promise<number> {
       return await commandInitiativeEdit(flags);
     case 'phase-reconcile':
       return await commandPhaseReconcile(flags);
+    case 'scope-decide':
+      return await commandScopeDecide(flags);
     case 'worktree-list':
       return await commandWorktreeList(flags);
     case 'worktree-remove':

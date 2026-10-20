@@ -136,10 +136,19 @@ export interface ComposeInput {
   /** Overrides what the triage recommended (the human decided otherwise). */
   action?: RevisionAction;
   replyOnGitHub?: boolean;
+  /** What the user decided about the comments that belong to a later phase (see `initiatives/scope.ts`). */
+  scopeDecisions?: ReadonlyArray<{ commentId: string; decision: 'DEFER' | 'DO_NOW' }>;
 }
 
 export type ComposeResult =
-  | { ok: true; revision: Revision; task: string; pipeline: Partial<PipelineConfig> | undefined }
+  | {
+      ok: true;
+      revision: Revision;
+      task: string;
+      pipeline: Partial<PipelineConfig> | undefined;
+      /** Things the user should hear about how the round was put together. */
+      notes: string[];
+    }
   | { ok: false; reason: string };
 
 /**
@@ -151,7 +160,37 @@ export type ComposeResult =
 export function composeRevision(input: ComposeInput): ComposeResult {
   const { entry, triage } = input;
 
-  const action = input.action ?? (isRevisionAction(triage.status) ? triage.status : null);
+  // Comments dealt with since the triage (dismissed, answered, deferred) are not part of the round.
+  const handled = new Set(entry.handledCommentIds);
+  const open = triage.comments.filter((comment) => !handled.has(comment.id));
+
+  // A comment that belongs to a later phase is in the round only if the user said so: until they decide
+  // it waits (and stays pending), and one they deferred is not for this round either.
+  const decided = new Map((input.scopeDecisions ?? []).map((entry) => [entry.commentId, entry.decision]));
+  const laterPhase = open.filter((comment) => comment.category === 'FUTURE_PHASE');
+  const doNow = laterPhase.filter((comment) => decided.get(comment.id) === 'DO_NOW');
+  const waiting = laterPhase.filter((comment) => !decided.has(comment.id));
+  const comments = open
+    .filter((comment) => comment.category !== 'FUTURE_PHASE' || decided.get(comment.id) === 'DO_NOW')
+    // New work the plan never covered: it is scope, so the architect has to plan it in.
+    .map((comment) => (doNow.includes(comment) ? { ...comment, category: 'SCOPE_CHANGE' } : comment));
+
+  const notes: string[] = [];
+  let action = input.action ?? (isRevisionAction(triage.status) ? triage.status : null);
+  if (doNow.length > 0 && action !== 'RERUN_PLANNING') {
+    action = 'RERUN_PLANNING';
+    notes.push(
+      `Re-planning: ${doNow.length === 1 ? 'a comment asks' : `${doNow.length} comments ask`} for work the plan does not cover, ` +
+        'and the architect has to plan it in.',
+    );
+  }
+  if (waiting.length > 0 && comments.length > 0) {
+    notes.push(
+      `${waiting.length === 1 ? 'One comment' : `${waiting.length} comments`} about a later phase ${waiting.length === 1 ? 'is' : 'are'} not in this round: ` +
+        'they wait for your decision on where they belong.',
+    );
+  }
+
   if (!action) {
     return {
       ok: false,
@@ -160,21 +199,32 @@ export function composeRevision(input: ComposeInput): ComposeResult {
         'call for code changes. Pass an explicit action to override that.',
     };
   }
-  // Comments dealt with since the triage (dismissed, or answered) are not part of the round.
-  const handled = new Set(entry.handledCommentIds);
-  const comments = triage.comments.filter((comment) => !handled.has(comment.id));
   if (comments.length === 0) {
-    return { ok: false, reason: 'Every review comment of this triage has already been handled.' };
+    return {
+      ok: false,
+      reason:
+        waiting.length > 0
+          ? `${waiting.length === 1 ? 'The remaining review comment belongs' : `The ${waiting.length} remaining review comments belong`} to a later phase and ${waiting.length === 1 ? 'waits' : 'wait'} ` +
+            'for your decision: defer it to a phase, or do it in this pull request.'
+          : 'Every review comment of this triage has already been handled.',
+    };
   }
 
   const root = readRunMeta(entry.rootRunId);
   const tip = latestRunInChain(entry.rootRunId);
   const parent = readRunMeta(tip.runId);
-  const task = triage.followUpTask.trim();
+  const base = triage.followUpTask.trim() || `Address the review comments on pull request #${entry.number}.`;
+  const task =
+    doNow.length === 0
+      ? base
+      : `${base}\n\nThe user decided that these review comments belong in this pull request after all, although they ask for more than it was planned to do. Plan them in:\n${doNow
+          .map((comment) => `- ${comment.author}${comment.path ? ` (${comment.path}${comment.line ? `:${comment.line}` : ''})` : ''}: ${comment.body.trim().replace(/\s+/g, ' ').slice(0, 500)}`)
+          .join('\n')}`;
 
   return {
     ok: true,
-    task: task || `Address the review comments on pull request #${entry.number}.`,
+    notes,
+    task,
     pipeline: parent?.pipeline ?? root?.pipeline,
     revision: {
       parentRunId: tip.runId,

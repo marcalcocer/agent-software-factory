@@ -7,12 +7,17 @@
  *
  * Kept apart from `factory.ts` (which runs `main()` on import) so the commands can be tested.
  */
-import { asBoolean, asString, errorMessageOf, printMarker, type FlagValue } from './flags.ts';
+import { z } from 'zod';
+
+import { asBoolean, asInteger, asString, errorMessageOf, printMarker, type FlagValue } from './flags.ts';
+import { findLatestTriage, lookupPullRequest, readTriageSummary } from './revision.ts';
 import { applyInitiativeEdit, EditRefused, parseInitiativeEdit } from '../initiatives/edit.ts';
 import { reconcilePhase } from '../initiatives/reconcile.ts';
+import { decideScope } from '../initiatives/scope.ts';
 import { withStore } from '../initiatives/store.ts';
 import { initiativeView } from '../initiatives/view.ts';
-import { resolveRepoPath } from '../utils/factory-config.ts';
+import { postReplyFor } from '../tools/pr-reply.ts';
+import { getFactoryConfig, resolveRepoPath } from '../utils/factory-config.ts';
 
 type Flags = Record<string, FlagValue>;
 
@@ -80,6 +85,75 @@ export async function commandPhaseReconcile(flags: Flags): Promise<number> {
     return 0;
   } catch (error) {
     printMarker('PHASE_RECONCILE_JSON', { error: errorMessageOf(error) });
+    return 1;
+  }
+}
+
+const scopeRequestsSchema = z
+  .array(
+    z
+      .object({
+        commentId: z.string().min(1),
+        decision: z.enum(['DEFER', 'DO_NOW']),
+        targetPhase: z.string().nullable().optional(),
+      })
+      .strict(),
+  )
+  .min(1)
+  .max(50);
+
+/**
+ * Carries out what the user decided about review comments that belong to a later phase:
+ * `--repo --pr --decisions '[{"commentId":"...","decision":"DEFER","targetPhase":"i0001-p3"}]'`.
+ * DEFER moves a comment into a phase of the roadmap (`targetPhase` is a phase id, or `NEW`; omitted, the
+ * phase the triage suggested) and settles the comment; DO_NOW keeps it for the next round, planned in.
+ * `--reply` acknowledges a deferral on GitHub. Prints `SCOPE_DECIDE_JSON {results, initiativeId}`.
+ */
+export async function commandScopeDecide(flags: Flags): Promise<number> {
+  const repo = asString(flags.repo);
+  const number = asInteger(flags.pr);
+  const raw = asString(flags.decisions);
+  if (!repo || !number || number <= 0 || !raw) return usage("--repo, --pr and --decisions '<json>' are required.");
+
+  let requests: z.infer<typeof scopeRequestsSchema>;
+  try {
+    const parsed = scopeRequestsSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      printMarker('SCOPE_DECIDE_JSON', { error: `The decisions are not valid: ${issue ? `${issue.path.join('.') || 'decisions'} - ${issue.message}` : 'unknown reason'}.` });
+      return 1;
+    }
+    requests = parsed.data;
+  } catch {
+    printMarker('SCOPE_DECIDE_JSON', { error: 'The decisions are not valid JSON.' });
+    return 1;
+  }
+
+  try {
+    const repoPath = resolveRepoPath(repo, { requireGit: false });
+    if (!lookupPullRequest(repoPath, number)) {
+      printMarker('SCOPE_DECIDE_JSON', { error: `Pull request #${number} is not one the factory opened.` });
+      return 1;
+    }
+    const triageRun = asString(flags['triage-run']);
+    const triage = triageRun ? readTriageSummary(triageRun) : findLatestTriage(repoPath, number);
+    if (!triage) {
+      printMarker('SCOPE_DECIDE_JSON', { error: `No triage of pull request #${number} found. Triage its comments first.` });
+      return 1;
+    }
+
+    const outcome = await decideScope({
+      repoPath,
+      number,
+      comments: triage.comments,
+      decisions: requests.map((request) => ({ commentId: request.commentId, decision: request.decision, targetPhase: request.targetPhase })),
+      replyOnGitHub: (asBoolean(flags.reply) ?? false) && !getFactoryConfig().dryRun,
+      reply: (comment, body) => postReplyFor(repoPath, number, comment, body),
+    });
+    printMarker('SCOPE_DECIDE_JSON', outcome);
+    return outcome.results.every((result) => result.ok) ? 0 : 1;
+  } catch (error) {
+    printMarker('SCOPE_DECIDE_JSON', { error: errorMessageOf(error) });
     return 1;
   }
 }

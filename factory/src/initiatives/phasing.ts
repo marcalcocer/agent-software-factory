@@ -15,7 +15,8 @@ export const MAX_PHASES = 8;
 const MAX_ITEMS = 8;
 const ITEM_MAX_CHARS = 200;
 
-const clip = (text: string, max: number): string => {
+/** The text on one line, cut to `max` characters with an ellipsis. */
+export const clip = (text: string, max: number): string => {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}\u2026`;
 };
@@ -144,6 +145,44 @@ export function renderInitiativeContext(
     lines.push('', 'Backlog (seen on the way, not asked for; take one only if it belongs to your phase):');
     for (const item of open.slice(0, 12)) lines.push(`  - [${item.source}${item.severity ? `/${item.severity}` : ''}] ${clip(item.text, 220)}`);
   }
+  return lines.join('\n');
+}
+
+/**
+ * The roadmap as the review triage reads it, with the ids it must answer by. The triage decides whether
+ * a comment is about this pull request or about a later phase, so it needs each phase's own words - and
+ * the rule for telling them apart - not the whole initiative.
+ *
+ * `null` when there is nothing to defer to: a project of one phase has no later phase, and the review
+ * of a plain task keeps working as it always did.
+ */
+export function renderRoadmapForTriage(initiative: InitiativeWithPhases, currentPhaseId: string): string | null {
+  const current = initiative.phases.find((phase) => phase.id === currentPhaseId);
+  if (!current) return null;
+  const others = initiative.phases.filter((phase) => phase.id !== current.id && phase.status !== 'SKIPPED');
+  if (others.length === 0) return null;
+
+  const lines = [
+    `This pull request is phase ${current.ordinal} of ${others.length + 1} of "${initiative.title}" (${initiative.id}).`,
+    `Its own scope: ${current.scope.length > 0 ? current.scope.map((item) => clip(item, 160)).join('; ') : clip(current.goal || current.title, 240)}`,
+    '',
+    'Phases (answer `targetPhase` with the id, exactly):',
+  ];
+  for (const phase of initiative.phases) {
+    if (phase.status === 'SKIPPED') continue;
+    const where = phase.id === current.id ? 'THIS PULL REQUEST' : STATUS_WORDS[phase.status];
+    lines.push(`  ${phase.id} - ${phase.ordinal}. ${phase.title} [${where}]`);
+    if (phase.id !== current.id && phase.status === 'PLANNED') {
+      if (phase.goal) lines.push(`     Goal: ${clip(phase.goal, 240)}`);
+      if (phase.scope.length > 0) lines.push(`     Covers: ${phase.scope.map((item) => clip(item, 120)).join('; ')}`);
+    }
+  }
+  lines.push(
+    '',
+    'A comment asking for something one of the PLANNED phases covers is `FUTURE_PHASE` with that phase\'s id as `targetPhase`.',
+    'A request beyond this pull request that no planned phase covers is `FUTURE_PHASE` with `targetPhase` "NEW".',
+    'A phase that is delivered cannot be a target: if the comment is about something it delivered, that is a defect or a change to it - classify it as such.',
+  );
   return lines.join('\n');
 }
 

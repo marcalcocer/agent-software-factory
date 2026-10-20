@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fetchPullRequestReview, type PullRequestComment } from './github-tools.ts';
 import { assessMerge } from './pr-merge-rules.ts';
 import { settlePullRequest, type SettleResult } from './pr-lifecycle.ts';
+import { withStore, type PhaseStatus } from '../initiatives/store.ts';
 import {
   backfillFromRuns,
   loadRegistry,
@@ -55,6 +56,21 @@ export interface PullRequestCheck {
    * the project it belongs to, and to the task's checkout.
    */
   settled?: SettleResult;
+  /** The project this pull request is a phase of, when it has other phases: where a comment can be deferred to. */
+  roadmap?: PullRequestRoadmap;
+  /** What the user decided about comments that belong to a later phase (see `scope-decide`). */
+  scopeDecisions?: Array<{ commentId: string; decision: 'DEFER' | 'DO_NOW'; targetPhaseId: string | null }>;
+}
+
+export interface PullRequestRoadmap {
+  initiativeId: string;
+  title: string;
+  /** The phase this pull request is. */
+  phaseId: string;
+  ordinal: number;
+  /** Phases that count: the skipped ones do not. */
+  total: number;
+  phases: Array<{ id: string; ordinal: number; title: string; status: PhaseStatus }>;
 }
 
 export interface CheckResult {
@@ -184,10 +200,49 @@ export async function checkPullRequests(options: CheckOptions = {}): Promise<Che
     }
   });
 
+  await attachRoadmaps(pullRequests);
+
   return {
     checkedAt: new Date().toISOString(),
     watching: entries.length,
     backfilled,
     pullRequests,
   };
+}
+
+/**
+ * Adds to each open pull request the project it is a phase of and what the user decided about its comments,
+ * so the Studio can offer "defer to phase N" without opening the database itself. A plain task (one phase)
+ * has no later phase and gets nothing; a store that cannot be read costs the extra, never the check.
+ */
+async function attachRoadmaps(pullRequests: PullRequestCheck[]): Promise<void> {
+  const open = pullRequests.filter((pr) => pr.state === 'OPEN');
+  if (open.length === 0) return;
+  try {
+    await withStore(async (store) => {
+      for (const pr of open) {
+        const phase = await store.findPhaseByPullRequest(pr.repoPath, pr.number);
+        const initiative = phase ? await store.getInitiative(phase.initiativeId) : null;
+        if (!phase || !initiative) continue;
+
+        const counted = initiative.phases.filter((other) => other.status !== 'SKIPPED' || other.id === phase.id);
+        if (counted.length > 1) {
+          pr.roadmap = {
+            initiativeId: initiative.id,
+            title: initiative.title,
+            phaseId: phase.id,
+            ordinal: phase.ordinal,
+            total: counted.length,
+            phases: initiative.phases.map((other) => ({ id: other.id, ordinal: other.ordinal, title: other.title, status: other.status })),
+          };
+        }
+        const decisions = await store.listScopeDecisions(pr.key);
+        if (decisions.length > 0) {
+          pr.scopeDecisions = decisions.map((row) => ({ commentId: row.commentId, decision: row.decision, targetPhaseId: row.targetPhaseId }));
+        }
+      }
+    });
+  } catch {
+    // The comments are what the check is for; the roadmap is a convenience.
+  }
 }

@@ -63,6 +63,8 @@ export const revisionCommentSchema = z.object({
   line: z.number().int().optional(),
   /** Triage classification (CODE_CHANGE_REQUEST, QUESTION, ...). */
   category: z.string().optional(),
+  /** For FUTURE_PHASE: the roadmap phase the triage thinks it belongs to (an id), `NEW` for none, absent when unknown. */
+  targetPhase: z.string().nullable().optional(),
 });
 export type RevisionComment = z.infer<typeof revisionCommentSchema>;
 
@@ -829,6 +831,7 @@ export const feedbackCategoryValues = [
   'CODE_CHANGE_REQUEST',
   'TEST_CHANGE_REQUEST',
   'SCOPE_CHANGE',
+  'FUTURE_PHASE',
   'QUESTION',
   'PRAISE_OR_NOTE',
   'BLOCKER_DISAGREEMENT',
@@ -855,6 +858,11 @@ export const feedbackItemSchema = z.object({
   author: z.string(),
   excerpt: z.string().describe('Short quote of the comment, for the report.'),
   category: z.enum(feedbackCategoryValues),
+  targetPhase: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Only for FUTURE_PHASE: the id of the roadmap phase it belongs to, exactly as given, or "NEW" when no phase covers it. Otherwise null.'),
   assignTo: z.enum(feedbackAssigneeValues),
   reasoning: z.string().describe('Why this category and assignee, grounded in the code.'),
   reply: z.string().describe('The reply to post back to the reviewer.'),
