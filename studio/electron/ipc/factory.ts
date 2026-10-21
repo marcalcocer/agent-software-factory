@@ -24,6 +24,7 @@ import {
 import { conflictingRun, type RunProbe } from '../services/busy.js';
 import { ensureClaudeAuth } from '../services/claude-auth.js';
 import type { BusyScope } from '../services/pr-watcher.js';
+import { factoryEnvironment, knownRepositories } from '../services/factory-env.js';
 import { effectiveIsolation, runTaskArgs } from '../services/run-args.js';
 import { mainWindow } from '../main.js';
 import { loadSettings } from './settings.js';
@@ -61,6 +62,15 @@ function stripAnsi(str: string): string {
 const LOGS_DIR = process.env.FACTORY_LOG_DIR
   ? path.resolve(process.env.FACTORY_LOG_DIR)
   : path.join(__dirname, '../../factory/logs');
+
+/**
+ * The environment of every factory process: the Studio's own, plus the repositories the user opened. The factory
+ * works only where it is allowed to, and does not take a repository's word for it: the user opened it here.
+ */
+function cliEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const repositories = knownRepositories({ saved: loadSettings().global.savedRepositories, logsDir: LOGS_DIR }).map((repo) => repo.path);
+  return factoryEnvironment({ base: process.env, repositories, overrides });
+}
 
 /** Directory of a run. `basename` keeps a crafted id from escaping the logs directory. */
 const runDirOf = (runId: string): string => path.join(LOGS_DIR, path.basename(runId));
@@ -235,7 +245,7 @@ export function runFactoryCli(
 
   return new Promise((resolve) => {
     const proc = spawn('node', [tsxPath, factoryCLI, ...cliArgs], {
-      env: { ...process.env, FACTORY_PROVIDER: 'claude-cli' },
+      env: cliEnv({ FACTORY_PROVIDER: 'claude-cli' }),
       cwd: factoryDir,
     });
     let stdout = '';
@@ -347,11 +357,7 @@ function spawnFactoryStreaming(runId: string, args: string[]): void {
   const tsxPath = path.join(rootDir, 'node_modules/.bin/tsx');
 
   const proc = spawn('node', [tsxPath, ...args], {
-    env: {
-      ...process.env,
-      FACTORY_NON_INTERACTIVE: 'true',
-      FACTORY_PROVIDER: 'claude-cli',
-    },
+    env: cliEnv({ FACTORY_NON_INTERACTIVE: 'true', FACTORY_PROVIDER: 'claude-cli' }),
     cwd: factoryDir,
   });
 
@@ -391,59 +397,11 @@ function spawnFactoryStreaming(runId: string, args: string[]): void {
 }
 
 /**
- * List available repositories in the workspace
+ * The repositories the Studio lists: the ones the user added, and the ones its runs were made on - wherever they are.
  */
-ipcMain.handle('factory:list-repos', async (): Promise<Array<{ name: string; path: string; recentRuns: number }>> => {
-  const logsDir = LOGS_DIR;
-
-  const repos: Map<string, { name: string; path: string; recentRuns: number }> = new Map();
-
-  // Load saved repositories from settings
-  const { loadSettings } = await import('./settings.js');
-  const settings = loadSettings();
-  
-  if (settings.global.savedRepositories) {
-    for (const savedRepo of settings.global.savedRepositories) {
-      repos.set(savedRepo.name, {
-        name: savedRepo.name,
-        path: savedRepo.path,
-        recentRuns: 0,
-      });
-    }
-  }
-
-  // Scan logs directory for recent runs to get repo names and run counts
-  if (fs.existsSync(logsDir)) {
-    const entries = fs.readdirSync(logsDir, { withFileTypes: true });
-    
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      
-      const summaryPath = path.join(logsDir, entry.name, 'summary.json');
-      if (!fs.existsSync(summaryPath)) continue;
-      
-      try {
-        const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
-        const repoName = path.basename(summary.repository);
-        
-        if (!repos.has(repoName)) {
-          repos.set(repoName, {
-            name: repoName,
-            path: summary.repository,
-            recentRuns: 0,
-          });
-        }
-        
-        const repo = repos.get(repoName)!;
-        repo.recentRuns += 1;
-      } catch {
-        // Skip invalid entries
-      }
-    }
-  }
-
-  return Array.from(repos.values()).sort((a, b) => b.recentRuns - a.recentRuns);
-});
+ipcMain.handle('factory:list-repos', async (): Promise<Array<{ name: string; path: string; recentRuns: number }>> =>
+  knownRepositories({ saved: loadSettings().global.savedRepositories, logsDir: LOGS_DIR }),
+);
 
 /**
  * Remove a repository from saved repositories
@@ -483,12 +441,8 @@ export async function startFactoryRun(cliArgs: string[]): Promise<{ runId: strin
   
   // Build the command: node ../node_modules/.bin/tsx factory.ts run --repo ... --task ...
   const proc = spawn('node', [tsxPath, ...args], {
-    env: {
-      ...process.env,
-      // Studio IS interactive - it can show human input panels for approval gates
-      // So we don't set FACTORY_NON_INTERACTIVE here
-      FACTORY_PROVIDER: 'claude-cli', // Use Claude Pro subscription via CLI
-    },
+    // Studio IS interactive - it can show human input panels for approval gates, so FACTORY_NON_INTERACTIVE is not set.
+    env: cliEnv({ FACTORY_PROVIDER: 'claude-cli' }), // Use Claude Pro subscription via CLI
     cwd: factoryDir,
   });
 
@@ -669,13 +623,12 @@ ipcMain.handle('factory:run', async (_event, params: {
 
   // Spawn the factory process
   const proc = spawn('npx', ['tsx', ...args], {
-    env: {
-      ...process.env,
+    env: cliEnv({
       FACTORY_PROVIDER: 'claude-cli',
       FACTORY_NON_INTERACTIVE: 'true',
       FACTORY_ALLOW_PUSH: 'false',
       FACTORY_ALLOW_PR: 'false',
-    },
+    }),
     cwd: path.join(__dirname, '../../factory'),
   });
 
@@ -798,11 +751,7 @@ ipcMain.handle('factory:resume', async (_event, params: {
   const tsxPath = path.join(rootDir, 'node_modules/.bin/tsx');
 
   const proc = spawn('node', [tsxPath, ...args], {
-    env: {
-      ...process.env,
-      FACTORY_NON_INTERACTIVE: 'true',
-      FACTORY_PROVIDER: 'claude-cli',
-    },
+    env: cliEnv({ FACTORY_NON_INTERACTIVE: 'true', FACTORY_PROVIDER: 'claude-cli' }),
     cwd: factoryDir,
   });
 
