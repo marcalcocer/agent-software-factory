@@ -364,6 +364,7 @@ function App() {
   };
 
   const handleBrowseRepo = async () => {
+    setError(null); // a refusal of an earlier folder is not the answer to this one
     try {
       const repo = await window.api.invoke('repo:browse');
       
@@ -763,15 +764,18 @@ function App() {
 
           {/* Main Panel */}
           <main className="flex-1 overflow-y-auto">
+            {/* Error - above everything else, with or without a repository open: a folder that was refused when
+                it was added is said before there is any repository to show it on. */}
+            {error && (
+              <div className="px-6 pt-6 max-w-4xl">
+                <div role="alert" className="bg-red-100 dark:bg-red-900 p-4 rounded">
+                  <p className="text-red-800 dark:text-red-200 text-sm">{error}</p>
+                </div>
+              </div>
+            )}
+
             {activeTab ? (
               <div className="p-6 space-y-6 max-w-4xl">
-                {/* Error */}
-                {error && (
-                  <div className="bg-red-100 dark:bg-red-900 p-4 rounded">
-                    <p className="text-red-800 dark:text-red-200 text-sm">{error}</p>
-                  </div>
-                )}
-
                 {/* A run on screen, or the history with the pull requests and the task form */}
                 {runLoading && activeTab === runningRepo && !activeRunId && !openRunId ? (
                   // Between the click and the run's id: a few seconds while the process boots.

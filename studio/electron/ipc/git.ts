@@ -6,6 +6,7 @@ import type { Repository } from '../../shared/types';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { openRepositoryFolder } from '../services/repository-folder.js';
 import { mainWindow } from '../main.js';
 
 // In-memory repo list (TODO: persist to settings)
@@ -33,40 +34,11 @@ ipcMain.handle('repo:browse', async (): Promise<Repository | null> => {
     return null;
   }
 
-  const selectedPath = result.filePaths[0];
-  const name = path.basename(selectedPath);
-
-  // Verify it's a git repository
-  const isGitRepo = fs.existsSync(path.join(selectedPath, '.git'));
-  
-  const repo: Repository = {
-    id: name,
-    name,
-    path: selectedPath,
-    lastAccessed: new Date().toISOString(),
-  };
-
-  // Store it in memory
-  repositories.set(name, repo);
-
-  // Persist to settings
+  // The top folder of a git repository is added; anything else is refused with the reason, and not remembered.
+  // The user sees the reason: the renderer shows what this throws.
   const { loadSettings, saveSettings } = await import('./settings.js');
-  const settings = loadSettings();
-  if (!settings.global.savedRepositories) {
-    settings.global.savedRepositories = [];
-  }
-  
-  // Add if not already saved
-  if (!settings.global.savedRepositories.some((r: any) => r.path === selectedPath)) {
-    settings.global.savedRepositories.push({ name, path: selectedPath });
-    saveSettings(settings);
-  }
-
-  // Return with a note if it's not a git repo
-  if (!isGitRepo) {
-    console.log(`[Git] Warning: ${selectedPath} is not a git repository`);
-  }
-
+  const repo = openRepositoryFolder(result.filePaths[0], { load: loadSettings, save: saveSettings });
+  repositories.set(repo.name, repo);
   return repo;
 });
 
