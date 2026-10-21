@@ -1,0 +1,85 @@
+#!/usr/bin/env node
+/**
+ * The reviewer of the factory demo: leaves comments on a pull request of the pretend GitHub, closes it,
+ * or merges it "on GitHub" - the things a person does in the browser that the Studio has to notice.
+ */
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+
+const DEMO = process.env.DEMO_DIR;
+if (!DEMO) { console.error('demo-review needs DEMO_DIR: source demo/env.sh first.'); process.exit(3); }
+const file = path.join(DEMO, 'gh-state.json');
+if (!fs.existsSync(file)) { console.error('There is no pretend GitHub yet: run demo/setup.sh first.'); process.exit(1); }
+
+const HELP = `usage:
+  demo-review list                                  the pull requests
+  demo-review show <pr>                             one pull request: its state, comments, and what the factory posted
+  demo-review comment <pr> <text...>                a comment in the conversation
+  demo-review thread <pr> <file> <line> <text...>   an inline comment on a line of a file
+  demo-review close <pr>                            close it without merging (as in the browser)
+  demo-review merge <pr>                            squash-merge it ON GITHUB (not through the Studio)`;
+
+const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+const save = () => { const tmp = `${file}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(state, null, 2)); fs.renameSync(tmp, file); };
+const [command, number, ...rest] = process.argv.slice(2);
+const pr = state.prs[number];
+const need = () => { if (!pr) { console.error(`There is no pull request #${number}. (${Object.keys(state.prs).map((n) => `#${n}`).join(', ') || 'none yet'})`); process.exit(1); } };
+const now = () => new Date().toISOString();
+const id = (prefix) => { state.seq += 1; return `${prefix}_demo_${state.seq}`; };
+
+switch (command) {
+  case 'list':
+    for (const p of Object.values(state.prs)) console.log(`#${p.number} ${p.state.padEnd(6)} ${p.headBranch}  ${p.title}  (${p.comments.length} comments, ${(p.threads || []).length} inline)`);
+    if (!Object.keys(state.prs).length) console.log('(no pull requests yet)');
+    break;
+  case 'show': {
+    if (!number) { console.log('usage: demo-review show <pr>'); process.exit(2); }
+    need();
+    console.log(`#${pr.number} ${pr.state}: ${pr.title}\n${pr.url}\nbranch ${pr.headBranch} -> ${pr.baseBranch}`);
+    console.log(`\nconversation (${pr.comments.length}):`);
+    for (const c of pr.comments) console.log(`  [${c.id}] ${c.author.login}: ${c.body.replace(/\s+/g, ' ').slice(0, 140)}`);
+    console.log(`\ninline (${(pr.threads || []).length}):`);
+    for (const t of pr.threads || []) for (const c of t.comments) console.log(`  [${c.id}] ${c.author} on ${c.path}:${c.line}: ${c.body.replace(/\s+/g, ' ').slice(0, 140)}`);
+    const said = state.posted.filter((x) => x.pr === pr.number || (x.thread && (pr.threads || []).some((t) => t.id === x.thread)));
+    console.log(`\nwhat the factory said on it (${said.length}):`);
+    for (const x of said) console.log(`  - ${x.body.replace(/^>.*\n+/, '').replace(/\s+/g, ' ').slice(0, 200)}`);
+    break;
+  }
+  case 'comment':
+    need();
+    if (!rest.length) { console.error('usage: demo-review comment <pr> <text...>'); process.exit(2); }
+    pr.comments.push({ id: id('IC'), author: { login: 'reviewer' }, body: rest.join(' '), createdAt: now() });
+    save();
+    console.log(`Commented on #${number}.`);
+    break;
+  case 'thread': {
+    need();
+    const [p, line, ...text] = rest;
+    if (!p || !Number.isInteger(Number(line)) || !text.length) { console.error('usage: demo-review thread <pr> <file> <line> <text...>'); process.exit(2); }
+    pr.threads = pr.threads || [];
+    pr.threads.push({ id: id('PRRT'), resolved: false, comments: [{ id: id('PRRC'), author: 'reviewer', body: text.join(' '), createdAt: now(), path: p, line: Number(line) }] });
+    save();
+    console.log(`Commented on ${p}:${line} of #${number}.`);
+    break;
+  }
+  case 'close':
+    need();
+    if (pr.state !== 'OPEN') { console.error(`#${number} is ${pr.state}.`); process.exit(1); }
+    pr.state = 'CLOSED';
+    save();
+    console.log(`Closed #${number} without merging.`);
+    break;
+  case 'merge': {
+    need();
+    const gh = path.join(__dirname, 'gh');
+    const result = spawnSync(gh, ['pr', 'merge', number, '--squash', '--subject', pr.title, '--body-file', '-', '--match-head-commit', ''], { input: '', env: process.env, encoding: 'utf8' });
+    if (result.status !== 0) { console.error(result.stderr.trim() || 'The merge failed.'); process.exit(1); }
+    console.log(`Squash-merged #${number} on GitHub. (The Studio finds out at its next check - "Check now" is quicker.)`);
+    break;
+  }
+  default:
+    console.log(HELP);
+    process.exit(command ? 2 : 0);
+}

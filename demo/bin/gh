@@ -1,0 +1,159 @@
+#!/usr/bin/env node
+/**
+ * A pretend GitHub for the factory demo: `gh` backed by a JSON file and the demo's own bare git repository
+ * ("origin"). It answers the calls the software factory makes - view, list, diff, create, comment, merge,
+ * branch deletion, review threads - and does the git side for real, so branches, squash merges and "your
+ * local main is behind GitHub" are genuine. Nothing here talks to the network, and it is only ever found
+ * through the PATH that demo/env.sh sets up.
+ */
+'use strict';
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+
+const DEMO = process.env.DEMO_DIR;
+if (!DEMO) {
+  process.stderr.write('The pretend gh needs DEMO_DIR: source demo/env.sh first (or start the Studio with demo/start-studio.sh).\n');
+  process.exit(3);
+}
+const STATE = path.join(DEMO, 'gh-state.json');
+const ORIGIN = path.join(DEMO, 'origin.git');
+const args = process.argv.slice(2);
+
+const out = (value) => { process.stdout.write(`${JSON.stringify(value)}\n`); process.exit(0); };
+const fail = (message, code = 1) => { process.stderr.write(`${message}\n`); process.exit(code); };
+const flag = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
+const field = (name) => { const a = args.find((x) => x.startsWith(`${name}=`)); return a ? a.slice(name.length + 1) : undefined; };
+
+const load = () => JSON.parse(fs.readFileSync(STATE, 'utf8'));
+const save = (state) => { const tmp = `${STATE}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(state, null, 2)); fs.renameSync(tmp, STATE); };
+if (!fs.existsSync(STATE)) save({ nextNumber: 8, seq: 0, owner: 'demo', name: 'demo-app', prs: {}, posted: [] });
+const state = load();
+const pr = (n) => state.prs[String(n)];
+
+try { fs.appendFileSync(path.join(DEMO, 'gh-calls.log'), `${new Date().toISOString()} gh ${args.map((a) => (a.length > 80 ? `${a.slice(0, 77)}...` : a)).join(' ')}\n`); } catch { /* the log is a convenience */ }
+
+const g = (...a) => {
+  try { return execFileSync('git', ['--git-dir', ORIGIN, ...a], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }).toString(); } catch { return ''; }
+};
+const sha = (branch) => g('rev-parse', `refs/heads/${branch}`).trim() || '0'.repeat(40);
+const filesOf = (p) => g('diff', '--numstat', `refs/heads/${p.baseBranch}...refs/heads/${p.headBranch}`).split('\n').filter(Boolean).map((l) => {
+  const [a, d, ...f] = l.split('\t');
+  return { path: f.join('\t'), additions: Number(a) || 0, deletions: Number(d) || 0 };
+});
+const commitsOf = (p) => g('log', '--format=%H%x09%s', `refs/heads/${p.baseBranch}..refs/heads/${p.headBranch}`).split('\n').filter(Boolean).map((l) => {
+  const [oid, ...h] = l.split('\t');
+  return { oid, messageHeadline: h.join('\t'), messageBody: '' };
+});
+
+if (args[0] === '--version') { process.stdout.write("gh version 2.0.0 (the factory demo's pretend GitHub)\n"); process.exit(0); }
+if (args[0] === 'auth' && args[1] === 'status') { process.stdout.write('Logged in to the demo\'s pretend GitHub\n'); process.exit(0); }
+if (args[0] === 'repo' && args[1] === 'view') out({ owner: { login: state.owner }, name: state.name });
+
+if (args[0] === 'pr' && args[1] === 'view') {
+  const p = pr(args[2]);
+  if (!p) fail(`GraphQL: Could not resolve to a PullRequest with the number of ${args[2]}. (repository.pullRequest)`);
+  const open = p.state === 'OPEN';
+  const files = open ? filesOf(p) : [];
+  out({
+    number: p.number, title: p.title, state: p.state, url: p.url, body: p.body || '',
+    headRefName: p.headBranch, baseRefName: p.baseBranch, headRefOid: open ? sha(p.headBranch) : p.headSha,
+    isDraft: false, isCrossRepository: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: '',
+    statusCheckRollup: [], comments: p.comments, reviews: [],
+    commits: open ? commitsOf(p) : [], files,
+    additions: files.reduce((n, f) => n + f.additions, 0), deletions: files.reduce((n, f) => n + f.deletions, 0),
+    mergedAt: p.state === 'MERGED' ? p.mergedAt : null, mergeCommit: p.state === 'MERGED' ? { oid: p.mergeCommit } : null,
+  });
+}
+
+if (args[0] === 'pr' && args[1] === 'diff') {
+  const p = pr(args[2]); if (!p) fail('no such pull request');
+  process.stdout.write(g('diff', `refs/heads/${p.baseBranch}...refs/heads/${p.headBranch}`));
+  process.exit(0);
+}
+
+if (args[0] === 'pr' && args[1] === 'list') {
+  const base = flag('--base');
+  out(Object.values(state.prs).filter((p) => p.state === 'OPEN' && (!base || p.baseBranch === base)).map((p) => ({ number: p.number })));
+}
+
+if (args[0] === 'pr' && args[1] === 'create') {
+  const number = state.nextNumber++;
+  const head = flag('--head') || execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { stdio: 'pipe' }).toString().trim();
+  const bodyFile = flag('--body-file');
+  state.prs[String(number)] = {
+    number, state: 'OPEN', title: flag('--title') || `Pull request ${number}`, body: bodyFile ? fs.readFileSync(bodyFile, 'utf8') : '',
+    url: `https://github.com/${state.owner}/${state.name}/pull/${number}`, headBranch: head, baseBranch: flag('--base') || 'main',
+    headSha: sha(head), comments: [], threads: [],
+  };
+  save(state);
+  process.stdout.write(`${state.prs[String(number)].url}\n`);
+  process.exit(0);
+}
+
+if (args[0] === 'pr' && args[1] === 'comment') {
+  const p = pr(args[2]); if (!p) fail('no such pull request');
+  const body = flag('--body') || '';
+  state.seq += 1;
+  p.comments.push({ id: `IC_factory_${state.seq}`, author: { login: 'factory-account' }, body, createdAt: new Date().toISOString() });
+  state.posted.push({ pr: p.number, body, at: new Date().toISOString() });
+  save(state);
+  process.exit(0);
+}
+
+if (args[0] === 'pr' && args[1] === 'merge') {
+  const p = pr(args[2]); if (!p) fail('no such pull request');
+  if (p.state !== 'OPEN') fail(`Pull request #${p.number} is not open (it is ${p.state}).`);
+  if (p.mergeFails) fail(p.mergeFails);
+  const expected = flag('--match-head-commit');
+  if (expected && expected !== sha(p.headBranch)) fail('Head branch was modified. Review and try the merge again.');
+  const subject = flag('--subject') || p.title;
+  const body = flag('--body-file') === '-' ? fs.readFileSync(0, 'utf8') : '';
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-gh-merge-'));
+  try {
+    const git = (...a) => execFileSync('git', a, { cwd: work, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
+    execFileSync('git', ['clone', '-q', ORIGIN, work], { stdio: 'pipe' });
+    git('config', 'user.email', 'github@example.com'); git('config', 'user.name', 'GitHub');
+    git('checkout', '-q', p.baseBranch);
+    git('merge', '--squash', `origin/${p.headBranch}`);
+    git('commit', '-q', '-m', subject, ...(body.trim() ? ['-m', body.trim()] : []));
+    git('push', '-q', 'origin', p.baseBranch);
+    p.mergeCommit = git('rev-parse', 'HEAD');
+  } catch (error) {
+    fail(`merge failed: ${String(error.stderr || error.message)}`);
+  } finally { fs.rmSync(work, { recursive: true, force: true }); }
+  p.headSha = sha(p.headBranch); p.state = 'MERGED'; p.mergedAt = new Date().toISOString();
+  save(state);
+  process.exit(0);
+}
+
+if (args[0] === 'api' && args[1] === 'graphql') {
+  const query = (args.find((a) => a.startsWith('query=')) || '').slice(6);
+  if (query.includes('reviewThreads(first: 100)')) {
+    const p = pr(field('pr'));
+    const nodes = ((p && p.threads) || []).map((t) => ({
+      id: t.id, isResolved: !!t.resolved,
+      comments: { nodes: t.comments.map((c) => ({ id: c.id, body: c.body, createdAt: c.createdAt, path: c.path ?? null, line: c.line ?? null, state: 'SUBMITTED', author: { login: c.author || 'reviewer' }, pullRequestReview: { state: 'COMMENTED' } })) },
+    }));
+    out({ data: { repository: { pullRequest: { reviewThreads: { nodes } } } } });
+  }
+  if (query.includes('node(id: $threadId)')) {
+    const p = Object.values(state.prs).find((x) => (x.threads || []).some((t) => t.id === field('threadId')));
+    out({ data: { node: p ? { pullRequest: { number: p.number, reviews: { nodes: [] } } } : null } });
+  }
+  if (query.includes('addPullRequestReviewThreadReply')) {
+    state.posted.push({ thread: field('threadId'), body: field('body'), at: new Date().toISOString() });
+    save(state);
+    out({ data: { addPullRequestReviewThreadReply: { comment: { id: 'reply' } } } });
+  }
+  out({ data: {} });
+}
+
+if (args[0] === 'api' && args.includes('DELETE')) {
+  const ref = decodeURIComponent(args[args.length - 1].replace(/^.*\/git\/refs\/heads\//, ''));
+  try { execFileSync('git', ['--git-dir', ORIGIN, 'update-ref', '-d', `refs/heads/${ref}`], { stdio: 'pipe' }); } catch { /* already gone */ }
+  process.exit(0);
+}
+
+fail(`the demo's pretend gh does not know: ${args.join(' ')}`, 3);

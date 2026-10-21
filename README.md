@@ -80,6 +80,9 @@ npm run build:studio
 
 - **Factory:** See `factory/README.md` for the multi-agent system architecture, safety model, and CLI usage
 - **Studio:** UI features and keyboard shortcuts (coming soon)
+- **Try it without GitHub:** `demo/README.md` - a small demo world (a project in phases, pull requests with review
+  comments, a checkout per task) and a pretend GitHub, so you can click through the Studio without touching your
+  repositories: `demo/setup.sh`, then `demo/start-studio.sh`
 
 ## Development
 
