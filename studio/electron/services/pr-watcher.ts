@@ -308,6 +308,24 @@ export function scopeOf(pr: PrCheckPullRequest, triage: PrFeedbackSummary | null
   return view.undecided.length === 0 && view.doNow.length === 0 ? null : view;
 }
 
+/** Triage categories that ask for no change to this pull request's code: answered, deferred, or for a human. */
+const CALLS_FOR_NO_CHANGE: ReadonlySet<string> = new Set(['QUESTION', 'PRAISE_OR_NOTE', 'FUTURE_PHASE', 'BLOCKER_DISAGREEMENT']);
+
+/**
+ * How many of the pending comments a round would act on. A question is answered, not implemented; a request for
+ * a later phase is deferred - unless the user said to do it here; a comment the triage did not classify is
+ * assumed to ask for something (the factory does the same). This is the number the card names, so that "2
+ * comments need code changes" is not said of a code change and a question.
+ */
+export function changeRequestCount(pending: PrComment[], triage: PrFeedbackSummary | null, doNow: readonly string[] = []): number {
+  const category = new Map((triage?.items ?? []).map((item) => [item.commentId, item.category]));
+  const asking = pending.filter((comment) => {
+    const kind = category.get(comment.id);
+    return kind === undefined || !CALLS_FOR_NO_CHANGE.has(kind) || doNow.includes(comment.id);
+  });
+  return asking.length || pending.length;
+}
+
 /** Does the triage cover every comment that is pending right now? A stale one must not be acted on. */
 export function triageCovers(triage: PrFeedbackSummary | null, pending: PrComment[]): boolean {
   if (!triage || pending.length === 0) return false;
@@ -424,8 +442,10 @@ export function classifyPullRequest(input: ClassifyInput): Classification {
 
     // A comment the user said to do in this pull request is a round even when the triage thought it was for later.
     const needsCode = REVISION_ACTIONS.has(covering.action) || (scope?.doNow.length ?? 0) > 0;
-    const n = plural(pending.length, 'comment', 'comments');
-    const needs = pending.length === 1 ? 'needs' : 'need';
+    // What the round would act on - not every pending comment (a question beside a code change is not one).
+    const asking = needsCode ? changeRequestCount(pending, covering, scope?.doNow ?? []) : pending.length;
+    const n = plural(asking, 'comment', 'comments');
+    const needs = asking === 1 ? 'needs' : 'need';
 
     if (covering.action === 'ESCALATE_HUMAN' || (needsCode && covering.blockers.length > 0)) {
       const why = covering.blockers[0] ?? covering.summary;

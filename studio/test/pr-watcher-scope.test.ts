@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_PR_WATCH_SETTINGS,
   busyScopeOf,
+  changeRequestCount,
   busyScopeOfView,
   classifyPullRequest,
   PrWatcher,
@@ -137,6 +138,60 @@ describe('busy scope', () => {
   it('is the task\'s own checkout for a pull request that worked in one, and the repository for one that did not', () => {
     expect(busyScopeOf(pullRequest([], { workCopy: { isolation: 'worktree', path: '/w/.factory/worktrees/invest-track/f0042', exists: true } }))).toEqual({ isolation: 'worktree', rootRunId: 'R1' });
     expect(busyScopeOf(pullRequest([]))).toEqual({ isolation: 'in-place', rootRunId: 'R1' });
+  });
+});
+
+describe('what the card says needs code changes', () => {
+  const mixed = [comment('c1'), comment('c2'), comment('c3')];
+  const items = [item('c1', 'CODE_CHANGE_REQUEST', { assignTo: 'developer' }), item('c2', 'QUESTION'), item('c3', 'FUTURE_PHASE')];
+  const roundFor = (extra: Partial<PrFeedbackSummary> = {}) => triage(items, { action: 'RERUN_IMPLEMENTATION', followUpTask: 'Fix c1.', ...extra });
+
+  it('counts the comments that ask for a change - not the question beside them, nor the request for later', () => {
+    expect(changeRequestCount(mixed, roundFor())).toBe(1);
+  });
+
+  it('counts a request for a later phase the user said to do here', () => {
+    expect(changeRequestCount(mixed, roundFor(), ['c3'])).toBe(2);
+  });
+
+  it('counts a comment the triage did not classify: it is assumed to ask for something, as the factory does', () => {
+    expect(changeRequestCount([...mixed, comment('c4')], roundFor())).toBe(2);
+  });
+
+  it('never says zero: with nothing classified as a change, it names what is pending', () => {
+    expect(changeRequestCount([comment('c2')], triage([item('c2', 'QUESTION')]))).toBe(1);
+    expect(changeRequestCount([comment('c1'), comment('c2')], null)).toBe(2);
+  });
+
+  it('is what the message says: one code change beside a question is "1 comment needs", not "2 comments need"', () => {
+    const pending = [comment('c1'), comment('c2')];
+    const result = classify({ pr: pullRequest(pending), triage: triage(items.slice(0, 2), { action: 'RERUN_IMPLEMENTATION', followUpTask: 'Fix c1.' }), settings: { ...DEFAULT_PR_WATCH_SETTINGS, autoRevise: false } });
+
+    expect(result.message).toBe('1 comment needs code changes - start a round to address them.');
+  });
+
+  it('says it for several, and for a round that will start by itself', () => {
+    const pending = [comment('c1'), comment('c2'), comment('c3')];
+    const two = triage([item('c1', 'CODE_CHANGE_REQUEST'), item('c2', 'TEST_CHANGE_REQUEST'), item('c3', 'QUESTION')], { action: 'RERUN_IMPLEMENTATION', followUpTask: 'x' });
+
+    expect(classify({ pr: pullRequest(pending), triage: two, settings: { ...DEFAULT_PR_WATCH_SETTINGS, autoRevise: false } }).message).toBe('2 comments need code changes - start a round to address them.');
+    expect(classify({ pr: pullRequest(pending), triage: two, settings: { ...DEFAULT_PR_WATCH_SETTINGS, autoRevise: true } }).message).toBe('2 comments need code changes - a round will start automatically.');
+  });
+
+  it('and while another run is in the way', () => {
+    const pending = [comment('c1'), comment('c2')];
+    const result = classify({
+      pr: pullRequest(pending), triage: triage(items.slice(0, 2), { action: 'RERUN_IMPLEMENTATION', followUpTask: 'x' }),
+      busy: { runId: 'R9', reason: 'running', task: 'Another task' },
+    });
+
+    expect(result.message).toContain('1 comment needs code changes. Waiting for');
+  });
+
+  it('is unchanged when only questions are left - the message does not speak of code', () => {
+    const result = classify({ pr: pullRequest([comment('c2')]), triage: triage([item('c2', 'QUESTION')]) });
+
+    expect(result.message).toBe('No code changes needed - these are questions or notes.');
   });
 });
 
