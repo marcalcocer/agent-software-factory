@@ -302,7 +302,7 @@ describe('what a merge leaves in the notice', () => {
     };
   }
   const settled = (over: Partial<NonNullable<PrMergeNotice['result']['phase']>> = {}) => ({
-    initiativeId: 'i0001', initiativeTitle: 'Redesign the frontend', phaseId: 'i0001-p1', title: 'Foundation', ordinal: 1, total: 4, merged: true,
+    initiativeId: 'i0001', kind: 'project' as const, initiativeTitle: 'Redesign the frontend', phaseId: 'i0001-p1', title: 'Foundation', ordinal: 1, total: 4, merged: true,
     alreadySettled: false, next: { phaseId: 'i0001-p2', ordinal: 2, title: 'Screens' }, initiativeDone: false, ...over,
   });
 
@@ -327,6 +327,15 @@ describe('what a merge leaves in the notice', () => {
     panel(watcher(), { notices: [notice(settled({ next: null }))] });
 
     expect(screen.getByTestId('phase-outcome').textContent).toContain('No other phase can start yet.');
+  });
+
+  it('says nothing about phases, a roadmap or a finished project for a one-off task - it never had any', () => {
+    installFakeApi({});
+    panel(watcher(), { notices: [notice(settled({ kind: 'quick', initiativeTitle: 'Add a percent formatter', total: 1, next: null, initiativeDone: true }))] });
+
+    expect(screen.getByTestId('merge-notice').textContent).toContain('Merged #8');
+    expect(screen.queryByTestId('phase-outcome')).toBeNull();
+    expect(screen.getByTestId('merge-notice').textContent).not.toMatch(/phase|project|roadmap/i);
   });
 
   it('says nothing about phases for a pull request that was not one', () => {

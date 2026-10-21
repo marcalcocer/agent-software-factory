@@ -1091,8 +1091,9 @@ export class PrWatcher {
    * A phase has just been delivered (merged here, or found merged on GitHub): compare the roadmap with it,
    * unless the user switched that off. Runs in the background; the screen hears about it afterwards.
    */
-  private reconcileAfterMerge(phase: { phaseId: string } | null | undefined, repoPath: string): void {
-    if (!phase || this.deps.autoReconcile?.() === false) return;
+  private reconcileAfterMerge(phase: { phaseId: string; kind?: string } | null | undefined, repoPath: string): void {
+    // A one-off task has no roadmap to compare with what it delivered.
+    if (!phase || phase.kind === 'quick' || this.deps.autoReconcile?.() === false) return;
     this.reconcile(phase.phaseId)
       .catch((error: Error) => this.deps.log?.(`could not compare the roadmap with ${phase.phaseId}: ${error.message}`))
       .finally(() => this.deps.projectsChanged?.(repoPath));

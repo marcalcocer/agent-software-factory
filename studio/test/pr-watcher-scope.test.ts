@@ -406,7 +406,7 @@ describe('the watcher: a round that waits for a scope decision', () => {
 
 describe('the watcher: the roadmap after a phase is delivered', () => {
   const settledPhase = (over: Partial<SettledPhase> = {}): SettledPhase => ({
-    initiativeId: 'i0001', initiativeTitle: 'Redesign', phaseId: 'i0001-p1', title: 'Foundation', ordinal: 1, total: 3, merged: true, alreadySettled: false,
+    initiativeId: 'i0001', kind: 'project', initiativeTitle: 'Redesign', phaseId: 'i0001-p1', title: 'Foundation', ordinal: 1, total: 3, merged: true, alreadySettled: false,
     next: { phaseId: 'i0001-p2', ordinal: 2, title: 'Screens' }, initiativeDone: false, ...over,
   });
   const reportLine = `PHASE_RECONCILE_JSON ${JSON.stringify({ report: { summary: 'Delivered.', changes: [], backlogAdded: 0, source: 'agent' } })}\n`;
@@ -438,6 +438,19 @@ describe('the watcher: the roadmap after a phase is delivered', () => {
 
     expect(h.cli.some((args) => args[0] === 'phase-reconcile')).toBe(false);
     expect(h.changed).toContain(REPO);
+  });
+
+  it('does not compare a one-off task with a roadmap it does not have - not after a merge here, not after one on GitHub', async () => {
+    const here = setup({ workCopy: WORKTREE, answers: { 'pr-merge': merged(settledPhase({ kind: 'quick', total: 1, next: null, initiativeDone: true })), 'phase-reconcile': reportLine } });
+    await mergeThrough(here);
+    await settle();
+    expect(here.cli.some((args) => args[0] === 'phase-reconcile')).toBe(false);
+    expect(here.changed).toContain(REPO); // the roadmap list may still have to look again
+
+    const github = setup({ state: 'MERGED', settled: { phase: settledPhase({ kind: 'quick', total: 1, next: null, initiativeDone: true }), notes: [] }, answers: { 'phase-reconcile': reportLine } });
+    await github.watcher.refresh();
+    await settle();
+    expect(github.reconciled).toEqual([]);
   });
 
   it('does nothing for a pull request that is not a phase of a project', async () => {

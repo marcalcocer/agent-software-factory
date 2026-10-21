@@ -825,7 +825,8 @@ function MergeNoticeCard({ notice, onDismiss }: { notice: PrMergeNotice; onDismi
         </p>
       )}
       {!result.merged && result.reason && <p>{result.reason}</p>}
-      {result.merged && result.phase && <PhaseOutcome phase={result.phase} />}
+      {/* Only for a project: a one-off task has no phases, no roadmap and no project to finish. */}
+      {result.merged && result.phase && result.phase.kind !== 'quick' && <PhaseOutcome phase={result.phase} />}
       {result.notes.length > 0 && (
         <ul className="list-disc list-inside text-xs opacity-90">
           {result.notes.map((note) => (

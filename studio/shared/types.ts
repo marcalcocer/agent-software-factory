@@ -295,6 +295,8 @@ export interface PullRequestRoadmap {
 /** The phase a pull request was, and where its project stands after it merged (or was closed). */
 export interface SettledPhase {
   initiativeId: string;
+  /** `quick`: a task that was never split into phases - there is no project to speak of. */
+  kind: 'quick' | 'project' | 'greenfield';
   initiativeTitle: string;
   phaseId: string;
   title: string;
