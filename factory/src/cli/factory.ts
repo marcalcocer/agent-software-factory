@@ -876,6 +876,7 @@ async function commandDoctor(flags: Record<string, FlagValue>): Promise<number> 
   printJson('Factory config', {
     provider: config.provider,
     workspaceRoot: config.workspaceRoot,
+    extraRepositories: config.extraRepositories,
     logDir: config.logDir,
     maxAttempts: config.maxAttempts,
     commandTimeoutMs: config.commandTimeoutMs,
@@ -942,6 +943,10 @@ async function commandDoctor(flags: Record<string, FlagValue>): Promise<number> 
       .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(config.workspaceRoot, entry.name, '.git')))
       .map((entry) => entry.name);
     process.stdout.write(`  git repositories: ${repositories.join(', ') || '(none)'}\n`);
+  }
+  for (const repository of config.extraRepositories) {
+    const there = fs.existsSync(path.join(repository, '.git'));
+    process.stdout.write(`  ${there ? '[ok]     ' : '[missing]'} ${repository} (opened on purpose, outside the workspace)\n`);
   }
 
   return (credentials.ready.length > 0 && cliHealthy) || config.dryRun ? 0 : 1;

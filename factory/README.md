@@ -477,9 +477,11 @@ The factory manipulates real repositories, so the boundaries are enforced in cod
 prompts:
 
 - **Workspace jail** — every path is resolved through `resolveRepoPath` /
-  `resolveInsideRepo`: traversal outside the target repository is rejected, and so is any
-  repository outside `FACTORY_WORKSPACE_ROOT` (unless `FACTORY_ALLOW_ANY_PATH=true`). Direct
-  access to `.git` is blocked.
+  `resolveInsideRepo`: traversal outside the target repository is rejected, and so is anything
+  outside the places the factory may work in: the workspace (`FACTORY_WORKSPACE_ROOT`) and the
+  repositories you opened on purpose (`FACTORY_EXTRA_REPOS` - the Studio lists every repository you
+  add). A repository somewhere else is refused, and the refusal says how to open it;
+  `FACTORY_ALLOW_ANY_PATH=true` lifts the boundary altogether. Direct access to `.git` is blocked.
 - **No shell** — commands run with `shell: false` through an allow-list of executables.
   Shell metacharacters (`;`, `&&`, `|`, `>`, backticks, `$(`) are rejected, so command chaining
   and injection are impossible. Extend the allow-list with
@@ -510,7 +512,9 @@ cp .env.example .env         # then add ANTHROPIC_API_KEY and/or OPENAI_API_KEY
 npm run factory -- doctor    # verify configuration, credentials and tooling
 ```
 
-Target repositories live in `~/workspace/` (configurable via `FACTORY_WORKSPACE_ROOT`).
+Target repositories live in `~/workspace/` (configurable via `FACTORY_WORKSPACE_ROOT`): a name like
+`--repo invest-track` is looked up there. A repository anywhere else works too once you open it on
+purpose - add it in the Studio, or `FACTORY_EXTRA_REPOS=/path/to/repo` (several are separated like `PATH`).
 
 ---
 
@@ -1067,8 +1071,9 @@ All variables are optional unless stated. See `.env.example`.
 | `FACTORY_CLAUDE_CLI_FILE_TOOLS` | `true` | Grant Claude Code's file tools, scoped to the repo |
 | `FACTORY_CLI_MODEL_<ROLE>` | — | Per-role CLI chain, e.g. `sonnet` or `opus,sonnet` |
 | `FACTORY_CLI_ESCALATION_MODEL` | `sonnet` | Model a cheap-tier call escalates to on schema failure |
-| `FACTORY_WORKSPACE_ROOT` | `~/workspace` | Hard boundary for all file operations |
-| `FACTORY_ALLOW_ANY_PATH` | `false` | Allow repositories outside the workspace |
+| `FACTORY_WORKSPACE_ROOT` | `~/workspace` | Where repositories are found by name; part of the boundary for all file operations |
+| `FACTORY_EXTRA_REPOS` | — | Repositories outside the workspace that you opened on purpose: absolute paths, separated like `PATH` (`:`). The Studio sets it for every repository you add. Agents are confined to each, like to a workspace repository |
+| `FACTORY_ALLOW_ANY_PATH` | `false` | Lift the boundary altogether (not recommended; prefer `FACTORY_EXTRA_REPOS`) |
 | `FACTORY_MAX_ATTEMPTS` | `3` | Iterations before human escalation |
 | `FACTORY_COMMAND_TIMEOUT_MS` | `900000` | Per-command timeout |
 | `FACTORY_MAX_OUTPUT_CHARS` | `24000` | Captured output per stream |
@@ -1140,7 +1145,7 @@ route every path through `resolveInsideRepo` and every command through `src/util
 | `claude` calls 404 through a proxy | Use the **root** proxy URL (`http://127.0.0.1:8787`), not `/v1` — the CLI appends `/v1/messages` itself. |
 | Output violates schema on all rungs | The ladder (role model → repair → `sonnet`) all failed. The `agent_schema_retry` events show the exact Zod errors; usually a prompt/schema mismatch after editing a schema. |
 | `Target repository ... has uncommitted changes` | Commit or stash first: the factory needs a clean baseline to produce a reviewable diff. |
-| `Path ... is outside the factory workspace` | Move the repository under `FACTORY_WORKSPACE_ROOT` or set `FACTORY_ALLOW_ANY_PATH=true`. |
+| `Path ... is outside the places the factory may work in` | Open the repository in the Studio, or set `FACTORY_EXTRA_REPOS=/path/to/repo`, or move it under `FACTORY_WORKSPACE_ROOT`. `FACTORY_ALLOW_ANY_PATH=true` lifts the boundary altogether. |
 | `Executable "..." is not allow-listed` | Add it to `FACTORY_EXTRA_ALLOWED_COMMANDS`. |
 | `Command ... contains shell control characters` | Pass one command per call; chaining (`&&`, `;`, `|`) is intentionally rejected. |
 | `No test command could be detected` | Pass `--test-command "<cmd>"` or document it in the repository `AGENTS.md`. |

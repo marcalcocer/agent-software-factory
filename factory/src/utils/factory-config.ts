@@ -69,9 +69,15 @@ export interface FactoryConfig {
   claudeCliMaxBudgetUsd?: number;
   /** Let the implementing agent use Claude Code's own file tools, scoped to the repo. */
   claudeCliFileTools: boolean;
-  /** Root folder containing the target repositories. Hard boundary for every file operation. */
+  /** Root folder containing the target repositories, which are found there by name. Also part of the boundary. */
   workspaceRoot: string;
-  /** Allow target repositories outside `workspaceRoot` (disabled by default). */
+  /**
+   * Repositories OUTSIDE the workspace that were opened on purpose (`FACTORY_EXTRA_REPOS`, separated like
+   * `PATH`). The Studio lists every repository the user added: a repository is the user's to point at, wherever
+   * it lives, and the agents working on it are confined to it like to any other.
+   */
+  extraRepositories: string[];
+  /** Lift the boundary altogether (`FACTORY_ALLOW_ANY_PATH`, disabled by default). */
   allowAnyPath: boolean;
   /** Directory where run traces are written (`<logDir>/<runId>/`). */
   logDir: string;
@@ -127,6 +133,22 @@ export function expandPath(input: string, base: string = PROJECT_ROOT): string {
   return path.resolve(base, expanded);
 }
 
+/**
+ * A list of folders, separated like `PATH` (`:` here, `;` on Windows). Only absolute paths count - after
+ * expanding a leading `~` - because a relative one has no clear meaning in a list read from the environment;
+ * blanks and repeats are dropped.
+ */
+export function parsePathList(raw: string | undefined): string[] {
+  const found = new Set<string>();
+  for (const entry of (raw ?? '').split(path.delimiter)) {
+    const trimmed = entry.trim();
+    if (trimmed === '') continue;
+    const expanded = trimmed === '~' || trimmed.startsWith('~/') ? path.join(os.homedir(), trimmed.slice(1)) : trimmed;
+    if (path.isAbsolute(expanded)) found.add(path.resolve(expanded));
+  }
+  return [...found];
+}
+
 function envString(key: string, fallback: string): string {
   const value = process.env[key];
   return value === undefined || value.trim() === '' ? fallback : value.trim();
@@ -166,6 +188,7 @@ export function getFactoryConfig(): FactoryConfig {
     ...(Number.isFinite(maxBudget) && maxBudget > 0 ? { claudeCliMaxBudgetUsd: maxBudget } : {}),
     claudeCliFileTools: envBoolean('FACTORY_CLAUDE_CLI_FILE_TOOLS', true),
     workspaceRoot: expandPath(envString('FACTORY_WORKSPACE_ROOT', path.join(os.homedir(), 'workspace'))),
+    extraRepositories: parsePathList(process.env.FACTORY_EXTRA_REPOS),
     allowAnyPath: envBoolean('FACTORY_ALLOW_ANY_PATH', false),
     logDir: expandPath(envString('FACTORY_LOG_DIR', './logs')),
     logLevel: ['debug', 'info', 'warn', 'error'].includes(logLevel) ? logLevel : 'info',
@@ -191,12 +214,13 @@ export function getFactoryConfig(): FactoryConfig {
   };
 }
 
-/** Thrown when a path escapes the configured workspace boundary. */
+/** Thrown when a path is outside everywhere the factory may work. */
 export class WorkspaceBoundaryError extends Error {
   constructor(requested: string, workspaceRoot: string) {
     super(
-      `Path "${requested}" is outside the factory workspace "${workspaceRoot}". ` +
-        'Move the repository inside the workspace or set FACTORY_ALLOW_ANY_PATH=true.',
+      `Path "${requested}" is outside the places the factory may work in (the workspace "${workspaceRoot}" and the ` +
+        `repositories you opened on purpose). Open it in the Studio, or set FACTORY_EXTRA_REPOS=${requested}, or move it ` +
+        'inside the workspace; FACTORY_ALLOW_ANY_PATH=true lifts the boundary altogether.',
     );
     this.name = 'WorkspaceBoundaryError';
   }
@@ -208,6 +232,19 @@ export function isInside(parent: string, candidate: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+/**
+ * Everywhere the factory may work: the workspace, and each repository the user opened on purpose. The agents'
+ * tools are confined to these - a path anywhere else is refused.
+ */
+export function allowedRoots(config: FactoryConfig = getFactoryConfig()): string[] {
+  return [config.workspaceRoot, ...config.extraRepositories];
+}
+
+/** Is this path somewhere the factory may work? (`FACTORY_ALLOW_ANY_PATH` lifts the boundary.) */
+export function isAllowedPath(candidate: string, config: FactoryConfig = getFactoryConfig()): boolean {
+  return config.allowAnyPath || allowedRoots(config).some((root) => isInside(root, candidate));
+}
+
 export interface ResolveRepoOptions {
   /** Require the folder to be a git repository (default: `true`). */
   requireGit?: boolean;
@@ -216,8 +253,9 @@ export interface ResolveRepoOptions {
 /**
  * Resolves a user-supplied repository reference into a validated absolute path.
  *
- * Accepts a bare repository name (`invest-track`), a `~`-prefixed path or an absolute path,
- * and enforces the workspace boundary so no agent can operate outside `FACTORY_WORKSPACE_ROOT`.
+ * Accepts a bare repository name (`invest-track`, found in the workspace), a `~`-prefixed path or an absolute
+ * path, and enforces the boundary (`isAllowedPath`) so no agent can operate outside the places the factory
+ * may work in: the workspace and the repositories opened on purpose.
  */
 export function resolveRepoPath(repoRef: string, options: ResolveRepoOptions = {}): string {
   const { requireGit = true } = options;
@@ -234,7 +272,7 @@ export function resolveRepoPath(repoRef: string, options: ResolveRepoOptions = {
     ? expandPath(reference, process.cwd())
     : path.join(config.workspaceRoot, reference);
 
-  if (!config.allowAnyPath && !isInside(config.workspaceRoot, resolved)) {
+  if (!isAllowedPath(resolved, config)) {
     throw new WorkspaceBoundaryError(resolved, config.workspaceRoot);
   }
   if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
