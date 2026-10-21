@@ -38,10 +38,24 @@ interface PhaseRowProps {
   comparing: boolean;
 }
 
+/**
+ * What the factory said about a phase that is still true: why it is waiting again (its run delivered without a
+ * pull request, was aborted, or its pull request was closed), or why it was not compared with the roadmap. Only
+ * the latest note, and only while the phase is in the state it explains - once it runs again, or is compared,
+ * the note is history.
+ */
+export function factoryNoteOf(phase: ProjectPhase): string | null {
+  const latest = phase.notes.filter((note) => note.source === 'factory').at(-1);
+  if (!latest) return null;
+  const explains = phase.status === 'PLANNED' || (phase.status === 'MERGED' && !phase.summary);
+  return explains ? latest.text : null;
+}
+
 function PhaseRow({ phase, busy, onStart, onEdit, onCompare, comparing }: PhaseRowProps) {
   const chip = PHASE_CHIP[phase.status];
   const requests = phase.notes.filter((note) => note.source === 'user-request');
   const changes = phase.notes.filter((note) => note.source === 'reconciler');
+  const factoryNote = factoryNoteOf(phase);
 
   return (
     <li data-testid={`phase-${phase.ordinal}`} className="space-y-1 rounded border border-slate-200 dark:border-slate-700 px-3 py-2">
@@ -74,6 +88,11 @@ function PhaseRow({ phase, busy, onStart, onEdit, onCompare, comparing }: PhaseR
       </div>
 
       {phase.goal && phase.status !== 'MERGED' && <p className="text-xs text-slate-500 dark:text-slate-400">{phase.goal}</p>}
+      {factoryNote && (
+        <p className="text-xs text-amber-700 dark:text-amber-300" data-testid={`phase-${phase.ordinal}-note`}>
+          {factoryNote}
+        </p>
+      )}
       {phase.status === 'PLANNED' && !phase.ready && phase.blockedReason && (
         <p className="text-xs text-amber-700 dark:text-amber-300" data-testid={`phase-${phase.ordinal}-blocked`}>
           {phase.blockedReason}

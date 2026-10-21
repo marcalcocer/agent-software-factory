@@ -115,6 +115,55 @@ describe('the projects of a repository', () => {
   });
 });
 
+describe('what the factory says about a phase', () => {
+  const note = (text: string) => ({ at: '2026-10-20T10:00:00Z', source: 'factory', text });
+  const RELEASED = 'A run delivered this phase on the branch factory/f0042/feat-x without opening a pull request, so it is not in review. Run it again, or skip it.';
+  const NOT_COMPARED = 'The AI could not compare the roadmap with what was delivered (Claude Code is not signed in - run `claude login` in a terminal, then try again). The remaining phases are as they were written.';
+
+  it('says why a phase is waiting again - its run delivered without a pull request', () => {
+    installFakeApi({});
+    panel([project({ phases: [phase({ id: 'p1', ordinal: 1, title: 'Screens', ready: true, notes: [note(RELEASED)] })] })]);
+
+    expect(screen.getByTestId('phase-1-note').textContent).toBe(RELEASED);
+    expect(screen.getByRole('button', { name: 'Start phase 1' })).toBeTruthy(); // and it can be run again
+  });
+
+  it('says why a delivered phase was not compared, next to the button that asks again', () => {
+    installFakeApi({});
+    panel([project({ phases: [phase({ id: 'p1', ordinal: 1, title: 'Foundation', status: 'MERGED', summary: null, notes: [note(NOT_COMPARED)] })] })]);
+
+    expect(screen.getByTestId('phase-1-note').textContent).toBe(NOT_COMPARED);
+    expect(screen.getByText('Not compared with the rest of the roadmap yet.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Compare with the roadmap' })).toBeTruthy();
+  });
+
+  it('shows only the latest note - an earlier one is history', () => {
+    installFakeApi({});
+    panel([project({ phases: [phase({ id: 'p1', ordinal: 1, title: 'Screens', ready: true, notes: [note(RELEASED), note('Pull request #8 was closed without being merged, so this phase is waiting again. Run it again, or skip it.')] })] })]);
+
+    expect(screen.getByTestId('phase-1-note').textContent).toContain('Pull request #8 was closed without being merged');
+    expect(screen.queryByText(RELEASED)).toBeNull();
+  });
+
+  it.each([
+    ['running', phase({ id: 'p1', ordinal: 1, title: 'A', status: 'RUNNING', notes: [note(RELEASED)] })],
+    ['in review', phase({ id: 'p1', ordinal: 1, title: 'A', status: 'IN_REVIEW', prNumber: 8, prUrl: 'u', notes: [note(RELEASED)] })],
+    ['delivered and compared', phase({ id: 'p1', ordinal: 1, title: 'A', status: 'MERGED', summary: 'Done.', notes: [note(NOT_COMPARED)] })],
+  ])('says nothing once the phase is %s - the note was about a state it has left', (_name, one) => {
+    installFakeApi({});
+    panel([project({ phases: [one] })]);
+
+    expect(screen.queryByTestId('phase-1-note')).toBeNull();
+  });
+
+  it('says nothing for a phase the factory has no note about', () => {
+    installFakeApi({});
+    panel([project()]);
+
+    expect(screen.queryByTestId('phase-2-note')).toBeNull();
+  });
+});
+
 describe('changing the plan', () => {
   it('skips a phase and takes it back', async () => {
     const edits: unknown[] = [];
