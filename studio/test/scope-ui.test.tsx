@@ -220,6 +220,61 @@ describe('a pull request waiting for the user to say where comments go', () => {
   });
 });
 
+describe('what the card lists of a triage once part of it is done', () => {
+  const comment = (id: string, body: string) => ({ id, source: 'ISSUE_COMMENT' as const, author: 'marc', body, createdAt: '2026-10-19T17:30:00Z', fresh: true });
+  const item = (commentId: string, category: string, reply = '') => ({
+    commentId, author: 'marc', excerpt: `excerpt of ${commentId}`, category, assignTo: 'none', reasoning: '', reply, filesInvolved: [] as string[],
+  });
+  const triaged = (pending: ReturnType<typeof comment>[], items: ReturnType<typeof item>[]) =>
+    pr({
+      status: 'triaged', message: 'No code changes needed - these are questions or notes.', scope: undefined, roadmap: undefined, pending,
+      triage: {
+        runId: 'T1', pullRequest: 8, pullRequestUrl: 'u', action: 'REPLY_ONLY', summary: 'Questions only.', commentsTriaged: items.length, repliesPosted: 0,
+        followUpTask: '', blockers: [], headBranch: 'b', baseBranch: 'main', items, commentIds: items.map((entry) => entry.commentId),
+      },
+    });
+  const QUESTIONS = [item('q1', 'QUESTION', 'Because X.'), item('q2', 'QUESTION', 'Because Y.'), item('n1', 'PRAISE_OR_NOTE', 'Thanks!')];
+
+  it('offers to answer the questions that are still open - and counts only those', () => {
+    installFakeApi({});
+    panel(watcher(triaged([comment('q1', 'Why X?'), comment('q2', 'Why Y?')], QUESTIONS)));
+
+    expect(screen.getByRole('button', { name: 'Answer 2 questions on GitHub' })).toBeTruthy();
+  });
+
+  it('does not count a question that was already answered - the triage still lists it, but there is nothing left to do', () => {
+    installFakeApi({});
+    // q1 was answered on GitHub (so it is no longer pending); q2 was not.
+    panel(watcher(triaged([comment('q2', 'Why Y?')], QUESTIONS)));
+
+    expect(screen.getByRole('button', { name: 'Answer 1 question on GitHub' })).toBeTruthy();
+  });
+
+  it('offers nothing to answer when every question has been answered', () => {
+    installFakeApi({});
+    panel(watcher(triaged([comment('c9', 'Another remark, no reply drafted')], [...QUESTIONS, item('c9', 'CODE_CHANGE_REQUEST')])));
+
+    expect(screen.queryByRole('button', { name: /Answer \d+ question/ })).toBeNull();
+  });
+
+  it('lists in the triage summary only the comments that are still open', () => {
+    installFakeApi({});
+    panel(watcher(triaged([comment('q2', 'Why Y?')], QUESTIONS)));
+
+    const card = screen.getByTestId('pr-card-8');
+    expect(within(card).getAllByText(/@marc: /).map((entry) => entry.textContent)).toEqual(['@marc: question']);
+  });
+
+  it('lists none - and no empty row - when everything the triage looked at is done with', () => {
+    installFakeApi({});
+    panel(watcher(triaged([comment('c9', 'A comment the triage has not seen')], QUESTIONS)));
+
+    const card = screen.getByTestId('pr-card-8');
+    expect(within(card).queryByText(/@marc: /)).toBeNull();
+    expect(card.querySelector('ul.flex.flex-wrap')).toBeNull();
+  });
+});
+
 describe('where the pull request\'s code is', () => {
   it('is on the card - the folder of its task, so it can be checked by hand', () => {
     installFakeApi({});

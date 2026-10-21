@@ -547,9 +547,10 @@ function PullRequestCard({ pr, actions }: { pr: WatchedPullRequest; actions: Car
     }
   };
 
-  const repliable = (triage?.items ?? []).filter(
-    (item) => item.reply?.trim() && ANSWERED_AT_TRIAGE.has(item.category),
-  ).length;
+  // Only what is still open: a question that was answered, a comment that was deferred, one that a round
+  // fixed are done with - the triage still lists them, but there is nothing left to do about them.
+  const openItems = (triage?.items ?? []).filter((item) => pr.pending.some((comment) => comment.id === item.commentId));
+  const repliable = openItems.filter((item) => item.reply?.trim() && ANSWERED_AT_TRIAGE.has(item.category)).length;
   const nextRound = pr.round + 1;
   const inProgress = pr.status === 'revising' || pr.status === 'awaiting-approval';
   const working = isWorking(pr.status);
@@ -616,9 +617,9 @@ function PullRequestCard({ pr, actions }: { pr: WatchedPullRequest; actions: Car
               ))}
             </ul>
           )}
-          {triage.items.length > 0 && (
+          {openItems.length > 0 && (
             <ul className="flex flex-wrap gap-1.5">
-              {triage.items.map((item) => (
+              {openItems.map((item) => (
                 <li
                   key={item.commentId}
                   title={item.excerpt}
