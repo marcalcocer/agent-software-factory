@@ -626,6 +626,7 @@ npm run factory -- worktree-list --repo invest-track     # every checkout: task,
 npm run factory -- worktree-gc --repo invest-track       # remove the clean ones whose PR is over
 npm run factory -- worktree-remove --repo invest-track --path <folder> [--force]
 npm run factory -- worktree-checkout --repo invest-track --path <folder>   # "check out here"
+npm run factory -- places                                # where the factory works: workspace, folder of checkouts, repositories opened on purpose
 ```
 
 `worktree-checkout` moves the task's branch from its checkout to your repository, so you can run it where

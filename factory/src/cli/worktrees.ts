@@ -7,7 +7,7 @@
 import { asBoolean, asString, errorMessageOf, printMarker, type FlagValue } from './flags.ts';
 import { checkoutHere, removeWorktree } from '../tools/worktree.ts';
 import { reportCheckouts } from '../tools/worktree-report.ts';
-import { resolveRepoPath } from '../utils/factory-config.ts';
+import { getFactoryConfig, isVolatileLocation, resolveRepoPath } from '../utils/factory-config.ts';
 
 type Flags = Record<string, FlagValue>;
 
@@ -15,6 +15,23 @@ const usage = (message: string): number => {
   process.stderr.write(`${message}\n`);
   return 2;
 };
+
+/**
+ * Where the factory works, as it will be for the next task: the folder it finds repositories by name in, the
+ * folder it makes checkouts in, and the repositories opened on purpose. The Studio asks instead of working it out
+ * itself, because the answer depends on the environment, the `.env` file and its own settings together.
+ */
+export async function commandPlaces(): Promise<number> {
+  const config = getFactoryConfig();
+  printMarker('PLACES_JSON', {
+    workspaceRoot: config.workspaceRoot,
+    worktreesDir: config.worktreesDir,
+    extraRepositories: config.extraRepositories,
+    // Under the system's temporary folder: a restart can clear it, and with it work that is not committed.
+    volatile: isVolatileLocation(config.worktreesDir),
+  });
+  return 0;
+}
 
 /** Every checkout of a repository: where, which task, what is in it, and whether its pull request is over. */
 export async function commandWorktreeList(flags: Flags): Promise<number> {

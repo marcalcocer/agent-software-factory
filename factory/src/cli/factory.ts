@@ -19,7 +19,7 @@ import path from 'node:path';
 
 import { asBoolean, asInteger, asString, errorMessageOf, printMarker, type FlagValue } from './flags.ts';
 import { commandInitiativeEdit, commandInitiativeList, commandPhaseReconcile, commandScopeDecide } from './initiatives.ts';
-import { commandWorktreeCheckout, commandWorktreeGc, commandWorktreeList, commandWorktreeRemove } from './worktrees.ts';
+import { commandPlaces, commandWorktreeCheckout, commandWorktreeGc, commandWorktreeList, commandWorktreeRemove } from './worktrees.ts';
 import { parsePipelineFlags } from './pipeline-flags.ts';
 import { parseDeliveryEditsJson } from '../utils/delivery-edits.ts';
 import { followUpRunFlags } from './pr-feedback-followup.ts';
@@ -98,6 +98,7 @@ Commands:
   initiative-edit  Rename, reword, skip or add phases of a project; set backlog items aside
   phase-reconcile  After a phase is merged, compare what it delivered with the phases still to come
   scope-decide     Say where a review comment about a later phase goes: a phase, or this pull request
+  places           Say where the factory works: the workspace, the folder of checkouts, repositories opened on purpose
   worktree-list    List the checkouts the factory made for tasks: where, which task, what is in them
   worktree-remove  Remove one checkout (the branch stays)
   worktree-gc      Remove the checkouts of tasks whose pull request is over
@@ -197,6 +198,11 @@ phase-reconcile flags:
   --phase <phaseId>         The merged phase (required)
   --force                   Compare again even if it was done already
                             Prints PHASE_RECONCILE_JSON {report}; report is null when there was nothing to do.
+
+places:
+                            Prints PLACES_JSON {workspaceRoot, worktreesDir, extraRepositories, volatile}:
+                            where repositories are found by name, where checkouts are made, which repositories
+                            were opened on purpose, and whether the checkouts' folder is somewhere a restart clears.
 
 worktree-list flags:
   --repo <name|path>        Target repository (required)
@@ -1336,6 +1342,8 @@ async function main(): Promise<number> {
       return await commandPhaseReconcile(flags);
     case 'scope-decide':
       return await commandScopeDecide(flags);
+    case 'places':
+      return await commandPlaces();
     case 'worktree-list':
       return await commandWorktreeList(flags);
     case 'worktree-remove':
