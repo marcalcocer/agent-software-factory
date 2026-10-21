@@ -362,6 +362,7 @@ const postRepliesStep = createStep({
     let repliesPosted = 0;
     const commentCategory = new Map(report.items.map((item) => [item.commentId, item.category]));
     const commentTarget = new Map(report.items.map((item) => [item.commentId, item.targetPhase ?? null]));
+    const commentPhaseTitle = new Map(report.items.map((item) => [item.commentId, item.phaseTitle ?? null]));
     const commentReply = new Map(report.items.map((item) => [item.commentId, item.reply]));
 
     // Which replies may be posted now is decided in one place (see `pr-reply.ts`): answers to
@@ -449,6 +450,9 @@ const postRepliesStep = createStep({
         ...(comment.line === undefined ? {} : { line: comment.line }),
         ...(commentCategory.get(comment.id) ? { category: commentCategory.get(comment.id) } : {}),
         ...(commentCategory.get(comment.id) === 'FUTURE_PHASE' ? { targetPhase: commentTarget.get(comment.id) } : {}),
+        ...(commentCategory.get(comment.id) === 'FUTURE_PHASE' && commentTarget.get(comment.id) === 'NEW' && commentPhaseTitle.get(comment.id)
+          ? { phaseTitle: commentPhaseTitle.get(comment.id) }
+          : {}),
         ...(commentReply.get(comment.id) ? { reply: commentReply.get(comment.id) } : {}),
       })),
       finishedAt: new Date().toISOString(),

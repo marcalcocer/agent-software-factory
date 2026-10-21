@@ -45,19 +45,21 @@ export function normalizeTriage(report: FeedbackTriageReport, roadmap: RoadmapTa
 
   const items = report.items.map((item) => {
     if (item.category !== 'FUTURE_PHASE') {
-      return item.targetPhase ? { ...item, targetPhase: null } : item;
+      return item.targetPhase || item.phaseTitle ? { ...item, targetPhase: null, phaseTitle: null } : item;
     }
     if (!roadmap) {
       corrections.push(`Comment ${item.commentId} was called a later-phase request, but this pull request has no later phase: it is new scope for this one.`);
       downgraded.push(item.excerpt);
-      return { ...item, category: 'SCOPE_CHANGE' as const, assignTo: 'pm-architect' as const, targetPhase: null };
+      return { ...item, category: 'SCOPE_CHANGE' as const, assignTo: 'pm-architect' as const, targetPhase: null, phaseTitle: null };
     }
     const asked = item.targetPhase?.trim() ?? '';
     const target = asked.toUpperCase() === 'NEW' ? 'NEW' : roadmap.planned.has(asked) ? asked : null;
     if (asked !== '' && target === null) {
       corrections.push(`Comment ${item.commentId} named "${asked}" as its phase, which is not a phase it can be deferred to; the user will choose.`);
     }
-    return { ...item, assignTo: 'none' as const, targetPhase: target };
+    // A title means something only for a phase that does not exist yet.
+    const phaseTitle = target === 'NEW' ? cleanTitle(item.phaseTitle ?? '') || null : null;
+    return { ...item, assignTo: 'none' as const, targetPhase: target, ...(item.phaseTitle !== undefined || phaseTitle ? { phaseTitle } : {}) };
   });
 
   let { overallAction, taskForNextRun, roundTitle } = report;
@@ -125,12 +127,32 @@ export interface DecideScopeOptions {
   reply?: (comment: RevisionComment, body: string) => Promise<{ posted: boolean; reason?: string }>;
 }
 
-/** A short name for a phase made of a review comment: its first sentence, kept short. */
+/** Politeness in front of what a reviewer actually asks for: "Could you also", "It would be great to be able to". */
+const FILLER =
+  /^(?:(?:please|also|and|maybe|btw)[,:]?\s+|(?:could|can|would|will)\s+you\s+(?:please\s+)?(?:also\s+)?|(?:can|could)\s+we\s+(?:also\s+)?|it\s+would\s+be\s+(?:great|nice|good|helpful|useful|awesome|cool)\s+(?:if\s+(?:we|you|it|this)\s+(?:could|can)\s+|to\s+(?:be\s+able\s+to\s+)?)|i(?:'d|\s+would)\s+(?:like|love)\s+(?:you\s+)?(?:to\s+)?(?:see\s+)?|would\s+it\s+be\s+possible\s+to\s+|we\s+(?:should|could|need\s+to)\s+)/i;
+
+const TITLE_MAX = 60;
+
+/**
+ * A phase title from free text: the first sentence, without the politeness in front of it, without closing
+ * punctuation, never cut in the middle of a word and never ending in an ellipsis. Empty when nothing is left.
+ */
+export function cleanTitle(text: string): string {
+  let title = (text.replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0] ?? '').replace(/^["'`\u201c\u201d]+|["'`\u201c\u201d]+$/g, '');
+  title = title.replace(/^[-*#>\s]+/, '');
+  for (let pass = 0; pass < 3 && FILLER.test(title); pass += 1) title = title.replace(FILLER, '');
+  title = title.replace(/[\s.!?:;,-]+$/, '');
+  if (title.length > TITLE_MAX) {
+    const cut = title.slice(0, TITLE_MAX);
+    const space = cut.lastIndexOf(' ');
+    title = (space > 20 ? cut.slice(0, space) : cut).replace(/[\s,;:-]+$/, '');
+  }
+  return title === '' ? '' : title.charAt(0).toUpperCase() + title.slice(1);
+}
+
+/** A short name for a phase made of a review comment, when the triage proposed none. */
 export function titleFromComment(body: string): string {
-  const first = body.trim().split(/\n/)[0]!.split(/(?<=[.!?])\s/)[0]!;
-  const words = first.replace(/^[-*#>\s]+/, '').replace(/[.!?:]+$/, '').trim();
-  const title = clip(words, 60).replace(/[\s,;:-]+$/, '');
-  return title === '' ? 'Review request' : title.charAt(0).toUpperCase() + title.slice(1);
+  return cleanTitle(body.trim().split(/\n/)[0] ?? '') || 'Review request';
 }
 
 const where = (comment: RevisionComment): string => (comment.path ? ` (${comment.path}${comment.line ? `:${comment.line}` : ''})` : '');
@@ -203,7 +225,7 @@ export async function decideScope(options: DecideScopeOptions): Promise<{ result
         // Read again: an earlier decision of this same request may have added a phase already.
         const last = Math.max(0, ...((await store.getInitiative(initiative.id))?.phases ?? []).map((candidate) => candidate.ordinal));
         target = await store.addPhase(initiative.id, {
-          title: titleFromComment(comment.body),
+          title: cleanTitle(comment.phaseTitle ?? '') || titleFromComment(comment.body),
           goal: clip(comment.body, 400),
           scope: [clip(comment.body, 160)],
           ...(last > 0 ? { dependsOnOrdinals: [last] } : {}),

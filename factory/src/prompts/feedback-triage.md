@@ -37,6 +37,8 @@ For **each** comment, in order:
      of the roadmap already covers it, or it is new work the roadmap should get a phase for.
      It is not wrong and not for this pull request. Set `targetPhase` to the id of the later
      phase that covers it (exactly as listed in the Roadmap), or to `"NEW"` when none does.
+     When the target is `"NEW"`, also give `phaseTitle`: a short title for the phase it should
+     become - imperative, under 60 characters, in the user's terms ("Export todos to YAML").
      The user decides where it goes; you never route it to an agent. Without a Roadmap section
      this category does not exist: use `SCOPE_CHANGE`.
    - `QUESTION` - the reviewer wants to understand something; no code change implied.

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { commandScopeDecide } from '../src/cli/initiatives.ts';
 import { composeRevision, type TriageSummary } from '../src/cli/revision.ts';
 import { renderRoadmapForTriage, phaseTask } from '../src/initiatives/phasing.ts';
-import { decideScope, normalizeTriage, titleFromComment, type RoadmapTargets } from '../src/initiatives/scope.ts';
+import { cleanTitle, decideScope, normalizeTriage, titleFromComment, type RoadmapTargets } from '../src/initiatives/scope.ts';
 import { withStore } from '../src/initiatives/store.ts';
 import { loadRegistry, markCommentsHandled, pullRequestKey, registerPullRequest, type RegisteredPullRequest } from '../src/tools/pr-registry.ts';
 import { checkPullRequests } from '../src/tools/pr-watch.ts';
@@ -55,6 +55,9 @@ describe('the triage schema', () => {
   it('knows FUTURE_PHASE and a target phase, and still reads a report from before they existed', () => {
     const now = report([item({ category: 'FUTURE_PHASE', assignTo: 'none', targetPhase: 'i0001-p2' })]);
     expect(feedbackTriageReportSchema.parse(now).items[0]).toMatchObject({ category: 'FUTURE_PHASE', targetPhase: 'i0001-p2' });
+
+    const titled = report([item({ category: 'FUTURE_PHASE', assignTo: 'none', targetPhase: 'NEW', phaseTitle: 'Export todos to YAML' })]);
+    expect(feedbackTriageReportSchema.parse(titled).items[0]!.phaseTitle).toBe('Export todos to YAML');
 
     const old = JSON.parse(JSON.stringify(report([item()])));
     expect(feedbackTriageReportSchema.parse(old).items[0]!.targetPhase).toBeUndefined();
@@ -113,6 +116,37 @@ describe('normalizeTriage', () => {
     expect(out.overallAction).toBe('RERUN_PLANNING');
     expect(out.taskForNextRun).toBe('Plan in and address these review comments, which ask for work the plan does not cover:\n- Make the settings page dark too');
     expect(corrections.join(' ')).toContain('needs a round that plans it in');
+  });
+
+  describe('the title of a phase that does not exist yet', () => {
+    const later = (over: Partial<FeedbackTriageReport['items'][number]>) => report([item({ category: 'FUTURE_PHASE', assignTo: 'none', ...over })]);
+
+    it('is kept, tidied, for a request that becomes a phase of its own', () => {
+      const { report: out } = normalizeTriage(later({ targetPhase: 'NEW', phaseTitle: '  "Export todos to YAML."  ' }), ROADMAP);
+
+      expect(out.items[0]).toMatchObject({ targetPhase: 'NEW', phaseTitle: 'Export todos to YAML' });
+    });
+
+    it('is dropped for a request that goes to a phase that exists - that phase has its own title', () => {
+      const { report: out } = normalizeTriage(later({ targetPhase: 'i0001-p2', phaseTitle: 'Something else' }), ROADMAP);
+
+      expect(out.items[0]).toMatchObject({ targetPhase: 'i0001-p2', phaseTitle: null });
+    });
+
+    it('is dropped when the target turned out not to be one, or the comment is not about a later phase', () => {
+      expect(normalizeTriage(later({ targetPhase: 'i0001-p9', phaseTitle: 'x' }), ROADMAP).report.items[0]!.phaseTitle).toBeNull();
+      expect(normalizeTriage(report([item({ category: 'CODE_CHANGE_REQUEST', phaseTitle: 'x' })]), ROADMAP).report.items[0]!.phaseTitle).toBeNull();
+    });
+
+    it('is null, not an empty string, when the agent gave nothing usable', () => {
+      expect(normalizeTriage(later({ targetPhase: 'NEW', phaseTitle: '   ' }), ROADMAP).report.items[0]!.phaseTitle).toBeNull();
+    });
+
+    it('is not invented when the agent said nothing: the report stays as it was', () => {
+      const { report: out } = normalizeTriage(later({ targetPhase: 'NEW' }), ROADMAP);
+
+      expect(out.items[0]).not.toHaveProperty('phaseTitle');
+    });
   });
 
   it('drops a target from a comment that is not about a later phase', () => {
@@ -188,14 +222,41 @@ describe('renderRoadmapForTriage', () => {
   });
 });
 
-describe('titleFromComment', () => {
+describe('titleFromComment and cleanTitle', () => {
   it.each([
     ['Make the settings page dark too. It still has white cards.', 'Make the settings page dark too'],
-    ['- also handle the empty state', 'Also handle the empty state'],
+    ['It would be great to be able to export todos to YAML too, for my other tools.', 'Export todos to YAML too, for my other tools'],
+    ['Could you add a keyboard shortcut for the theme toggle?', 'Add a keyboard shortcut for the theme toggle'],
+    ['Could you also please add pagination', 'Add pagination'],
+    ['Can we support dark mode in the charts?', 'Support dark mode in the charts'],
+    ["I'd like to see a CSV export", 'A CSV export'],
+    ['Would it be possible to cache the results?', 'Cache the results'],
+    ['- also handle the empty state', 'Handle the empty state'],
+    ['"Add a retry button."', 'Add a retry button'],
     ['  \n  ', 'Review request'],
-    ['x'.repeat(200), `${'x'.repeat(59)}\u2026`.replace(/^x/, 'X')],
   ])('%j -> %j', (body, title) => {
     expect(titleFromComment(body)).toBe(title);
+  });
+
+  it('is never cut in the middle of a word, and never ends in an ellipsis', () => {
+    const title = titleFromComment('Please make the whole settings experience consistent with the rest of the application, including the dialogs and tooltips.');
+
+    expect(title.length).toBeLessThanOrEqual(60);
+    expect(title).toBe('Make the whole settings experience consistent with the rest');
+    expect(title).not.toMatch(/[\u2026.]$/);
+  });
+
+  it('cuts a word longer than the limit rather than refuse to make a title', () => {
+    expect(titleFromComment('x'.repeat(200))).toBe(`X${'x'.repeat(59)}`);
+  });
+
+  it('is empty, not "Review request", for the model\'s title when there is nothing in it', () => {
+    expect(cleanTitle('   ')).toBe('');
+    expect(cleanTitle('"."')).toBe('');
+  });
+
+  it('keeps a title that is already good exactly as it is', () => {
+    expect(cleanTitle('Export todos to YAML')).toBe('Export todos to YAML');
   });
 });
 
@@ -253,12 +314,31 @@ describe('decideScope', () => {
   it('can make a phase of its own for it, at the end, waiting for the one before', async () => {
     const { results } = await decide([{ commentId: 'c2', decision: 'DEFER', targetPhase: 'NEW' }]);
 
-    // Named by its first sentence, without the closing punctuation; the goal keeps the words as they were.
-    expect(results[0]!.target).toMatchObject({ ordinal: 5, title: 'Could you add a keyboard shortcut for the theme toggle', created: true });
+    // Named by its first sentence without the politeness and the closing punctuation; the goal keeps the words as they were.
+    expect(results[0]!.target).toMatchObject({ ordinal: 5, title: 'Add a keyboard shortcut for the theme toggle', created: true });
     const created = (await phases())[4]!;
     expect(created).toMatchObject({ ordinal: 5, status: 'PLANNED', dependsOn: ['i0001-p4'], goal: 'Could you add a keyboard shortcut for the theme toggle?' });
     expect(created.notes[0]!.text).toContain('keyboard shortcut');
     expect(handled()).toEqual(['c2']);
+  });
+
+  it('uses the title the triage proposed for the phase it becomes - not words cut from the comment', async () => {
+    const withTitle = comments().map((comment) => (comment.id === 'c2' ? { ...comment, targetPhase: 'NEW', phaseTitle: 'Theme toggle shortcut' } : comment));
+    await markRegistered();
+
+    const { results } = await decideScope({ repoPath: REPO, number: 8, comments: withTitle, decisions: [{ commentId: 'c2', decision: 'DEFER', targetPhase: 'NEW' }] });
+
+    expect(results[0]!.target).toMatchObject({ title: 'Theme toggle shortcut', created: true });
+    expect((await phases())[4]).toMatchObject({ title: 'Theme toggle shortcut', goal: 'Could you add a keyboard shortcut for the theme toggle?' });
+  });
+
+  it('falls back to the comment\'s words when the proposed title is empty', async () => {
+    const withTitle = comments().map((comment) => (comment.id === 'c2' ? { ...comment, phaseTitle: '  ' } : comment));
+    await markRegistered();
+
+    const { results } = await decideScope({ repoPath: REPO, number: 8, comments: withTitle, decisions: [{ commentId: 'c2', decision: 'DEFER', targetPhase: 'NEW' }] });
+
+    expect(results[0]!.target!.title).toBe('Add a keyboard shortcut for the theme toggle');
   });
 
   it('two new phases in one go: each waits for the one before it', async () => {
@@ -360,7 +440,7 @@ describe('decideScope', () => {
 
       expect(posted).toEqual([
         'c1: Noted. This is not part of this pull request; it goes to phase 2 of the roadmap ("Screens"), where it will be planned.',
-        expect.stringMatching(/^c2: Noted\. This is not part of this pull request; it is now a phase of its own in the roadmap \("Could you add a keyboard shortcut for the theme toggle"\)/),
+        expect.stringMatching(/^c2: Noted\. This is not part of this pull request; it is now a phase of its own in the roadmap \("Add a keyboard shortcut for the theme toggle"\)/),
       ]);
       expect(results.map((result) => result.replied)).toEqual([true, true]);
     });

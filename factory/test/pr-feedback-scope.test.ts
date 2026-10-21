@@ -160,6 +160,29 @@ describe('the review of a phase of a project', () => {
     expect(artifact.data.corrections.join(' ')).toContain('i0001-p9');
   });
 
+  it('keeps the title the agent proposed for a phase of its own, so the decision can use it - and only for those', async () => {
+    ask.mockImplementation((async () => ({
+      object: agentSays({
+        items: [
+          item('IC_settings', { excerpt: 'dark settings', category: 'FUTURE_PHASE', assignTo: 'none', targetPhase: 'i0001-p3', phaseTitle: 'Ignored: this goes to a phase that exists' }),
+          item('IC_question', { excerpt: 'why a function', category: 'QUESTION', assignTo: 'none', reply: 'A function is enough.' }),
+          item('IC_shortcut', { excerpt: 'keyboard shortcut', category: 'FUTURE_PHASE', assignTo: 'none', targetPhase: 'NEW', phaseTitle: 'Theme toggle shortcut.' }),
+        ],
+      }),
+      text: '', requestedModel: 'mock', servedByModel: 'mock', failedOver: false,
+      usage: { inputTokens: 1, outputTokens: 1, reasoningTokens: 0, cachedTokens: 0, totalTokens: 2 }, toolCalls: 0, durationMs: 1, dryRun: false,
+    })) as never);
+
+    const result = await triage();
+
+    const comments = summaryOf(result.runId).comments as Array<Record<string, any>>;
+    expect(comments.map((comment) => [comment.id, comment.targetPhase, comment.phaseTitle])).toEqual([
+      ['IC_settings', 'i0001-p3', undefined],
+      ['IC_question', undefined, undefined],
+      ['IC_shortcut', 'NEW', 'Theme toggle shortcut'],
+    ]);
+  });
+
   it('answers the question on GitHub, and says nothing about the later-phase requests until the user decides', async () => {
     const result = await triage();
 
