@@ -693,8 +693,10 @@ const prepareRunStep = createStep({
       run.workBranch = workBranchFor(name);
       updateRunMeta(run.runId, { title: name.title, titleSource: source, branch: run.workBranch });
     } else if (mode === 'phase' && link) {
-      // A phase has its name already - nothing to ask a model.
-      const name: RunName = { title: link.phaseTitle, slug: slugify(link.phaseTitle) || 'phase', type: guessBranchType(`${link.phaseTitle} ${inputData.task}`) };
+      // A phase has its name already - nothing to ask a model. The kind of change comes from the title alone:
+      // the request carries the phase's scope, whose incidental words ("parsing without dependencies") are not
+      // what the change is.
+      const name: RunName = { title: link.phaseTitle, slug: slugify(link.phaseTitle) || 'phase', type: guessBranchType(link.phaseTitle) };
       run.title = name.title;
       run.workBranch = workBranchFor(name);
       writeArtifact({ runId: run.runId, step: 'run-namer', status: 'COMPLETED', data: { ...name, source: 'phase' } });

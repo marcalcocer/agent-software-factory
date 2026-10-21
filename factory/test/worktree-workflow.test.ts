@@ -289,6 +289,41 @@ describe('a task in the user\'s own repository (in place)', () => {
   }, 120_000);
 });
 
+describe('a run of one phase of a roadmap', () => {
+  async function roadmap() {
+    return await withStore(async (store) => {
+      const created = await store.createInitiative({ repoPath: ws.repo, title: 'Todo manager', goal: 'A todo manager', firstPhase: { title: 'Core storage module' } });
+      const set = await store.setRoadmap(created.id, {
+        title: 'Todo manager',
+        phases: [
+          { title: 'Core storage module', scope: ['src/store.js'] },
+          // The scope mentions "dependencies": it is not a change to the dependencies.
+          { title: 'Command-line interface', goal: 'A CLI with add, list and done.', scope: ['argument parsing without dependencies', 'a bin entry in package.json'] },
+          { title: 'README with full usage documentation', scope: ['README.md'] },
+        ],
+      });
+      await store.markMerged(set.phases[0]!.id);
+      await store.markMerged(set.phases[1]!.id); // so phase 3 can start
+      return set;
+    });
+  }
+
+  it.each([
+    ['i0001-p2', 'Command-line interface', 'feat'],
+    ['i0001-p3', 'README with full usage documentation', 'docs'],
+  ])('names its branch from the phase title: %s -> %s', async (phaseOrdinal, title, type) => {
+    const project = await roadmap(); // (the store is shared by the whole file, so the ids are not the same in every test)
+    const phaseId = `${project.id}-p${phaseOrdinal.at(-1)}`;
+    await withStore((store) => store.updatePhase(phaseId, { status: 'PLANNED' })); // the one under test is waiting
+
+    const { result, meta } = await runTask({ phase: { initiativeId: project.id, phaseId } }, `Phase of "Todo manager": ${title}\n\nScope:\n- argument parsing without dependencies`);
+
+    expect(delivered(result)).toBe('DELIVERED_WITHOUT_PR');
+    expect(meta).toMatchObject({ title, titleSource: 'phase', phaseId });
+    expect(meta.branch).toMatch(new RegExp(`^factory/${meta.taskId}/${type}-`));
+  }, 120_000);
+});
+
 describe('the phase a run belongs to, when the run ends without a pull request', () => {
   const phaseOf = async (initiativeId: string) => (await withStore((store) => store.getInitiative(initiativeId)))!.phases[0]!;
 
