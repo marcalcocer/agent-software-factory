@@ -596,6 +596,13 @@ repository, wherever each of them lives. Two rules for choosing one:
   The default - a hidden folder of the workspace, which has no `node_modules` - has no such problem. (A folder
   inside this repository would have it, and would also need a `.gitignore` entry of its own.)
 
+Changing the folder later leaves the checkouts already made where they are. The factory removes, moves and
+tidies only what is in its folder, so it no longer does that for those (it says "is not in the folder where the
+factory keeps its checkouts"): when their pull requests are over, remove them yourself with
+`git worktree remove <folder>`. A task that goes on in one keeps working while it is still under the workspace or
+a repository you opened; one somewhere else is refused with what to do - point `FACTORY_WORKTREES_DIR` back at
+its folder, or remove it (what was committed stays on the branch) and start the task again.
+
 Your folder is never touched: it can be on any branch, have uncommitted changes, and several tasks on
 one repository run at the same time. The run's `run.json` records `isolation` and `workPath`; the Studio
 shows them at the top of every run (and on its pull request), with *Copy path*, *Open folder*, *Remove
