@@ -4,7 +4,7 @@
  * A task used to work in the user's own repository: it switched the branch they were on, refused to start
  * when they had uncommitted changes, and two tasks on one repository could not run at once. Now each task
  * works in its own git worktree - a second checkout of the same repository, on the task's branch, in
- * `<workspace>/.factory/worktrees/<repo>/<task id>` - and the user's folder is never touched.
+ * `<worktrees folder>/<repo>/<task id>` (see `worktreesRoot`) - and the user's folder is never touched.
  *
  * This module is git and the file system only. It knows nothing about runs or pull requests, so it can be
  * tested against a real repository in a temporary folder.
@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { fastForwardFromRemote, fetchRemoteBranch, freshestStartPoint, isWorkingTreeClean, refSha } from './git-tools.ts';
-import { getFactoryConfig } from '../utils/factory-config.ts';
+import { getFactoryConfig, isAllowedPath } from '../utils/factory-config.ts';
 import { runGit, runProcess } from '../utils/shell.ts';
 
 export type Isolation = 'worktree' | 'in-place';
@@ -47,9 +47,13 @@ const firstLine = (text: string): string => text.trim().split('\n').find((line) 
 /* Where                                                                       */
 /* -------------------------------------------------------------------------- */
 
-/** Every checkout the factory makes lives under this folder - inside the workspace, so the usual jail applies. */
+/**
+ * Every checkout the factory makes lives under this folder: `FACTORY_WORKTREES_DIR`, by default
+ * `<workspace>/.factory/worktrees`. It is part of the boundary the agents' tools respect, so a task can work in
+ * its checkout wherever this is - and it holds one folder per repository, one per task inside it.
+ */
 export function worktreesRoot(): string {
-  return path.join(getFactoryConfig().workspaceRoot, '.factory', 'worktrees');
+  return getFactoryConfig().worktreesDir;
 }
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -60,12 +64,20 @@ export function worktreePathFor(mainRepoPath: string, taskId: string): string {
   return path.join(worktreesRoot(), path.basename(mainRepoPath), taskId);
 }
 
-/** Is this one of the factory's own checkouts? Anything else is never removed. */
+/**
+ * Is this one of the factory's own checkouts - a task's folder in the folder where checkouts are kept now?
+ * Anything else is never removed. (One made before that folder was changed is somewhere else, so it is not:
+ * the user's to remove.)
+ */
 export function isFactoryWorktree(candidate: string): boolean {
   const root = path.resolve(worktreesRoot());
   const relative = path.relative(root, path.resolve(candidate));
   return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative) && relative.split(path.sep).length === 2;
 }
+
+/** What is said about a folder the factory will not treat as one of its checkouts. */
+const notKeptHere = (candidate: string): string =>
+  `${candidate} is not in the folder where the factory keeps its checkouts (${worktreesRoot()}), so it was left alone.`;
 
 const canonical = (target: string): string => {
   try {
@@ -381,7 +393,18 @@ export async function ensureWorktree(options: EnsureWorktreeOptions): Promise<En
  */
 export async function reviveWorktree(meta: { isolation?: Isolation | undefined; workPath?: string | undefined; repoPath: string; branch?: string | undefined; baseBranch?: string | undefined }): Promise<{ path: string; revived: boolean; notes: string[] } | null> {
   if (meta.isolation !== 'worktree' || !meta.workPath) return null;
-  if (fs.existsSync(meta.workPath)) return { path: meta.workPath, revived: false, notes: [] };
+  if (fs.existsSync(meta.workPath)) {
+    // The folder for checkouts is a setting. One made under an earlier value may now be outside everywhere the
+    // agents' tools are allowed in: say so here, with what to do, rather than let each tool refuse it in turn.
+    if (!isAllowedPath(meta.workPath)) {
+      throw new WorktreeError(
+        `The checkout at ${meta.workPath} is outside the folders the factory works in now: checkouts are kept in ${worktreesRoot()}. ` +
+          `Set FACTORY_WORKTREES_DIR=${path.dirname(path.dirname(meta.workPath))} to go on with this task there, or remove that checkout ` +
+          `(git -C "${meta.repoPath}" worktree remove "${meta.workPath}"; what was committed stays on the branch) and start the task again.`,
+      );
+    }
+    return { path: meta.workPath, revived: false, notes: [] };
+  }
   if (!meta.branch) throw new WorktreeError(`The checkout at ${meta.workPath} is gone and this run does not say which branch it was on.`);
 
   const key = path.basename(meta.workPath);
@@ -419,7 +442,7 @@ export interface RemoveWorktreeResult {
 export async function removeWorktree(options: { mainRepoPath: string; path: string; force?: boolean }): Promise<RemoveWorktreeResult> {
   const { mainRepoPath } = options;
   if (!isFactoryWorktree(options.path)) {
-    return { removed: false, reason: 'not-ours', message: `${options.path} is not a checkout the factory made, so it was left alone.` };
+    return { removed: false, reason: 'not-ours', message: notKeptHere(options.path) };
   }
 
   await runGit(['worktree', 'prune'], { cwd: mainRepoPath });
@@ -459,7 +482,7 @@ export type CheckoutHereResult = { ok: true; branch: string } | { ok: false; err
  */
 export async function checkoutHere(options: { mainRepoPath: string; path: string }): Promise<CheckoutHereResult> {
   const { mainRepoPath } = options;
-  if (!isFactoryWorktree(options.path)) return { ok: false, error: `${options.path} is not a checkout the factory made.` };
+  if (!isFactoryWorktree(options.path)) return { ok: false, error: notKeptHere(options.path) };
 
   // Only a checkout git knows is inspected: `git status` in any other folder would answer for whatever
   // repository happens to contain it.

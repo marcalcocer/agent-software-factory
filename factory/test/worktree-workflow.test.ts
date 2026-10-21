@@ -363,6 +363,90 @@ describe('the phase a run belongs to, when the run ends without a pull request',
   }, 240_000);
 });
 
+describe('a repository outside the workspace, with the checkouts kept somewhere else', () => {
+  /** The workspace is in one place, the repository in another, and the checkouts in a third. */
+  function arrange(openIt: boolean) {
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'factory-e2e-other-workspace-'));
+    const keep = fs.mkdtempSync(path.join(os.tmpdir(), 'factory-e2e-checkouts-'));
+    vi.stubEnv('FACTORY_WORKSPACE_ROOT', elsewhere);
+    vi.stubEnv('FACTORY_WORKTREES_DIR', keep);
+    vi.stubEnv('FACTORY_EXTRA_REPOS', openIt ? ws.repo : '');
+    return { elsewhere, keep, cleanup: () => [elsewhere, keep].forEach((folder) => fs.rmSync(folder, { recursive: true, force: true })) };
+  }
+
+  it('is refused when nobody opened it - and the refusal says how', async () => {
+    const places = arrange(false);
+    try {
+      const { result } = await runTask();
+
+      expect(result.status).toBe('failed');
+      expect(String((result as { error?: Error }).error?.message)).toContain(`Path "${ws.repo}" is outside the places the factory may work in`);
+      expect(String((result as { error?: Error }).error?.message)).toContain('FACTORY_EXTRA_REPOS');
+      expect(fs.readdirSync(places.keep)).toEqual([]); // nothing was made
+    } finally {
+      places.cleanup();
+    }
+  }, 120_000);
+
+  it('works once it is opened: the task runs in a checkout under the chosen folder, and your repository is not touched', async () => {
+    const places = arrange(true);
+    try {
+      const before = ws.git('rev-parse', 'HEAD').trim();
+      const { runId, result, meta } = await runTask();
+
+      expect(delivered(result)).toBe('DELIVERED_WITHOUT_PR');
+      expect(meta.workPath).toBe(path.join(places.keep, 'app', meta.taskId));
+      expect(meta).toMatchObject({ isolation: 'worktree', repoPath: ws.repo });
+      expect(ws.gitIn(meta.workPath, 'ls-tree', '-r', '--name-only', 'HEAD').split('\n')).toContain(`src/change-${runId.slice(-4)}.js`);
+      expect(branchOf(ws.repo)).toBe('main');
+      expect(ws.git('rev-parse', 'HEAD').trim()).toBe(before);
+      expect(ws.git('status', '--porcelain').trim()).toBe('');
+      expect(fs.existsSync(path.join(places.elsewhere, '.factory'))).toBe(false); // nothing went to the workspace
+    } finally {
+      places.cleanup();
+    }
+  }, 120_000);
+
+  it('hands the agents a checkout the boundary accepts - they are confined to it, wherever it is kept', async () => {
+    const places = arrange(true);
+    try {
+      const { meta } = await runTask();
+      const { resolveRepoPath, isInside } = await import('../src/utils/factory-config.ts');
+      // The case this is about: the checkout is NOT in the workspace, so only the boundary's own allowance admits it.
+      expect(isInside(places.keep, meta.workPath)).toBe(true);
+      expect(isInside(places.elsewhere, meta.workPath)).toBe(false);
+
+      for (const role of ['pm-architect', 'developer', 'qa-tester', 'reviewer']) {
+        const seen = calls(role);
+        expect(seen.length, role).toBeGreaterThan(0);
+        for (const call of seen) {
+          expect(call.repoPath, role).toBe(meta.workPath);
+          // The very check every tool of an agent makes before it touches anything.
+          expect(resolveRepoPath(call.repoPath, { requireGit: true }), role).toBe(call.repoPath);
+        }
+      }
+      // ...and only that: the repository next door is not theirs.
+      expect(() => resolveRepoPath(path.join(ws.workspace, '..'), { requireGit: false })).toThrow('is outside the places the factory may work in');
+    } finally {
+      places.cleanup();
+    }
+  }, 120_000);
+
+  it('is listed with its checkout - the commands that show the user where the work is find it', async () => {
+    const places = arrange(true);
+    try {
+      const { meta } = await runTask();
+      const { reportCheckouts } = await import('../src/tools/worktree-report.ts');
+
+      const found = await reportCheckouts(ws.repo);
+
+      expect(found.map((checkout) => [checkout.taskId, checkout.path, checkout.registered])).toEqual([[meta.taskId, meta.workPath, true]]);
+    } finally {
+      places.cleanup();
+    }
+  }, 120_000);
+});
+
 describe('what it will not do', () => {
   it('does not quietly work in the user\'s folder when the checkout cannot be made', async () => {
     // The user has the branch the task would use checked out in their own folder.

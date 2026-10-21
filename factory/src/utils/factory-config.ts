@@ -77,6 +77,11 @@ export interface FactoryConfig {
    * it lives, and the agents working on it are confined to it like to any other.
    */
   extraRepositories: string[];
+  /**
+   * Where each task's checkout is made (`FACTORY_WORKTREES_DIR`). By default `<workspaceRoot>/.factory/worktrees`.
+   * It is part of the boundary: the agents work in there.
+   */
+  worktreesDir: string;
   /** Lift the boundary altogether (`FACTORY_ALLOW_ANY_PATH`, disabled by default). */
   allowAnyPath: boolean;
   /** Directory where run traces are written (`<logDir>/<runId>/`). */
@@ -96,7 +101,7 @@ export interface FactoryConfig {
   diffBudgetChars: number;
   /**
    * Where a task works unless it says otherwise (`FACTORY_ISOLATION`): `worktree`, a checkout of its own
-   * under `<workspace>/.factory/worktrees`, or `in-place`, the user's repository.
+   * (see `worktreesDir`), or `in-place`, the user's repository.
    */
   isolation: 'worktree' | 'in-place';
   /** Files (relative to the repository) copied into each checkout - only ones git ignores (`FACTORY_WORKTREE_COPY`). */
@@ -149,6 +154,14 @@ export function parsePathList(raw: string | undefined): string[] {
   return [...found];
 }
 
+/**
+ * Is this folder somewhere a restart can clear? Anything under the system's temporary folder is: work that is
+ * only there (a checkout with uncommitted changes) would be lost with it.
+ */
+export function isVolatileLocation(folder: string, temporaryFolders: readonly string[] = [os.tmpdir(), '/tmp']): boolean {
+  return temporaryFolders.some((tmp) => isInside(path.resolve(tmp), path.resolve(folder)));
+}
+
 function envString(key: string, fallback: string): string {
   const value = process.env[key];
   return value === undefined || value.trim() === '' ? fallback : value.trim();
@@ -181,14 +194,17 @@ export function getFactoryConfig(): FactoryConfig {
     envString('FACTORY_CLAUDE_CLI_BASE_URL', '') || envString('ANTHROPIC_BASE_URL', '');
   const maxBudget = Number.parseFloat(envString('FACTORY_CLAUDE_CLI_MAX_BUDGET_USD', ''));
 
+  const workspaceRoot = expandPath(envString('FACTORY_WORKSPACE_ROOT', path.join(os.homedir(), 'workspace')));
+
   return {
     provider,
     ...(claudeCliBaseUrl === '' ? {} : { claudeCliBaseUrl }),
     claudeCliTimeoutMs: envInteger('FACTORY_CLAUDE_CLI_TIMEOUT_MS', 10 * 60 * 1000),
     ...(Number.isFinite(maxBudget) && maxBudget > 0 ? { claudeCliMaxBudgetUsd: maxBudget } : {}),
     claudeCliFileTools: envBoolean('FACTORY_CLAUDE_CLI_FILE_TOOLS', true),
-    workspaceRoot: expandPath(envString('FACTORY_WORKSPACE_ROOT', path.join(os.homedir(), 'workspace'))),
+    workspaceRoot,
     extraRepositories: parsePathList(process.env.FACTORY_EXTRA_REPOS),
+    worktreesDir: expandPath(envString('FACTORY_WORKTREES_DIR', path.join(workspaceRoot, '.factory', 'worktrees'))),
     allowAnyPath: envBoolean('FACTORY_ALLOW_ANY_PATH', false),
     logDir: expandPath(envString('FACTORY_LOG_DIR', './logs')),
     logLevel: ['debug', 'info', 'warn', 'error'].includes(logLevel) ? logLevel : 'info',
@@ -233,11 +249,11 @@ export function isInside(parent: string, candidate: string): boolean {
 }
 
 /**
- * Everywhere the factory may work: the workspace, and each repository the user opened on purpose. The agents'
- * tools are confined to these - a path anywhere else is refused.
+ * Everywhere the factory may work: the workspace, the folder of task checkouts, and each repository the user
+ * opened on purpose. The agents' tools are confined to these - a path anywhere else is refused.
  */
 export function allowedRoots(config: FactoryConfig = getFactoryConfig()): string[] {
-  return [config.workspaceRoot, ...config.extraRepositories];
+  return [config.workspaceRoot, config.worktreesDir, ...config.extraRepositories];
 }
 
 /** Is this path somewhere the factory may work? (`FACTORY_ALLOW_ANY_PATH` lifts the boundary.) */
@@ -255,7 +271,7 @@ export interface ResolveRepoOptions {
  *
  * Accepts a bare repository name (`invest-track`, found in the workspace), a `~`-prefixed path or an absolute
  * path, and enforces the boundary (`isAllowedPath`) so no agent can operate outside the places the factory
- * may work in: the workspace and the repositories opened on purpose.
+ * may work in: the workspace, its task checkouts and the repositories opened on purpose.
  */
 export function resolveRepoPath(repoRef: string, options: ResolveRepoOptions = {}): string {
   const { requireGit = true } = options;

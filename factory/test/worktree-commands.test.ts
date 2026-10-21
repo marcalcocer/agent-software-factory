@@ -241,7 +241,7 @@ describe('check out here', () => {
   });
 
   it('will not move anything but the factory\'s own checkouts', async () => {
-    expect(await checkoutHere({ mainRepoPath: ws.repo, path: ws.repo })).toEqual({ ok: false, error: expect.stringContaining('is not a checkout the factory made') });
+    expect(await checkoutHere({ mainRepoPath: ws.repo, path: ws.repo })).toEqual({ ok: false, error: expect.stringContaining('is not in the folder where the factory keeps its checkouts') });
   });
 
   it('says so when the checkout is already gone, and points at the branch', async () => {

@@ -4,7 +4,17 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { allowedRoots, isAllowedPath, parsePathList, resolveRepoPath, WorkspaceBoundaryError } from '../src/utils/factory-config.ts';
+import {
+  allowedRoots,
+  getFactoryConfig,
+  isAllowedPath,
+  isVolatileLocation,
+  parsePathList,
+  PROJECT_ROOT,
+  resolveRepoPath,
+  WorkspaceBoundaryError,
+} from '../src/utils/factory-config.ts';
+import { worktreePathFor, worktreesRoot } from '../src/tools/worktree.ts';
 
 /** A world of real folders: a workspace, a repository inside it, and repositories elsewhere. */
 let world: string;
@@ -12,6 +22,7 @@ let workspace: string;
 let inside: string;
 let outside: string;
 let elsewhere: string;
+let checkouts: string;
 
 const repository = (folder: string): string => {
   fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
@@ -24,8 +35,10 @@ beforeEach(() => {
   inside = repository(path.join(workspace, 'inside-app'));
   outside = repository(path.join(world, 'projects', 'outside-app'));
   elsewhere = repository(path.join(world, 'projects', 'elsewhere-app'));
+  checkouts = path.join(world, 'keep', 'checkouts');
   vi.stubEnv('FACTORY_WORKSPACE_ROOT', workspace);
   vi.stubEnv('FACTORY_EXTRA_REPOS', '');
+  vi.stubEnv('FACTORY_WORKTREES_DIR', '');
   vi.stubEnv('FACTORY_ALLOW_ANY_PATH', '');
 });
 afterEach(() => fs.rmSync(world, { recursive: true, force: true }));
@@ -119,16 +132,81 @@ describe('parsePathList', () => {
   });
 });
 
+describe('where the checkouts are kept', () => {
+  it('is, by default, a hidden folder of the workspace', () => {
+    expect(getFactoryConfig().worktreesDir).toBe(path.join(workspace, '.factory', 'worktrees'));
+    expect(worktreesRoot()).toBe(path.join(workspace, '.factory', 'worktrees'));
+    expect(worktreePathFor(inside, 'f0042')).toBe(path.join(workspace, '.factory', 'worktrees', 'inside-app', 'f0042'));
+  });
+
+  it('follows the workspace when that moves', () => {
+    const elsewhereWorkspace = path.join(world, 'other-workspace');
+    vi.stubEnv('FACTORY_WORKSPACE_ROOT', elsewhereWorkspace);
+
+    expect(worktreesRoot()).toBe(path.join(elsewhereWorkspace, '.factory', 'worktrees'));
+  });
+
+  it('is wherever the user says - one folder for every repository, wherever each of them is', () => {
+    vi.stubEnv('FACTORY_WORKTREES_DIR', checkouts);
+    vi.stubEnv('FACTORY_EXTRA_REPOS', outside);
+
+    expect(worktreesRoot()).toBe(checkouts);
+    expect(worktreePathFor(outside, 'f0007')).toBe(path.join(checkouts, 'outside-app', 'f0007'));
+    expect(worktreePathFor(inside, 'f0008')).toBe(path.join(checkouts, 'inside-app', 'f0008'));
+  });
+
+  it('is part of the boundary, so the agents can work in a checkout kept outside the workspace', () => {
+    vi.stubEnv('FACTORY_WORKTREES_DIR', checkouts);
+    const checkout = path.join(checkouts, 'outside-app', 'f0007');
+    repository(checkout);
+
+    expect(resolveRepoPath(checkout, { requireGit: true })).toBe(checkout);
+    expect(() => resolveRepoPath(repository(path.join(world, 'keep', 'not-checkouts')))).toThrow(WorkspaceBoundaryError);
+  });
+
+  it('resolves a relative setting against the factory, like the log folder', () => {
+    vi.stubEnv('FACTORY_WORKTREES_DIR', 'worktrees');
+
+    expect(worktreesRoot()).toBe(path.join(PROJECT_ROOT, 'worktrees'));
+  });
+
+  it('expands ~', () => {
+    vi.stubEnv('FACTORY_WORKTREES_DIR', '~/.factory-checkouts');
+
+    expect(worktreesRoot()).toBe(path.join(os.homedir(), '.factory-checkouts'));
+  });
+});
+
 describe('allowedRoots and isAllowedPath', () => {
-  it('are the workspace and each repository opened on purpose', () => {
+  it('are the workspace, the checkouts and each repository opened on purpose', () => {
+    vi.stubEnv('FACTORY_WORKTREES_DIR', checkouts);
     vi.stubEnv('FACTORY_EXTRA_REPOS', [outside, elsewhere].join(path.delimiter));
 
-    expect(allowedRoots()).toEqual([workspace, outside, elsewhere]);
-    for (const place of [workspace, inside, outside, path.join(elsewhere, 'src')]) {
+    expect(allowedRoots()).toEqual([workspace, checkouts, outside, elsewhere]);
+    for (const place of [workspace, inside, checkouts, path.join(checkouts, 'x', 'y'), outside, path.join(elsewhere, 'src')]) {
       expect(isAllowedPath(place), place).toBe(true);
     }
     for (const place of [world, path.join(world, 'projects'), os.homedir(), '/', '/etc', `${outside}-two`]) {
       expect(isAllowedPath(place), place).toBe(false);
     }
+  });
+});
+
+describe('isVolatileLocation', () => {
+  it('knows a place a restart can clear', () => {
+    expect(isVolatileLocation('/tmp/factory-demo/workspace')).toBe(true);
+    expect(isVolatileLocation(path.join(os.tmpdir(), 'x'))).toBe(true);
+    expect(isVolatileLocation('/tmp')).toBe(true);
+  });
+
+  it('knows a place that stays - and is not fooled by a name that merely starts like a temporary folder', () => {
+    expect(isVolatileLocation(path.join(os.homedir(), 'workspace', '.factory'))).toBe(false);
+    expect(isVolatileLocation('/tmpfiles/x')).toBe(false);
+    expect(isVolatileLocation('/var/data/checkouts')).toBe(false);
+  });
+
+  it('can be told what the temporary folders are', () => {
+    expect(isVolatileLocation('/scratch/x', ['/scratch'])).toBe(true);
+    expect(isVolatileLocation('/tmp/x', ['/scratch'])).toBe(false);
   });
 });

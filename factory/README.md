@@ -478,10 +478,11 @@ prompts:
 
 - **Workspace jail** — every path is resolved through `resolveRepoPath` /
   `resolveInsideRepo`: traversal outside the target repository is rejected, and so is anything
-  outside the places the factory may work in: the workspace (`FACTORY_WORKSPACE_ROOT`) and the
-  repositories you opened on purpose (`FACTORY_EXTRA_REPOS` - the Studio lists every repository you
-  add). A repository somewhere else is refused, and the refusal says how to open it;
-  `FACTORY_ALLOW_ANY_PATH=true` lifts the boundary altogether. Direct access to `.git` is blocked.
+  outside the places the factory may work in: the workspace (`FACTORY_WORKSPACE_ROOT`), the folder
+  of task checkouts (`FACTORY_WORKTREES_DIR`) and the repositories you opened on purpose
+  (`FACTORY_EXTRA_REPOS` - the Studio lists every repository you add). A repository somewhere else
+  is refused, and the refusal says how to open it; `FACTORY_ALLOW_ANY_PATH=true` lifts the boundary
+  altogether. Direct access to `.git` is blocked.
 - **No shell** — commands run with `shell: false` through an allow-list of executables.
   Shell metacharacters (`;`, `&&`, `|`, `>`, backticks, `$(`) are rejected, so command chaining
   and injection are impossible. Extend the allow-list with
@@ -580,6 +581,20 @@ its own **git worktree** - a second checkout of the same repository, on the task
 ```text
 <workspace>/.factory/worktrees/<repo>/<task id>        e.g.  ~/workspace/.factory/worktrees/invest-track/f0042
 ```
+
+That folder is `FACTORY_WORKTREES_DIR` (the Studio's Settings has the same field); it is one folder for every
+repository, wherever each of them lives. Two rules for choosing one:
+
+- **Somewhere that stays.** Work that is only in a checkout - uncommitted changes - is lost if its folder is.
+  Anything under `/tmp` is cleared by a restart, so `doctor` warns when the folder is under the system's
+  temporary folder (the committed work is on the branch, in your repository, and survives).
+- **Not inside a project that has `node_modules`** - the factory repository included. npm puts the
+  `node_modules/.bin` of *every* parent folder on the `PATH` of a script, and Node resolves imports upward, so
+  a checkout below such a folder would find the parent's packages and tools: a task whose tests import
+  something it never declared would *pass* in the checkout and fail in your CI. (Checked: a script in a folder
+  below one with `node_modules` ran the parent's tool and loaded its package; with nothing above, both failed.)
+  The default - a hidden folder of the workspace, which has no `node_modules` - has no such problem. (A folder
+  inside this repository would have it, and would also need a `.gitignore` entry of its own.)
 
 Your folder is never touched: it can be on any branch, have uncommitted changes, and several tasks on
 one repository run at the same time. The run's `run.json` records `isolation` and `workPath`; the Studio
@@ -1073,6 +1088,7 @@ All variables are optional unless stated. See `.env.example`.
 | `FACTORY_CLI_ESCALATION_MODEL` | `sonnet` | Model a cheap-tier call escalates to on schema failure |
 | `FACTORY_WORKSPACE_ROOT` | `~/workspace` | Where repositories are found by name; part of the boundary for all file operations |
 | `FACTORY_EXTRA_REPOS` | — | Repositories outside the workspace that you opened on purpose: absolute paths, separated like `PATH` (`:`). The Studio sets it for every repository you add. Agents are confined to each, like to a workspace repository |
+| `FACTORY_WORKTREES_DIR` | `<workspace>/.factory/worktrees` | Where each task's checkout is made (see [Where a task works](#where-a-task-works-its-own-checkout)); part of the boundary. Keep it somewhere that survives a restart |
 | `FACTORY_ALLOW_ANY_PATH` | `false` | Lift the boundary altogether (not recommended; prefer `FACTORY_EXTRA_REPOS`) |
 | `FACTORY_MAX_ATTEMPTS` | `3` | Iterations before human escalation |
 | `FACTORY_COMMAND_TIMEOUT_MS` | `900000` | Per-command timeout |
@@ -1080,7 +1096,7 @@ All variables are optional unless stated. See `.env.example`.
 | `FACTORY_DIFF_BUDGET_CHARS` | `120000` | Characters of a change's diff one agent is shown (about 4 per token). A larger change is condensed, never cut silently: the agent gets a manifest of every changed file and what was left out, and can read the complete patch from the run's `context/` directory. QA is shown at most 60000, tests first |
 | `FACTORY_EXTRA_ALLOWED_COMMANDS` | — | Extra executables (comma separated) |
 | `FACTORY_ALLOW_PUSH` / `FACTORY_ALLOW_PR` | `true` | Gate push / PR creation |
-| `FACTORY_ISOLATION` | `worktree` | Where a task works unless `--isolation` says otherwise: `worktree` (a checkout of its own under `<workspace>/.factory/worktrees`) or `in-place` (your repository) |
+| `FACTORY_ISOLATION` | `worktree` | Where a task works unless `--isolation` says otherwise: `worktree` (a checkout of its own, in `FACTORY_WORKTREES_DIR`) or `in-place` (your repository) |
 | `FACTORY_WORKTREE_COPY` | — | Files (comma separated, relative to the repository) copied into each checkout, e.g. `.env`; only ones git ignores |
 | `FACTORY_NON_INTERACTIVE` | `false` | Never suspend (CI mode) |
 | `FACTORY_DRY_RUN` | `false` | Stub every LLM call, mutate nothing |

@@ -32,6 +32,9 @@ afterEach(() => ws.cleanup());
 const start = (overrides: Partial<Parameters<typeof ensureWorktree>[0]> = {}) =>
   ensureWorktree({ mainRepoPath: ws.repo, taskId: 'f0001', branch: 'factory/f0001/feat-x', baseBranch: 'main', freshStart: true, ...overrides });
 
+/** A place for checkouts outside the workspace (removed with it): the setting can point anywhere. */
+const keptAt = (name: string) => path.join(ws.workspace, '..', `checkouts-${name}`);
+
 const branchOf = (cwd: string) => ws.gitIn(cwd, 'rev-parse', '--abbrev-ref', 'HEAD').trim();
 const statusOf = (cwd: string) => ws.gitIn(cwd, 'status', '--porcelain').trim();
 
@@ -39,6 +42,14 @@ describe('where checkouts live', () => {
   it('is <workspace>/.factory/worktrees/<repo>/<task>', () => {
     expect(worktreesRoot()).toBe(path.join(ws.workspace, '.factory', 'worktrees'));
     expect(worktreePathFor(ws.repo, 'f0042')).toBe(path.join(ws.workspace, '.factory', 'worktrees', 'app', 'f0042'));
+  });
+
+  it('is the folder the user chose, once they chose one - and what is in the default folder is then not its own', () => {
+    vi.stubEnv('FACTORY_WORKTREES_DIR', keptAt('mine'));
+
+    expect(worktreePathFor(ws.repo, 'f0042')).toBe(path.join(keptAt('mine'), 'app', 'f0042'));
+    expect(isFactoryWorktree(path.join(keptAt('mine'), 'app', 'f0042'))).toBe(true);
+    expect(isFactoryWorktree(path.join(ws.workspace, '.factory', 'worktrees', 'app', 'f0042'))).toBe(false);
   });
 
   it.each(['', '../escape', 'a/b', '.hidden', 'x y'])('refuses "%s" as a task id: it could not be a folder name', (id) => {
@@ -424,6 +435,30 @@ describe('removeWorktree', () => {
     expect(fs.existsSync(path.join(target, 'precious.txt'))).toBe(true);
   });
 
+  it('removes a checkout in the folder the user chose, like any other', async () => {
+    vi.stubEnv('FACTORY_WORKTREES_DIR', keptAt('mine'));
+    const made = await start();
+    expect(made.path).toBe(path.join(keptAt('mine'), 'app', 'f0001'));
+
+    expect(await removeWorktree({ mainRepoPath: ws.repo, path: made.path })).toEqual({ removed: true });
+
+    expect(fs.existsSync(made.path)).toBe(false);
+    expect((await listWorktrees(ws.repo)).filter((entry) => !entry.main)).toEqual([]);
+  });
+
+  it('leaves alone a checkout made before the folder for them was changed - and says where checkouts are kept now', async () => {
+    vi.stubEnv('FACTORY_WORKTREES_DIR', keptAt('before'));
+    const made = await start();
+    fs.writeFileSync(path.join(made.path, 'unsaved.txt'), 'uncommitted work\n');
+    vi.stubEnv('FACTORY_WORKTREES_DIR', keptAt('after'));
+
+    const result = await removeWorktree({ mainRepoPath: ws.repo, path: made.path, force: true });
+
+    expect(result).toMatchObject({ removed: false, reason: 'not-ours' });
+    expect(result.message).toContain(`${made.path} is not in the folder where the factory keeps its checkouts (${keptAt('after')})`);
+    expect(fs.readFileSync(path.join(made.path, 'unsaved.txt'), 'utf8')).toBe('uncommitted work\n');
+  });
+
   it('is a success when the checkout is already gone', async () => {
     const made = await start();
     fs.rmSync(made.path, { recursive: true, force: true });
@@ -469,6 +504,31 @@ describe('reviveWorktree: a run that goes on after its checkout was removed', ()
     expect(back).toMatchObject({ path: made.path, revived: true });
     expect(fs.readFileSync(path.join(made.path, 'done.txt'), 'utf8')).toBe('committed\n');
     expect(branchOf(made.path)).toBe('factory/f0001/feat-x');
+  });
+
+  it('goes on in a checkout made before the folder for them was changed, while that is still somewhere the factory works', async () => {
+    const made = await start(); // in <workspace>/.factory/worktrees
+    vi.stubEnv('FACTORY_WORKTREES_DIR', keptAt('after'));
+
+    expect(await reviveWorktree(meta(made))).toEqual({ path: made.path, revived: false, notes: [] });
+  });
+
+  it('does not hand the agents a checkout that is outside everywhere the factory works now - it says what to do instead', async () => {
+    vi.stubEnv('FACTORY_WORKTREES_DIR', keptAt('before'));
+    const made = await start();
+    vi.stubEnv('FACTORY_WORKTREES_DIR', keptAt('after'));
+
+    const error = await reviveWorktree(meta(made)).then(
+      () => null,
+      (thrown: Error) => thrown,
+    );
+
+    expect(error).toBeInstanceOf(WorktreeError);
+    expect(error?.message).toContain(`The checkout at ${made.path} is outside the folders the factory works in now`);
+    expect(error?.message).toContain(`checkouts are kept in ${keptAt('after')}`);
+    expect(error?.message).toContain(`FACTORY_WORKTREES_DIR=${keptAt('before')}`);
+    expect(error?.message).toContain(`git -C "${ws.repo}" worktree remove "${made.path}"`);
+    expect(fs.existsSync(made.path)).toBe(true); // nothing was touched
   });
 
   it('says so when it cannot: no branch recorded, or checkouts are kept somewhere else now', async () => {

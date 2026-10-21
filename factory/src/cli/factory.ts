@@ -117,10 +117,11 @@ run flags:
   --phasing <auto|on|off>   Whether the architect may split a big request into phases (default: auto -
                             only when it is too big for one reviewable pull request)
   --isolation <worktree|in-place>
-                            Where the task works: a checkout of its own under
-                            <workspace>/.factory/worktrees (default; your repository is not touched and
-                            may have uncommitted changes), or your repository itself. A further round
-                            keeps the place its task started in. FACTORY_ISOLATION sets the default.
+                            Where the task works: a checkout of its own (default; your repository is
+                            not touched and may have uncommitted changes), in FACTORY_WORKTREES_DIR
+                            (default <workspace>/.factory/worktrees), or your repository itself. A
+                            further round keeps the place its task started in. FACTORY_ISOLATION sets
+                            the default.
   --base-branch <branch>    Branch to start from (default: the checked-out branch - or the
                             repository's default branch when that one is a branch the factory
                             made for an earlier task, so tasks never stack on each other)
@@ -865,7 +866,7 @@ async function commandShow(flags: Record<string, FlagValue>): Promise<number> {
 }
 
 async function commandDoctor(flags: Record<string, FlagValue>): Promise<number> {
-  const { getFactoryConfig } = await import('../utils/factory-config.ts');
+  const { getFactoryConfig, isVolatileLocation } = await import('../utils/factory-config.ts');
   const { AGENT_ROLES, checkProviderCredentials, describeModelChain } = await import(
     '../utils/model-router.ts'
   );
@@ -876,6 +877,7 @@ async function commandDoctor(flags: Record<string, FlagValue>): Promise<number> 
   printJson('Factory config', {
     provider: config.provider,
     workspaceRoot: config.workspaceRoot,
+    worktreesDir: config.worktreesDir,
     extraRepositories: config.extraRepositories,
     logDir: config.logDir,
     maxAttempts: config.maxAttempts,
@@ -947,6 +949,15 @@ async function commandDoctor(flags: Record<string, FlagValue>): Promise<number> 
   for (const repository of config.extraRepositories) {
     const there = fs.existsSync(path.join(repository, '.git'));
     process.stdout.write(`  ${there ? '[ok]     ' : '[missing]'} ${repository} (opened on purpose, outside the workspace)\n`);
+  }
+
+  heading('Task checkouts');
+  process.stdout.write(`  ${fs.existsSync(config.worktreesDir) ? '[ok]     ' : '[new]    '} ${config.worktreesDir}\n`);
+  if (isVolatileLocation(config.worktreesDir)) {
+    process.stdout.write(
+      '  [warn]    this is under the system\'s temporary folder: a restart can clear it, and with it any work in a\n' +
+        '            checkout that is not committed. Set FACTORY_WORKTREES_DIR to a folder that stays.\n',
+    );
   }
 
   return (credentials.ready.length > 0 && cliHealthy) || config.dryRun ? 0 : 1;
