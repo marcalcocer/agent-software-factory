@@ -11,6 +11,7 @@ import type {
   SettledPhase,
   WatchedPullRequest,
 } from '../../shared/types';
+import { errorText } from '../lib/errorText';
 import { WorkingCopyLine } from './WorkingCopy';
 
 /* -------------------------------------------------------------------------- */
@@ -538,10 +539,7 @@ function PullRequestCard({ pr, actions }: { pr: WatchedPullRequest; actions: Car
     try {
       await work();
     } catch (err) {
-      // Electron wraps an error thrown in the main process as "Error invoking remote method '...': Error: <message>".
-      setError(
-        (err instanceof Error ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''),
-      );
+      setError(errorText(err));
     } finally {
       setBusy(null);
     }

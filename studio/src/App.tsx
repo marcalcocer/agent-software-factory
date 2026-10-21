@@ -10,6 +10,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { PipelineView } from './components/PipelineView';
 import { ConfirmModal } from './components/ConfirmModal';
 import { PullRequestsPanel } from './components/PullRequestsPanel';
+import { errorText } from './lib/errorText';
 import { titleFromTask } from './lib/runTitle';
 import { applyTheme, watchSystemTheme, type ThemeSetting } from './theme';
 
@@ -283,7 +284,7 @@ function App() {
       setProjectsByRepo((previous) => ({ ...previous, [repoPath]: list }));
       setProjectsError(null);
     } catch (err) {
-      setProjectsError(err instanceof Error ? err.message : String(err));
+      setProjectsError(errorText(err));
     }
   };
 
@@ -384,7 +385,7 @@ function App() {
       }
     } catch (error) {
       console.error('Failed to browse for repository:', error);
-      setError(`Failed to add repository: ${error instanceof Error ? error.message : String(error)}`);
+      setError(`Failed to add repository: ${errorText(error)}`);
     }
   };
 
@@ -441,7 +442,7 @@ function App() {
       setTaskDrafts({ ...taskDrafts, [activeTab]: '' });
     } catch (err) {
       console.error('Failed to run task:', err);
-      setError(`Task execution failed: ${err instanceof Error ? err.message : String(err)}`);
+      setError(`Task execution failed: ${errorText(err)}`);
       setRunLoading(false); // Only stop loading on error during submission
       setRunningRepo(null);
     }
@@ -483,7 +484,7 @@ function App() {
       await window.api.invoke('factory:rename-run', runId, title);
     } catch (err) {
       if (before) updateRun(runId, { title: before.title, titleSource: before.titleSource });
-      setError(`Rename failed: ${err instanceof Error ? err.message : String(err)}`);
+      setError(`Rename failed: ${errorText(err)}`);
     }
   };
 
@@ -507,7 +508,7 @@ function App() {
       setDeleteConfirmRunId(null);
     } catch (err) {
       console.error('Failed to delete run:', err);
-      setError(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+      setError(`Delete failed: ${errorText(err)}`);
       setDeleteConfirmRunId(null);
     }
   };
@@ -592,7 +593,7 @@ function App() {
       setRemoveConfirmRepoName(null);
     } catch (err) {
       console.error('Failed to remove repo:', err);
-      setError(`Remove failed: ${err instanceof Error ? err.message : String(err)}`);
+      setError(`Remove failed: ${errorText(err)}`);
       setRemoveConfirmRepoName(null);
     }
   };
@@ -610,7 +611,7 @@ function App() {
       await window.api.invoke('factory:resume', { runId });
     } catch (err) {
       console.error('Failed to resume run:', err);
-      setError(`Resume failed: ${err instanceof Error ? err.message : String(err)}`);
+      setError(`Resume failed: ${errorText(err)}`);
       setRunLoading(false);
       setRunningRepo(null);
       setActiveRunId(null);
@@ -637,7 +638,7 @@ function App() {
       }
     } catch (error) {
       console.error('Login check failed:', error);
-      setError(`Error: ${error instanceof Error ? error.message : String(error)}`);
+      setError(`Error: ${errorText(error)}`);
     } finally {
       setLoginLoading(false);
     }

@@ -13,10 +13,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 import type { WorkCopy, WorktreeInfo } from '@shared/types';
 import { ConfirmModal } from './ConfirmModal';
+import { errorText } from '../lib/errorText';
 
-/** Electron wraps an error thrown in the main process; the user should read only what it said. */
-const messageOf = (err: unknown): string =>
-  (err instanceof Error ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
 /** Copies text; false when the platform would not (the caller says so instead of pretending). */
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -112,7 +110,7 @@ export function WorkingCopyBar({ runId, refreshKey, onChanged }: WorkingCopyBarP
       const outcome = await work();
       if (outcome) setNotice(outcome);
     } catch (err) {
-      setNotice({ tone: 'problem', text: messageOf(err) });
+      setNotice({ tone: 'problem', text: errorText(err) });
     } finally {
       setBusy(false);
       await load();
@@ -290,7 +288,7 @@ export function WorkingCopyLine({ workCopy, rootRunId }: { workCopy: WorkCopy; r
           onClick={() =>
             window.api
               .invoke('worktree:open', rootRunId)
-              .catch((err: unknown) => say(messageOf(err)))
+              .catch((err: unknown) => say(errorText(err)))
           }
         >
           Open folder

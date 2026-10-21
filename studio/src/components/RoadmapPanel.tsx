@@ -12,9 +12,8 @@
 import { useState } from 'react';
 
 import type { PhaseStatus, Project, ProjectEdit, ProjectPhase } from '@shared/types';
+import { errorText } from '../lib/errorText';
 
-const messageOf = (err: unknown): string =>
-  (err instanceof Error ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
 const PHASE_CHIP: Record<PhaseStatus, { label: string; chip: string }> = {
   PLANNED: { label: 'Planned', chip: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200' },
@@ -254,7 +253,7 @@ export function RoadmapPanel({ projects, error: loadError, onReload, onProjectCh
     try {
       await work();
     } catch (err) {
-      setActionError(messageOf(err));
+      setActionError(errorText(err));
     } finally {
       setBusy(null);
     }
@@ -272,7 +271,7 @@ export function RoadmapPanel({ projects, error: loadError, onReload, onProjectCh
       await window.api.invoke('project:reconcile', phase.id, { force: true });
       onReload();
     } catch (err) {
-      setActionError(messageOf(err));
+      setActionError(errorText(err));
     } finally {
       setComparing((previous) => {
         const next = new Set(previous);

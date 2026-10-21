@@ -129,6 +129,21 @@ describe('what the form sends', () => {
     expect(api.callsTo('settings:get').length).toBeGreaterThan(0);
   });
 
+  it('says why a task could not start - in the main process\'s words, not Electron\'s wrapper around them', async () => {
+    const { api, user } = await start({
+      'factory:run-task': () => {
+        throw new Error("Error invoking remote method 'factory:run-task': Error: Authentication required. Please log in to Claude CLI.");
+      },
+    });
+
+    await user.type(screen.getByPlaceholderText(/Add dark mode/), 'Add pagination to the positions endpoint');
+    await user.click(screen.getByRole('button', { name: 'Run Factory' }));
+
+    await waitFor(() => expect(api.callsTo('factory:run-task').length).toBe(1));
+    expect(await screen.findByText('Task execution failed: Authentication required. Please log in to Claude CLI.')).toBeTruthy();
+    expect(screen.queryByText(/Error invoking remote method/)).toBeNull();
+  });
+
   it('previews the folder under the workspace Settings names', async () => {
     await start({
       'settings:get': () => ({

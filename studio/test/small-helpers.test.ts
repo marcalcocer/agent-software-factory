@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { branchNameProblem } from '../shared/gitRef';
 import { inferInterruption } from '../shared/runInference';
+import { errorText } from '../src/lib/errorText';
 import { formatDuration } from '../src/lib/format';
 
 describe('branchNameProblem', () => {
@@ -68,5 +69,22 @@ describe('inferInterruption', () => {
   it('names the step a run stopped after', () => {
     const result = inferInterruption([event('step_artifact', { step: 'qa-tester', status: 'FAIL' })]);
     expect(result.message).toContain('stopped right after the QA step');
+  });
+});
+
+describe('errorText', () => {
+  it.each([
+    ["Error invoking remote method 'factory:run-task': Error: Authentication required. Please log in to Claude CLI.", 'Authentication required. Please log in to Claude CLI.'],
+    ["Error invoking remote method 'project:edit': Phase 1 (\"Foundation\") is merged: it cannot be made skipped by hand.", 'Phase 1 ("Foundation") is merged: it cannot be made skipped by hand.'],
+    ['Authentication required.', 'Authentication required.'], // not from the main process: left exactly as it is
+    ['The file said "Error invoking remote method" in the middle', 'The file said "Error invoking remote method" in the middle'],
+  ])('shows only what the main process said: %j', (raw, shown) => {
+    expect(errorText(new Error(raw))).toBe(shown);
+  });
+
+  it('takes anything that was thrown', () => {
+    expect(errorText('plain text')).toBe('plain text');
+    expect(errorText(42)).toBe('42');
+    expect(errorText(new Error(''))).toBe('');
   });
 });

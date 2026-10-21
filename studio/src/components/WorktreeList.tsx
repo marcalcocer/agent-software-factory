@@ -9,9 +9,8 @@
 import { useState } from 'react';
 
 import type { WorktreeReport } from '@shared/types';
+import { errorText } from '../lib/errorText';
 
-const messageOf = (err: unknown): string =>
-  (err instanceof Error ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
 const small =
   'px-2.5 py-1 rounded-md text-xs font-medium border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed';
@@ -36,7 +35,7 @@ export function WorktreeList({ repos }: { repos: Array<{ name: string; path: str
       );
       setGroups(loaded);
     } catch (err) {
-      setError(messageOf(err));
+      setError(errorText(err));
     } finally {
       setBusy(null);
     }
@@ -50,7 +49,7 @@ export function WorktreeList({ repos }: { repos: Array<{ name: string; path: str
       const checkouts = await window.api.invoke('worktree:list', repo.path);
       setGroups((previous) => (previous ?? []).map((group) => (group.repo.path === repo.path ? { ...group, checkouts, kept: result.kept } : group)));
     } catch (err) {
-      setError(messageOf(err));
+      setError(errorText(err));
     } finally {
       setBusy(null);
     }
@@ -66,7 +65,7 @@ export function WorktreeList({ repos }: { repos: Array<{ name: string; path: str
       const checkouts = await window.api.invoke('worktree:list', repo.path);
       setGroups((previous) => (previous ?? []).map((group) => (group.repo.path === repo.path ? { ...group, checkouts } : group)));
     } catch (err) {
-      setError(messageOf(err));
+      setError(errorText(err));
     } finally {
       setBusy(null);
     }
