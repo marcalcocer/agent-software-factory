@@ -16,8 +16,9 @@ fails with an authentication error.
 
 ## What it touches
 
-Nothing of yours. Everything lives in `$DEMO_DIR` (default `/tmp/factory-demo`, which a reboot clears - run
-`setup.sh` again; or `DEMO_DIR=/some/folder demo/setup.sh`):
+Nothing of yours. Everything lives in `$DEMO_DIR` - by default `demo/.world`, which git ignores and a reboot does not
+clear (not `/tmp`, which it does: the checkouts, and any work in them, would go with it). `DEMO_DIR=/some/folder
+demo/setup.sh` puts it elsewhere; `setup.sh` warns if that is under the temporary folder:
 
 | | |
 |---|---|
@@ -30,6 +31,15 @@ Nothing of yours. Everything lives in `$DEMO_DIR` (default `/tmp/factory-demo`, 
 
 `setup.sh` only ever replaces a folder it made itself (a `.factory-demo` marker); it refuses anything else.
 
+The demo world is inside this repository, which has a `node_modules`: a checkout below it would find that folder's
+packages. That is harmless for `demo-app` (it has no dependencies, by design) and is why the world is not a place for a
+project that does have some - see "Where a task works" in `factory/README.md`.
+
+**Adding a repository of yours.** The Studio takes any folder (a git repository) - the factory is told which ones you
+added, wherever they are - so you can look at your own project in the demo. Look only: a task on it runs in a checkout
+under `$DEMO_DIR`, and your folder is not touched, but **Push** at the delivery gate pushes the task's branch to that
+repository's own `origin` (only the pull request is pretend, made by the pretend `gh`).
+
 ## The seeded scenario (no model was used to make it)
 
 * **Project "Redesign the frontend"**, four phases. Phase 1 is task **f0001**: a real git worktree with two real
@@ -40,7 +50,7 @@ Nothing of yours. Everything lives in `$DEMO_DIR` (default `/tmp/factory-demo`, 
 * Task **f0002** ("Add a percent formatter"), pull request **#9**: two comments, only to answer.
 * Task **f0003** ("Add a changelog"), pull request **#10**: nothing to answer - the one to approve and merge.
 
-Each task is in its own checkout under `workspace/.factory/worktrees/demo-app/`. Nothing starts by itself: the Studio
+Each task is in its own checkout under `$DEMO_DIR/workspace/.factory/worktrees/demo-app/`. Nothing starts by itself: the Studio
 is set to watch, but not to triage or start rounds automatically, so you press the buttons.
 
 ## Playing the reviewer
@@ -79,6 +89,10 @@ Each step says what to do and what you should see. **MODEL** = needs a valid Cla
 
 * **Where tasks work** shows *An isolated worktree (recommended)*; **Compare the roadmap with what a phase delivered**
   is ticked.
+* **Workspace** and **Where worktrees are kept** each say "In use now: ..." - what the factory really uses, both under
+  the demo world. The workspace adds "FACTORY_WORKSPACE_ROOT is set where the Studio was started, so this field is not
+  used": the demo scripts decide it. The checkouts field is empty, so its folder is the default inside the workspace.
+  In your own Studio the fields apply, and a checkouts folder under `/tmp` is flagged in words.
 * **Checkouts -> Show them** (it is read on demand): the three tasks, each with its pull request ("#8 open"), folder and
   branch, and a *Remove* button. *Cancel* closes it.
 

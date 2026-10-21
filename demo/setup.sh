@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the factory demo from nothing, in $DEMO_DIR (default: /tmp/factory-demo):
+# Builds the factory demo from nothing, in $DEMO_DIR (default: demo/.world, which git ignores):
 #
 #   workspace/demo-app   a small repository - the thing the factory works on
 #   origin.git           its "GitHub": a bare repository, plus the pretend gh in demo/bin
@@ -29,6 +29,13 @@ if [ -e "$DEMO_DIR" ]; then
 fi
 mkdir -p "$DEMO_DIR/workspace" "$DEMO_DIR/logs" "$DEMO_DIR/userdata"
 touch "$DEMO_DIR/.factory-demo"
+
+case "$DEMO_DIR/" in
+  /tmp/*|"${TMPDIR:-/tmp}"/*)
+    echo "Note: $DEMO_DIR is under the temporary folder - a reboot clears it, with the checkouts and any work in them." >&2
+    echo "      Leave DEMO_DIR unset to use demo/.world, or pick a folder that stays." >&2
+    ;;
+esac
 
 REPO="$DEMO_DIR/workspace/demo-app"
 ORIGIN="$DEMO_DIR/origin.git"

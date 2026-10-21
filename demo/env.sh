@@ -7,7 +7,9 @@
 
 DEMO_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export DEMO_ROOT="$(cd "$DEMO_HERE/.." && pwd)"
-export DEMO_DIR="${DEMO_DIR:-${TMPDIR:-/tmp}/factory-demo}"
+# The world lives in demo/.world (git ignores it): not in /tmp, which a reboot clears along with the checkouts and any
+# work in them. DEMO_DIR=/some/folder puts it elsewhere.
+export DEMO_DIR="${DEMO_DIR:-$DEMO_HERE/.world}"
 
 export FACTORY_WORKSPACE_ROOT="$DEMO_DIR/workspace"
 export FACTORY_LOG_DIR="$DEMO_DIR/logs"

@@ -21,6 +21,9 @@ logs/*
 !logs/.gitkeep
 factory/logs/*
 
+# The demo world (a repository, its pretend GitHub, the Studio's settings, checkouts): built by demo/setup.sh
+demo/.world/
+
 # Editor / OS
 .DS_Store
 *.log

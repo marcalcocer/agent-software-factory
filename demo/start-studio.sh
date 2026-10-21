@@ -31,6 +31,9 @@ if [ "${DEMO_NO_MODEL:-}" = 1 ]; then
 fi
 
 echo "Studio on the demo in $DEMO_DIR"
+echo "The demo is for demo-app. Any folder can be added in the Studio, but a repository of yours added here is worked on for"
+echo "real: its tasks run in checkouts under $DEMO_DIR (your folder is not touched), yet Push at the delivery gate pushes the"
+echo "branch to that repository's own origin - only the pull request is pretend."
 # shellcheck disable=SC2086
 exec "$DEMO_ROOT/node_modules/electron/dist/electron" --no-sandbox ${DEMO_DEBUG_PORT:+--remote-debugging-port=$DEMO_DEBUG_PORT} ${DEMO_ELECTRON_FLAGS:-} \
   --user-data-dir="$DEMO_DIR/userdata" "$DEMO_ROOT/studio"
