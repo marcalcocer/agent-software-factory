@@ -224,6 +224,28 @@ describe('"Check out here"', () => {
     expect(api.callsTo('worktree:checkout')).toEqual([['R1']]);
   });
 
+  it('does not tell you to "git checkout" the branch right after it was checked out for you', async () => {
+    let info = checkout();
+    installFakeApi({
+      'worktree:info': () => info,
+      'worktree:checkout': () => {
+        info = checkout({ exists: false });
+        return { ok: true, branch: BRANCH };
+      },
+    });
+    const user = userEvent.setup();
+    render(<WorkingCopyBar runId="R1" />);
+
+    await user.click(await screen.findByRole('button', { name: 'Check out here' }));
+    await user.click(screen.getByRole('button', { name: 'Check it out' }));
+
+    expect((await screen.findByTestId('work-notice')).textContent).toBe(`Your repository is now on ${BRANCH}. The task's own folder was removed.`);
+    // The folder is gone, and nothing contradicts the notice.
+    expect(screen.queryByText(/The checkout is gone/)).toBeNull();
+    expect(screen.queryByText(`git checkout ${BRANCH}`)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open folder' })).toBeNull(); // there is no folder to open
+  });
+
   it('says why when the factory could not, and the folder is still there', async () => {
     installFakeApi({
       'worktree:info': () => checkout(),

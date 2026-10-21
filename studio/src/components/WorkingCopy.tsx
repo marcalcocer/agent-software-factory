@@ -87,6 +87,8 @@ export function WorkingCopyBar({ runId, refreshKey, onChanged }: WorkingCopyBarP
   const [notice, setNotice] = useState<{ tone: 'ok' | 'problem'; text: string } | null>(null);
   const [confirming, setConfirming] = useState<Confirming>(null);
   const [busy, setBusy] = useState(false);
+  /** The branch was just moved into the user's repository: the folder is gone because of that, and nothing is lost. */
+  const [movedHere, setMovedHere] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -145,11 +147,15 @@ export function WorkingCopyBar({ runId, refreshKey, onChanged }: WorkingCopyBarP
     act(async () => {
       const result = await window.api.invoke('worktree:checkout', runId);
       if (!result.ok) return { tone: 'problem', text: result.error ?? 'The branch could not be checked out.' };
+      setMovedHere(true);
       onChanged?.();
       return { tone: 'ok', text: `Your repository is now on ${result.branch}. The task's own folder was removed.` };
     });
 
   const gone = isCheckout && !info.exists;
+  // Right after "Check out here" the notice below says it all: "the checkout is gone ... run git checkout" would
+  // contradict it, since the branch IS checked out in the user's repository.
+  const explainGone = gone && !movedHere;
 
   return (
     <section aria-label="Where this task works" data-testid="working-copy" className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 space-y-2">
@@ -165,14 +171,14 @@ export function WorkingCopyBar({ runId, refreshKey, onChanged }: WorkingCopyBarP
             {info.changedFiles} file{info.changedFiles === 1 ? '' : 's'} with changes not committed
           </span>
         )}
-        {gone && <span className="text-xs text-slate-500 dark:text-slate-400">The checkout is gone (its pull request is over, or it was removed).</span>}
+        {explainGone && <span className="text-xs text-slate-500 dark:text-slate-400">The checkout is gone (its pull request is over, or it was removed).</span>}
       </div>
 
       <p className="font-mono text-xs break-all text-slate-700 dark:text-slate-200" data-testid="work-path" title={info.path}>
         {info.path}
       </p>
 
-      {gone && info.branch && (
+      {explainGone && info.branch && (
         <p className="text-xs text-slate-500 dark:text-slate-400">
           The work is on the branch: <span className="font-mono">git checkout {info.branch}</span> in your repository.
         </p>
