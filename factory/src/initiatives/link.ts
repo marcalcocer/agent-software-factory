@@ -108,6 +108,23 @@ export async function loadRoadmapView(link: InitiativeLink | undefined): Promise
   }
 }
 
+/**
+ * What the roadmap says about a phase whose run ended without a pull request. The words are for the user:
+ * they say what happened to the work, and what they can do about it.
+ */
+export function releaseNote(status: string, branch: string): string {
+  switch (status) {
+    case 'DELIVERED_WITHOUT_PR':
+      return `A run delivered this phase on the branch ${branch} without opening a pull request, so it is not in review. Run it again, or skip it.`;
+    case 'ABORTED_BY_HUMAN':
+      return `The run of this phase (branch ${branch}) was aborted. Run it again, or skip it.`;
+    case 'ESCALATED_TO_HUMAN':
+      return `The run of this phase (branch ${branch}) was escalated to a human and did not go on. Run it again, or skip it.`;
+    default:
+      return `The run of this phase (branch ${branch}) ended as ${status}, without a pull request. Run it again, or skip it.`;
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /* Starting a phase from the command line                                      */
 /* -------------------------------------------------------------------------- */

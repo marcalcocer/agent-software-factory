@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { backlogFromRun } from '../src/initiatives/harvest.ts';
-import { linkToInitiative, loadRoadmapView, renameInitiative, resolvePhaseRequest, startPhase } from '../src/initiatives/link.ts';
+import { linkToInitiative, loadRoadmapView, releaseNote, renameInitiative, resolvePhaseRequest, startPhase } from '../src/initiatives/link.ts';
 import { withStore } from '../src/initiatives/store.ts';
 import { roadmapSection, withRoadmap } from '../src/tools/pr-text.ts';
 import type { PolishResult } from '../src/utils/schemas.ts';
@@ -154,6 +154,25 @@ describe('resolvePhaseRequest: run phase X', () => {
     await withStore((store) => store.markMerged('i0001-p1'));
 
     expect(await resolvePhaseRequest({ phaseId: 'i0001-p1' })).toEqual({ ok: false, error: expect.stringContaining('not waiting to be started') });
+  });
+});
+
+describe('releaseNote: what the roadmap says when a run ends without a pull request', () => {
+  const BRANCH = 'factory/f0042/feat-x';
+
+  it.each([
+    ['DELIVERED_WITHOUT_PR', 'A run delivered this phase on the branch factory/f0042/feat-x without opening a pull request, so it is not in review. Run it again, or skip it.'],
+    ['ABORTED_BY_HUMAN', 'The run of this phase (branch factory/f0042/feat-x) was aborted. Run it again, or skip it.'],
+    ['ESCALATED_TO_HUMAN', 'The run of this phase (branch factory/f0042/feat-x) was escalated to a human and did not go on. Run it again, or skip it.'],
+    ['BLOCKED', 'The run of this phase (branch factory/f0042/feat-x) ended as BLOCKED, without a pull request. Run it again, or skip it.'],
+  ])('says what happened for %s - and what the user can do', (status, text) => {
+    expect(releaseNote(status, BRANCH)).toBe(text);
+  });
+
+  it('always names the branch, so the work can be found', () => {
+    for (const status of ['DELIVERED_WITHOUT_PR', 'ABORTED_BY_HUMAN', 'ESCALATED_TO_HUMAN', 'BLOCKED', 'SOMETHING_NEW']) {
+      expect(releaseNote(status, BRANCH)).toContain(BRANCH);
+    }
   });
 });
 

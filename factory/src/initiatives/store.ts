@@ -706,6 +706,29 @@ export class InitiativeStore {
     });
   }
 
+  /**
+   * A run of this phase ended without opening a pull request - it delivered on its branch only, was
+   * aborted, or was escalated and never resumed - so the phase is not running any more and not in review
+   * either. It goes back to the roadmap, waiting, with a note saying what happened: otherwise it stays
+   * "running" for ever, and neither starting it again nor editing it is allowed.
+   *
+   * Only a phase that is running and has no pull request is released: one in review (a further round that
+   * delivered nothing) or merged is exactly where it was. Returns whether it was released.
+   */
+  async releasePhase(phaseId: string, note: string): Promise<boolean> {
+    const phase = await this.getPhase(phaseId);
+    if (!phase || phase.status !== 'RUNNING' || phase.prNumber !== null) return false;
+    await this.write(async (tx) => {
+      await tx.execute({
+        sql: "UPDATE phases SET status = 'PLANNED', updated_at = ? WHERE id = ? AND status = 'RUNNING' AND pr_number IS NULL",
+        args: [now(), phaseId],
+      });
+      await this.record(tx, phase.initiativeId, 'phase_released', { phaseId, reason: note });
+    });
+    await this.appendNotes(phaseId, [{ source: 'factory', text: note }]);
+    return true;
+  }
+
   async appendNotes(phaseId: string, notes: Array<Omit<PhaseNote, 'at'>>): Promise<void> {
     if (notes.length === 0) return;
     const phase = await this.getPhase(phaseId);

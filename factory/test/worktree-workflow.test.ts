@@ -289,6 +289,45 @@ describe('a task in the user\'s own repository (in place)', () => {
   }, 120_000);
 });
 
+describe('the phase a run belongs to, when the run ends without a pull request', () => {
+  const phaseOf = async (initiativeId: string) => (await withStore((store) => store.getInitiative(initiativeId)))!.phases[0]!;
+
+  it('goes back to the roadmap - it is not running any more, and says what happened', async () => {
+    const { result, meta } = await runTask(); // commits on its branch; no pull request is asked for
+
+    expect(delivered(result)).toBe('DELIVERED_WITHOUT_PR');
+    const phase = await phaseOf(meta.initiativeId);
+    expect(phase.status).toBe('PLANNED');
+    expect(phase.notes.at(-1)).toMatchObject({
+      source: 'factory',
+      text: `A run delivered this phase on the branch ${meta.branch} without opening a pull request, so it is not in review. Run it again, or skip it.`,
+    });
+  }, 120_000);
+
+  it('can then be run again - the roadmap does not refuse a phase that was released', async () => {
+    const { meta } = await runTask();
+
+    const { resolvePhaseRequest } = await import('../src/initiatives/link.ts');
+    expect(await resolvePhaseRequest({ phaseId: meta.phaseId })).toMatchObject({ ok: true });
+  }, 120_000);
+
+  it('stays in review when a further round delivers nothing new - the pull request is still open', async () => {
+    const first = await runTask();
+    await withStore((store) => store.linkPullRequest(first.meta.phaseId, { number: 8, url: 'https://github.com/o/r/pull/8' }));
+    const round = {
+      parentRunId: first.runId, rootRunId: first.runId, round: 2, action: 'RERUN_IMPLEMENTATION' as const, originalTask: TASK,
+      pullRequest: { number: 8, url: 'https://github.com/o/r/pull/8', headBranch: first.meta.branch as string, baseBranch: 'main' },
+      comments: [{ id: 'c1', source: 'REVIEW_THREAD' as const, author: 'marc', body: 'Please handle an empty name.', path: 'src/index.js', line: 1, category: 'CODE_CHANGE_REQUEST' }],
+      title: 'Handle an empty name',
+    };
+
+    const second = await runTask({ revision: round, baseBranch: 'main', branchName: first.meta.branch }, 'Address the review comments on pull request #8.');
+
+    expect(delivered(second.result)).toBe('DELIVERED_WITHOUT_PR');
+    expect((await phaseOf(first.meta.initiativeId)).status).toBe('IN_REVIEW');
+  }, 240_000);
+});
+
 describe('what it will not do', () => {
   it('does not quietly work in the user\'s folder when the checkout cannot be made', async () => {
     // The user has the branch the task would use checked out in their own folder.

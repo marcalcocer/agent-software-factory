@@ -201,6 +201,64 @@ describe('the life of a phase', () => {
     expect((await store.getPhase(one))!.status).toBe('MERGED');
   });
 
+  describe('a run that ends without a pull request', () => {
+    const NOTE = 'A run delivered this phase on the branch factory/f0042/feat-x without opening a pull request. Run it again, or skip it.';
+
+    it('releases the phase: it is not running any more, and can be started again', async () => {
+      const project = await projectWithPhaseRunning();
+      const one = project.phases[0]!.id;
+
+      expect(await store.releasePhase(one, NOTE)).toBe(true);
+
+      expect(await store.getPhase(one)).toMatchObject({ status: 'PLANNED', prNumber: null });
+      expect((await store.getPhase(one))!.notes.at(-1)).toMatchObject({ source: 'factory', text: NOTE });
+      expect((await store.nextPhase(project.id))!.id).toBe(one); // it can be started again
+    });
+
+    it('is recorded in the history of the project', async () => {
+      const project = await projectWithPhaseRunning();
+      await store.releasePhase(project.phases[0]!.id, NOTE);
+
+      const events = await store.listEvents(project.id);
+      expect(events.at(-1)).toMatchObject({ type: 'phase_released', data: { phaseId: project.phases[0]!.id, reason: NOTE } });
+    });
+
+    it('leaves a phase alone that is in review - a further round that delivered nothing does not take it out of review', async () => {
+      const project = await projectWithPhaseRunning();
+      const one = project.phases[0]!.id;
+      await store.linkPullRequest(one, { number: 8, url: 'u' });
+
+      expect(await store.releasePhase(one, NOTE)).toBe(false);
+
+      expect(await store.getPhase(one)).toMatchObject({ status: 'IN_REVIEW', prNumber: 8 });
+      expect((await store.getPhase(one))!.notes).toEqual([]);
+    });
+
+    it.each(['MERGED', 'SKIPPED', 'PLANNED'] as const)('leaves a %s phase exactly as it is', async (status) => {
+      const project = await projectWithPhaseRunning();
+      const one = project.phases[0]!.id;
+      await store.updatePhase(one, { status });
+
+      expect(await store.releasePhase(one, NOTE)).toBe(false);
+
+      expect((await store.getPhase(one))!.status).toBe(status);
+    });
+
+    it('is the same asked twice: one note, one event', async () => {
+      const project = await projectWithPhaseRunning();
+      const one = project.phases[0]!.id;
+      await store.releasePhase(one, NOTE);
+      await store.releasePhase(one, NOTE);
+
+      expect((await store.getPhase(one))!.notes.filter((note) => note.source === 'factory')).toHaveLength(1);
+      expect((await store.listEvents(project.id)).filter((event) => event.type === 'phase_released')).toHaveLength(1);
+    });
+
+    it('does nothing for a phase that does not exist', async () => {
+      expect(await store.releasePhase('i0099-p1', NOTE)).toBe(false);
+    });
+  });
+
   it('takes edits to the words of a phase, and notes with their source', async () => {
     const project = await projectWithPhaseRunning();
     const two = project.phases[1]!.id;

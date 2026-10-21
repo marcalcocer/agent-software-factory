@@ -282,7 +282,16 @@ async function phasedChecks(traceDir: string): Promise<Array<[string, boolean, s
   return [
     ['the run is filed under an initiative and a phase', Boolean(meta?.initiativeId) && meta?.phaseId === `${meta?.initiativeId}-p1`, `${meta?.initiativeId} ${meta?.phaseId}`],
     ['the roadmap was saved: a project of three phases', initiative?.kind === 'project' && phases.length === 3, `${initiative?.kind} ${phases.length}`],
-    ['this run is phase 1, running, with its task and branch', phases[0]?.status === 'RUNNING' || phases[0]?.status === 'IN_REVIEW' ? phases[0]?.taskId === meta?.taskId && phases[0]?.branch === meta?.branch : false, `${phases[0]?.status} ${phases[0]?.taskId}`],
+    // The smoke asks for no pull request: the run delivers on its branch only, so the phase is not running any
+    // more and not in review - it goes back to the roadmap, keeping the task and branch, and says what happened.
+    [
+      'this run was phase 1: it delivered without a pull request, so the phase went back to the roadmap, with its task, its branch and a note',
+      phases[0]?.status === 'PLANNED' &&
+        phases[0]?.taskId === meta?.taskId &&
+        phases[0]?.branch === meta?.branch &&
+        phases[0]?.notes.some((note) => note.source === 'factory' && /without opening a pull request/.test(note.text)),
+      `${phases[0]?.status} ${phases[0]?.taskId} ${phases[0]?.notes.map((note) => note.source).join(',')}`,
+    ],
     ['the other phases wait, each after the one before it unless told otherwise', phases[1]?.status === 'PLANNED' && phases[1]?.dependsOn.join() === phases[0]?.id && phases[2]?.dependsOn.join() === phases[1]?.id, phases.map((p) => p.dependsOn.join('+')).join(' | ')],
     ['the initiative is named by the architect, not by phase 1', initiative?.title === '[dry-run] Rework the example module', initiative?.title],
     ['the pull request says it is phase 1 of 3', /This pull request is \*\*phase 1 of 3\*\*/.test(body) && /- \[x\] 1\. \[dry-run\] Foundation - \*\*this pull request\*\*/.test(body) && /- \[ \] 2\. \[dry-run\] Screens/.test(body), (/## Roadmap[\s\S]{0,120}/.exec(body) ?? [''])[0]],
@@ -356,7 +365,11 @@ async function phaseTwo({ label, traceDir }: { label: string; traceDir: string }
   check(`${label} phase 2's run is filed under phase 2`, run2.phaseId === phaseId && run2.initiativeId === initiativeId, `${run2.initiativeId} ${run2.phaseId}`);
   check(`${label} phase 2 is named by its roadmap entry, with no model asked`, namer.data?.source === 'phase' && run2.title === '[dry-run] Screens' && !calls.some((e) => e.role === 'run-namer'), `${run2.title} ${namer.data?.source}`);
   check(`${label} phase 2 has a task id of its own, and a branch from its title`, run2.taskId !== meta.taskId && String(run2.branch).startsWith(`factory/${run2.taskId}/`) && /screens/.test(String(run2.branch)), String(run2.branch));
-  check(`${label} phase 2 is running with its own task`, phase.status === 'RUNNING' && phase.taskId === run2.taskId, `${phase.status} ${phase.taskId}`);
+  check(
+    `${label} phase 2 ran with its own task, and (no pull request) went back to the roadmap with a note`,
+    phase.status === 'PLANNED' && phase.taskId === run2.taskId && phase.notes.some((note) => note.source === 'factory'),
+    `${phase.status} ${phase.taskId}`,
+  );
   check(`${label} the pull request of phase 2 says it is phase 2 of 3`, /phase 2 of 3/.test(String(JSON.parse(fs.readFileSync(path.join(dir, '08-pull-request.json'), 'utf8')).data?.pullRequest?.body)), '');
 }
 

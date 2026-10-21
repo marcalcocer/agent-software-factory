@@ -113,7 +113,7 @@ import { getConventionSources } from '../utils/context-loader.ts';
 import { getFactoryConfig, resolveInsideRepo, resolveRepoPath } from '../utils/factory-config.ts';
 import { allocateTaskId } from '../utils/task-ids.ts';
 import { backlogFromRun } from '../initiatives/harvest.ts';
-import { linkToInitiative, loadRoadmapView, renameInitiative, startPhase, type InitiativeLink } from '../initiatives/link.ts';
+import { linkToInitiative, loadRoadmapView, releaseNote, renameInitiative, startPhase, type InitiativeLink } from '../initiatives/link.ts';
 import { renderInitiativeContext, roadmapFromPlan, type RoadmapView } from '../initiatives/phasing.ts';
 import { withStore } from '../initiatives/store.ts';
 import { AGENT_ROLES, describeModelChain } from '../utils/model-router.ts';
@@ -3193,6 +3193,16 @@ const finalizeStep = createStep({
     };
 
     const summaryPath = writeSummary(run.runId, summary);
+
+    // A phase whose run ended without a pull request is not running any more: it goes back to the roadmap.
+    // (A round never moves its phase: that one is in review, and the store releases only a running phase.)
+    if (run.initiative && outcome.status !== 'DELIVERED') {
+      try {
+        await withStore((store) => store.releasePhase(run.initiative!.phaseId, releaseNote(outcome.status, run.workBranch)));
+      } catch (error) {
+        appendEvent(run.runId, { type: 'initiative_unavailable', error: (error as Error).message });
+      }
+    }
 
     const headline =
       outcome.status === 'DELIVERED'
