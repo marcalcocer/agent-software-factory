@@ -704,6 +704,10 @@ export class InitiativeStore {
       });
       await this.record(tx, phase.initiativeId, 'phase_closed_unmerged', { phaseId, pr: phase.prNumber });
     });
+    // What the roadmap shows next to the phase must be what happened to it, not what happened the time before.
+    await this.appendNotes(phaseId, [
+      { source: 'factory', text: `${phase.prNumber ? `Pull request #${phase.prNumber} was` : 'Its pull request was'} closed without being merged, so this phase is waiting again. Run it again, or skip it.` },
+    ]);
   }
 
   /**

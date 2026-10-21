@@ -355,8 +355,36 @@ describe('reconcilePhase: the whole thing, with the model mocked', () => {
     expect(report!.changes).toEqual([]);
     const phases = await planned();
     expect(phases.map((phase) => phase.status)).toEqual(['MERGED', 'PLANNED', 'PLANNED', 'PLANNED']);
-    expect(phases[0]!.summary).toContain('Phase 1 is written');
     expect(phases[1]!.scope).toEqual(['Mask every amount when privacy mode is on', 'A toggle in the header']);
+  });
+
+  it('...and it stays uncompared, with the reason kept on the phase - so it can be asked for again', async () => {
+    await mergedProject();
+    ask.mockRejectedValue(new Error('OAuth session expired and could not be refreshed. Run `claude login`.'));
+
+    await reconcilePhase({ phaseId: 'i0001-p1' });
+
+    const [merged] = await planned();
+    expect(merged!.summary).toBeNull(); // the summary is what says "compared": it is not claimed
+    expect(merged!.notes.at(-1)).toMatchObject({ source: 'factory', text: expect.stringContaining('The AI could not compare the roadmap') });
+    expect(merged!.notes.at(-1)!.text).toContain('run `claude login` in a terminal'); // the reason, in the user\'s words
+  });
+
+  it('...so that asking again, without --force, really asks - and once it works the phase is compared', async () => {
+    await mergedProject();
+    ask.mockRejectedValueOnce(new Error('network down'));
+    await reconcilePhase({ phaseId: 'i0001-p1' });
+    expect(ask).toHaveBeenCalledTimes(1);
+
+    reply(answer());
+    const again = await reconcilePhase({ phaseId: 'i0001-p1' });
+
+    expect(ask).toHaveBeenCalledTimes(2);
+    expect(again).toMatchObject({ source: 'agent' });
+    expect((await planned())[0]!.summary).toContain('Foundation delivered');
+    // ...and now it is done: a third look does not ask.
+    expect(await reconcilePhase({ phaseId: 'i0001-p1' })).toBeNull();
+    expect(ask).toHaveBeenCalledTimes(2);
   });
 
   it('puts nothing from a rehearsal into the roadmap', async () => {

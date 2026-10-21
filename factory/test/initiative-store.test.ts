@@ -195,10 +195,15 @@ describe('the life of a phase', () => {
 
     await store.markClosedUnmerged(one);
     expect(await store.getPhase(one)).toMatchObject({ status: 'PLANNED', prNumber: null, prUrl: null });
+    expect((await store.getPhase(one))!.notes.at(-1)).toMatchObject({
+      source: 'factory',
+      text: 'Pull request #8 was closed without being merged, so this phase is waiting again. Run it again, or skip it.',
+    });
 
     await store.markMerged(one);
     await store.markClosedUnmerged(one); // a merged phase stays merged
     expect((await store.getPhase(one))!.status).toBe('MERGED');
+    expect((await store.getPhase(one))!.notes.filter((note) => note.text.includes('closed without being merged'))).toHaveLength(1); // and is not told otherwise
   });
 
   describe('a run that ends without a pull request', () => {

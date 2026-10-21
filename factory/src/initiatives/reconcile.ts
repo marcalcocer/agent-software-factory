@@ -325,15 +325,12 @@ export async function reconcilePhase(options: { phaseId: string; force?: boolean
   } catch (error) {
     const message = (error as Error).message ?? String(error);
     appendEvent(traceId, { type: 'phase_reconcile_failed', error: message });
-    // The phase IS delivered; only the comparison is missing. Marked so the Studio does not ask again
-    // by itself, and the user can ask for it from the roadmap.
-    await withStore((store) => store.updatePhase(merged.id, { summary: ownWords }));
-    return {
-      summary: '',
-      changes: [],
-      backlogAdded: 0,
-      source: 'none',
-      note: `The AI could not compare the roadmap with what was delivered (${explainAgentFailure(message)}). The remaining phases are as they were written.`,
-    };
+    // The phase IS delivered; only the comparison is missing. It stays UNcompared (no summary): the summary is
+    // what says "compared", and stamping it here hid the retry - with the model unavailable (a login that
+    // expired) the user was left with a phase the roadmap said was done and no way to ask again. The reason is
+    // kept with the phase, where the roadmap shows it next to the button.
+    const note = `The AI could not compare the roadmap with what was delivered (${explainAgentFailure(message)}). The remaining phases are as they were written.`;
+    await withStore((store) => store.appendNotes(merged.id, [{ source: 'factory', text: note }]));
+    return { summary: '', changes: [], backlogAdded: 0, source: 'none', note };
   }
 }
