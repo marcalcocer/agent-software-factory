@@ -9,7 +9,7 @@
  */
 import fs from 'node:fs';
 
-import type { PhaseReconcileReport, Project, ProjectEdit, WorktreeInfo, WorktreeReport } from '../../shared/types';
+import type { PhaseReconcileReport, Places, Project, ProjectEdit, WorktreeInfo, WorktreeReport } from '../../shared/types';
 import { parseMarkerLine, summarizeFailure, type CliResult } from './pr-watcher';
 
 export type RunCli = (args: string[], options?: { timeoutMs?: number }) => Promise<CliResult>;
@@ -51,6 +51,18 @@ export async function reconcilePhase(
 }
 
 /* ---- checkouts ---- */
+
+/**
+ * Where the factory works, as the factory says it: it knows, from its environment, its `.env` file and what the
+ * Studio handed it together - a guess made here would be wrong whenever one of those says something else.
+ * `fixedBy` is the Studio's to say (it knows the environment it was started with), so it is added by the caller.
+ */
+export async function readPlaces(runCli: RunCli): Promise<Omit<Places, 'fixedBy'>> {
+  const result = await runCli(['places']);
+  const payload = parseMarkerLine<Omit<Places, 'fixedBy'>>(result.stdout, 'PLACES_JSON');
+  if (!payload) throw new Error(summarizeFailure(result));
+  return payload;
+}
 
 export async function listWorktrees(runCli: RunCli, repoPath: string): Promise<WorktreeReport[]> {
   const result = await runCli(['worktree-list', '--repo', repoPath]);

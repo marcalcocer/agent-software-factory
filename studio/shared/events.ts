@@ -9,6 +9,7 @@ import type {
   FactoryRun,
   PendingInput,
   PhaseReconcileReport,
+  Places,
   PrMergeDraft,
   PrMergeResult,
   PrWatchSettings,
@@ -113,6 +114,8 @@ export interface IPCChannels {
   'worktree:checkout': (runId: string) => Promise<{ ok: boolean; branch?: string; error?: string }>;
   /** Every checkout the factory made for a repository. */
   'worktree:list': (repoPath: string) => Promise<WorktreeReport[]>;
+  /** Where the factory works: the workspace, the folder of checkouts, and whether that folder survives a restart. */
+  'places:get': () => Promise<Places>;
   /** Removes the clean checkouts whose pull request is over. */
   'worktree:gc': (repoPath: string) => Promise<{ removed: string[]; kept: Array<{ path: string; message: string }> }>;
 

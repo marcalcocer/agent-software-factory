@@ -2,7 +2,7 @@ import { vi } from 'vitest';
 
 import { RUN, runDir } from '../../../fixtures';
 import { readRunArtifacts, readRunEvents, readRunState } from '../../electron/services/run-state';
-import type { FactoryRun, PrWatchState } from '../../shared/types';
+import type { FactoryRun, Places, PrWatchState } from '../../shared/types';
 
 type Handler = (...args: any[]) => unknown;
 
@@ -51,6 +51,15 @@ export function installFakeApi(handlers: Record<string, Handler> = {}): FakeApi 
 }
 
 export const REPO_PATH = '/home/dev/workspace/invest-track';
+
+/** Where the factory says it works: the defaults, in a workspace that stays. */
+export const PLACES: Places = {
+  workspaceRoot: '/home/dev/workspace',
+  worktreesDir: '/home/dev/workspace/.factory/worktrees',
+  extraRepositories: [],
+  volatile: false,
+  fixedBy: [],
+};
 
 export const idleWatcher = (): PrWatchState => ({
   settings: { enabled: true, intervalSeconds: 60, autoTriage: true, autoRevise: true, replyOnGitHub: false },
@@ -113,6 +122,7 @@ export function appHandlers(extra: Record<string, Handler> = {}): Record<string,
       repos: {},
     }),
     'factory:list-repos': () => [{ name: 'invest-track', path: REPO_PATH, recentRuns: 2 }],
+    'places:get': () => PLACES,
     'pr-watch:get': () => idleWatcher(),
     // No project by default: the repository's tasks are single pull requests.
     'project:list': () => [],

@@ -10,6 +10,7 @@ import {
   gcWorktrees,
   listProjects,
   listWorktrees,
+  readPlaces,
   reconcilePhase,
   removeWorktree,
   worktreeInfoOf,
@@ -69,6 +70,20 @@ describe('reconcilePhase', () => {
 
   it('returns null when there was nothing to do - the phase is not merged, or it was done already', async () => {
     expect(await reconcilePhase(answer('PHASE_RECONCILE_JSON', { report: null }), 'i0001-p1')).toBeNull();
+  });
+});
+
+describe('readPlaces', () => {
+  it('asks the factory where it works, and reads the marker line among the log noise', async () => {
+    const places = { workspaceRoot: '/w', worktreesDir: '/w/.factory/worktrees', extraRepositories: ['/p/invest-track'], volatile: false };
+    const run = answer('PLACES_JSON', places);
+
+    expect(await readPlaces(run)).toEqual(places);
+    expect(calls(run)).toEqual([['places']]);
+  });
+
+  it('says why when the factory gave no answer', async () => {
+    await expect(readPlaces(silent)).rejects.toThrow('the real reason');
   });
 });
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AuthProvider, FactoryRun, PipelineConfig, PrMergeNotice, PrMergeResult, PrWatchState, Project, ProjectPhase } from '@shared/types';
+import type { AuthProvider, FactoryRun, PipelineConfig, Places, PrMergeNotice, PrMergeResult, PrWatchState, Project, ProjectPhase } from '@shared/types';
 import { Sidebar } from './components/Sidebar';
 import { RepoTabs } from './components/RepoTabs';
 import { TaskInput, type Isolation, type Phasing } from './components/TaskInput';
@@ -103,7 +103,11 @@ function App() {
   // Where a new task works, and whether the architect may split it into phases. Both start from Settings.
   const [isolation, setIsolation] = useState<Isolation>('worktree');
   const [phasing, setPhasing] = useState<Phasing>('auto');
-  const [workspaceRoot, setWorkspaceRoot] = useState<string | undefined>(undefined);
+  // Where the factory makes checkouts, as the factory says it - for the preview of a task's folder.
+  const [places, setPlaces] = useState<Places | null>(null);
+  const loadPlaces = () => {
+    window.api.invoke('places:get').then(setPlaces).catch(() => {});
+  };
   // The projects (big requests split into phases) of each repository, read through the factory.
   const [projectsByRepo, setProjectsByRepo] = useState<Record<string, Project[]>>({});
   const [projectsError, setProjectsError] = useState<string | null>(null);
@@ -206,9 +210,9 @@ function App() {
       .then((settings) => {
         setTheme(settings.global.theme);
         setIsolation(settings.global.isolation ?? 'worktree');
-        setWorkspaceRoot(settings.global.workspaceRoot);
       })
       .catch(() => {});
+    loadPlaces();
 
     // Subscribe to factory events
     // Refresh the history of the repository the user is looking at (not of the one that ran:
@@ -842,7 +846,7 @@ function App() {
                       <TaskInput
                         repoName={activeTab}
                         {...(activeRepoPath ? { repoPath: activeRepoPath } : {})}
-                        {...(workspaceRoot ? { workspaceRoot } : {})}
+                        {...(places ? { places: { worktreesDir: places.worktreesDir, volatile: places.volatile } } : {})}
                         isolation={isolation}
                         onIsolationChange={setIsolation}
                         phasing={phasing}
@@ -897,7 +901,7 @@ function App() {
         onThemeChange={setTheme}
         onSaved={(saved) => {
           setIsolation(saved.isolation);
-          setWorkspaceRoot(saved.workspaceRoot);
+          loadPlaces(); // the folders may have been changed: ask the factory where it works now
         }}
       />
 

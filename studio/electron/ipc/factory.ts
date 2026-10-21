@@ -64,12 +64,14 @@ const LOGS_DIR = process.env.FACTORY_LOG_DIR
   : path.join(__dirname, '../../factory/logs');
 
 /**
- * The environment of every factory process: the Studio's own, plus the repositories the user opened. The factory
- * works only where it is allowed to, and does not take a repository's word for it: the user opened it here.
+ * The environment of every factory process: the Studio's own, plus the repositories the user opened, plus where
+ * Settings says the factory works. The factory works only where it is allowed to, and does not take a repository's
+ * word for it: the user opened it here.
  */
 function cliEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const repositories = knownRepositories({ saved: loadSettings().global.savedRepositories, logsDir: LOGS_DIR }).map((repo) => repo.path);
-  return factoryEnvironment({ base: process.env, repositories, overrides });
+  const { global } = loadSettings();
+  const repositories = knownRepositories({ saved: global.savedRepositories, logsDir: LOGS_DIR }).map((repo) => repo.path);
+  return factoryEnvironment({ base: process.env, repositories, settings: { workspaceRoot: global.workspaceRoot, worktreesDir: global.worktreesDir }, overrides });
 }
 
 /** Directory of a run. `basename` keeps a crafted id from escaping the logs directory. */

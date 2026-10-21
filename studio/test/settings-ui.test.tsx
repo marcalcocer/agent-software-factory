@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import App from '../src/App';
 import { SettingsPanel } from '../src/components/SettingsPanel';
 import type { WorktreeReport } from '../shared/types';
-import { appHandlers, idleWatcher, installFakeApi, REPO_PATH } from './support/fake-api';
+import { appHandlers, idleWatcher, installFakeApi, PLACES, REPO_PATH } from './support/fake-api';
 
 const global = (over: Record<string, unknown> = {}) => ({
   theme: 'light', workspaceRoot: '/home/dev/workspace', defaultMaxAttempts: 3, dryRunByDefault: false, logLevel: 'info', activeProvider: 'claude-cli', ...over,
@@ -24,6 +24,7 @@ function settings(handlers: Record<string, (...args: any[]) => unknown> = {}, pr
     'pr-watch:get-settings': () => ({ defaults: idleWatcher().settings, repos: {} }),
     'pr-watch:save-settings': () => undefined,
     'factory:list-repos': () => [{ name: 'invest-track', path: REPO_PATH, recentRuns: 1 }],
+    'places:get': () => PLACES,
     ...handlers,
   });
   const onSaved = vi.fn();
@@ -56,7 +57,84 @@ describe('where tasks work - the default', () => {
 
     await waitFor(() => expect(api.callsTo('settings:update').length).toBe(1));
     expect((api.callsTo('settings:update')[0]![0] as { global: { isolation: string } }).global.isolation).toBe('in-place');
-    expect(onSaved).toHaveBeenCalledWith({ isolation: 'in-place', workspaceRoot: '/home/dev/workspace' });
+    expect(onSaved).toHaveBeenCalledWith({ isolation: 'in-place' });
+  });
+});
+
+describe('where the factory works', () => {
+  const savedGlobal = (api: ReturnType<typeof installFakeApi>) => (api.callsTo('settings:update')[0]![0] as { global: Record<string, unknown> }).global;
+
+  it('says what the factory is using for the workspace and for the checkouts - as the factory says it', async () => {
+    settings({ 'places:get': () => ({ ...PLACES, workspaceRoot: '/srv/code', worktreesDir: '/srv/checkouts' }) });
+
+    expect((await screen.findByTestId('in-use-FACTORY_WORKSPACE_ROOT')).textContent).toBe('In use now: /srv/code');
+    expect(screen.getByTestId('in-use-FACTORY_WORKTREES_DIR').textContent).toBe('In use now: /srv/checkouts');
+  });
+
+  it('has a field for the folder of checkouts - empty means the default, and says so', async () => {
+    settings();
+
+    const field = (await screen.findByLabelText('Where worktrees are kept')) as HTMLInputElement;
+
+    expect(field.value).toBe('');
+    expect(field.placeholder).toBe('Empty: a hidden folder inside the workspace');
+    expect(screen.getByText(/Keep it somewhere that survives a restart, and not inside a project that has node_modules/)).toBeTruthy();
+    expect(screen.getByText(/checkouts already made stay where they are/)).toBeTruthy();
+  });
+
+  it('saves the folder the user typed, and asks the screen to look again where the factory works', async () => {
+    const { api, onSaved } = settings();
+    const user = userEvent.setup();
+
+    await user.type(await screen.findByLabelText('Where worktrees are kept'), '  /home/dev/checkouts  ');
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => expect(api.callsTo('settings:update').length).toBe(1));
+    expect(savedGlobal(api).worktreesDir).toBe('/home/dev/checkouts');
+    expect(onSaved).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the one that was saved, and saves an emptied field as no setting at all - not as an empty one', async () => {
+    const { api } = settings({ 'settings:get': () => ({ global: global({ worktreesDir: '/home/dev/checkouts' }), repos: {} }) });
+    const user = userEvent.setup();
+
+    const field = (await screen.findByLabelText('Where worktrees are kept')) as HTMLInputElement;
+    expect(field.value).toBe('/home/dev/checkouts');
+    await user.clear(field);
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => expect(api.callsTo('settings:update').length).toBe(1));
+    expect('worktreesDir' in savedGlobal(api)).toBe(false);
+  });
+
+  it('warns when the checkouts would be kept where a restart clears them', async () => {
+    settings({ 'places:get': () => ({ ...PLACES, worktreesDir: '/tmp/factory-demo/workspace/.factory/worktrees', volatile: true }) });
+
+    const note = await screen.findByRole('note');
+
+    expect(note.textContent).toContain('This folder is in the system\'s temporary folder: a restart can clear it');
+    expect(within(screen.getByTestId('in-use-FACTORY_WORKTREES_DIR')).getByRole('note')).toBe(note);
+  });
+
+  it('does not warn about a folder that stays', async () => {
+    settings();
+    await screen.findByTestId('in-use-FACTORY_WORKTREES_DIR');
+
+    expect(screen.queryByRole('note')).toBeNull();
+  });
+
+  it('says that a field is not used when the environment the Studio was started with decides that place', async () => {
+    settings({ 'places:get': () => ({ ...PLACES, fixedBy: ['FACTORY_WORKTREES_DIR'] }) });
+
+    expect((await screen.findByTestId('in-use-FACTORY_WORKTREES_DIR')).textContent).toContain('FACTORY_WORKTREES_DIR is set where the Studio was started, so this field is not used.');
+    expect(screen.getByTestId('in-use-FACTORY_WORKSPACE_ROOT').textContent).not.toContain('is set where the Studio was started');
+  });
+
+  it('is still usable when the factory cannot say where it works - the fields stay, what is in use is not shown', async () => {
+    settings({ 'places:get': () => { throw new Error('the factory did not start'); } });
+
+    expect(await screen.findByLabelText('Where worktrees are kept')).toBeTruthy();
+    expect(screen.queryByTestId('in-use-FACTORY_WORKTREES_DIR')).toBeNull();
   });
 });
 

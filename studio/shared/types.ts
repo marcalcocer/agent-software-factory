@@ -515,7 +515,13 @@ export interface AuthProvider {
 
 export interface GlobalSettings {
   theme: 'dark' | 'light' | 'system';
+  /** Where repositories are found by name. A repository anywhere else works too: it is added in the sidebar. */
   workspaceRoot: string;
+  /**
+   * Where each task's checkout is made. Absent or empty: the factory's own default, `<workspace>/.factory/worktrees`.
+   * Somewhere that survives a restart - not the temporary folder.
+   */
+  worktreesDir?: string;
   defaultMaxAttempts: number;
   dryRunByDefault: boolean; // Run in dry-run mode (no API calls, no git writes)
   /**
@@ -650,6 +656,20 @@ export interface WorktreeInfo {
   exists: boolean;
   /** Files with changes that are not committed (0 when the folder is gone). */
   changedFiles: number;
+}
+
+/** Where the factory works, as the factory itself says it (the `places` command). */
+export interface Places {
+  /** Where a repository is found by name. */
+  workspaceRoot: string;
+  /** Where each task's checkout is made. */
+  worktreesDir: string;
+  /** The repositories the Studio opened, which the factory may work on wherever they are. */
+  extraRepositories: string[];
+  /** The folder of checkouts is under the system's temporary folder: a restart can clear it, with any work in it that is not committed. */
+  volatile: boolean;
+  /** Places the environment the Studio was started with decides: the fields in Settings do not apply to them. */
+  fixedBy: string[];
 }
 
 /** One of the factory's checkouts of a repository (from `worktree-list`). */

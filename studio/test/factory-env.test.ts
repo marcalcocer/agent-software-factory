@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { factoryEnvironment, knownRepositories } from '../electron/services/factory-env';
+import { factoryEnvironment, fixedByEnvironment, knownRepositories } from '../electron/services/factory-env';
 
 let world: string;
 beforeEach(() => {
@@ -100,6 +100,58 @@ describe('factoryEnvironment', () => {
   });
 });
 
+describe('factoryEnvironment: where the factory works, from Settings', () => {
+  const home = '/home/dev';
+  const base = { PATH: '/usr/bin', HOME: home };
+  const env = (settings: { workspaceRoot?: string; worktreesDir?: string }, from: NodeJS.ProcessEnv = base) =>
+    factoryEnvironment({ base: from, repositories: [], settings, home });
+
+  it('hands over a workspace the user chose', () => {
+    expect(env({ workspaceRoot: '/data/projects' }).FACTORY_WORKSPACE_ROOT).toBe('/data/projects');
+  });
+
+  it('does not hand over the workspace Settings starts with: that is not a choice, and the factory\'s .env may say otherwise', () => {
+    for (const standard of ['/home/dev/workspace', '/home/dev/workspace/', '~/workspace', '/home/dev/projects/../workspace']) {
+      expect('FACTORY_WORKSPACE_ROOT' in env({ workspaceRoot: standard }), standard).toBe(false);
+    }
+  });
+
+  it('hands over the folder of checkouts the user chose - as written, the factory expands ~', () => {
+    expect(env({ worktreesDir: '/data/checkouts' }).FACTORY_WORKTREES_DIR).toBe('/data/checkouts');
+    expect(env({ worktreesDir: '  ~/checkouts  ' }).FACTORY_WORKTREES_DIR).toBe('~/checkouts');
+  });
+
+  it('hands over nothing for a field left empty', () => {
+    const made = env({ workspaceRoot: '  ', worktreesDir: '' });
+
+    expect('FACTORY_WORKSPACE_ROOT' in made).toBe(false);
+    expect('FACTORY_WORKTREES_DIR' in made).toBe(false);
+  });
+
+  it('lets the environment the Studio was started with win - whoever set it meant it', () => {
+    const made = env({ workspaceRoot: '/data/projects', worktreesDir: '/data/checkouts' }, { ...base, FACTORY_WORKSPACE_ROOT: '/demo/workspace', FACTORY_WORKTREES_DIR: '/demo/checkouts' });
+
+    expect(made).toMatchObject({ FACTORY_WORKSPACE_ROOT: '/demo/workspace', FACTORY_WORKTREES_DIR: '/demo/checkouts' });
+  });
+
+  it('treats an empty variable as not set, like the factory does', () => {
+    const made = env({ worktreesDir: '/data/checkouts' }, { ...base, FACTORY_WORKTREES_DIR: '  ' });
+
+    expect(made.FACTORY_WORKTREES_DIR).toBe('/data/checkouts');
+  });
+});
+
+describe('fixedByEnvironment', () => {
+  it('names the places the environment decides - the fields in Settings do not apply to those', () => {
+    expect(fixedByEnvironment({ FACTORY_WORKSPACE_ROOT: '/demo/workspace', FACTORY_WORKTREES_DIR: '/demo/checkouts', PATH: '/usr/bin' })).toEqual(['FACTORY_WORKSPACE_ROOT', 'FACTORY_WORKTREES_DIR']);
+    expect(fixedByEnvironment({ FACTORY_WORKTREES_DIR: '/demo/checkouts' })).toEqual(['FACTORY_WORKTREES_DIR']);
+  });
+
+  it('names none when they are not set, or are empty', () => {
+    expect(fixedByEnvironment({ PATH: '/usr/bin', FACTORY_WORKSPACE_ROOT: '', FACTORY_WORKTREES_DIR: '   ' })).toEqual([]);
+  });
+});
+
 /* -------------------------------------------------------------------------- */
 /* The contract with the real factory                                          */
 /* -------------------------------------------------------------------------- */
@@ -142,6 +194,22 @@ describe('what the real factory makes of it', () => {
     expect(ask(told, ['initiative-list', '--repo', opened], 'INITIATIVE_LIST_JSON')).toMatchObject({ repoPath: opened });
     expect(ask(told, ['initiative-list', '--repo', opened], 'INITIATIVE_LIST_JSON').error).toBeUndefined();
     expect(ask(told, ['initiative-list', '--repo', stranger], 'INITIATIVE_LIST_JSON').error).toContain('is outside the places the factory may work in');
+  }, 60_000);
+
+  it('says, through `places`, the folders Settings chose - and the environment\'s own win over them', () => {
+    const minimal = { PATH: process.env.PATH, HOME: process.env.HOME, FACTORY_LOG_DIR: path.join(world, 'logs') };
+    const settings = { workspaceRoot: path.join(world, 'chosen-workspace'), worktreesDir: path.join(world, 'chosen-checkouts') };
+    const places = (from: NodeJS.ProcessEnv) =>
+      ask(factoryEnvironment({ base: from, repositories: [], settings }), ['places'], 'PLACES_JSON') as unknown as { workspaceRoot: string; worktreesDir: string };
+
+    expect(places(minimal)).toMatchObject({ workspaceRoot: settings.workspaceRoot, worktreesDir: settings.worktreesDir });
+
+    // The checkouts follow the workspace unless they were chosen too.
+    const onlyWorkspace = factoryEnvironment({ base: minimal, repositories: [], settings: { workspaceRoot: settings.workspaceRoot } });
+    expect(ask(onlyWorkspace, ['places'], 'PLACES_JSON')).toMatchObject({ worktreesDir: path.join(settings.workspaceRoot, '.factory', 'worktrees') });
+
+    const fixed = { ...minimal, FACTORY_WORKSPACE_ROOT: path.join(world, 'from-environment'), FACTORY_WORKTREES_DIR: path.join(world, 'from-environment-checkouts') };
+    expect(places(fixed)).toMatchObject({ workspaceRoot: fixed.FACTORY_WORKSPACE_ROOT, worktreesDir: fixed.FACTORY_WORKTREES_DIR });
   }, 60_000);
 });
 

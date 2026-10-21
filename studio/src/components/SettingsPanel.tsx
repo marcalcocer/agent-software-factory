@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { PrWatchSettingsBundle } from '../../shared/types';
+import type { Places, PrWatchSettingsBundle } from '../../shared/types';
 import type { ThemeSetting } from '../theme';
 import { PullRequestSettings } from './PullRequestSettings';
 import { WorktreeList } from './WorktreeList';
@@ -9,12 +9,14 @@ interface SettingsPanelProps {
   onClose: () => void;
   onThemeChange?: (theme: ThemeSetting) => void;
   /** Called after the settings were saved, with the ones the rest of the screen depends on. */
-  onSaved?: (settings: { isolation: 'worktree' | 'in-place'; workspaceRoot: string }) => void;
+  onSaved?: (settings: { isolation: 'worktree' | 'in-place' }) => void;
 }
 
 interface Settings {
   theme: 'dark' | 'light' | 'system';
   workspaceRoot: string;
+  /** Where each task's checkout is made. Absent: the factory's default, inside the workspace. */
+  worktreesDir?: string;
   defaultMaxAttempts: number;
   dryRunByDefault: boolean;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
@@ -23,6 +25,30 @@ interface Settings {
   isolation?: 'worktree' | 'in-place';
   /** Compare the roadmap with what a phase delivered when it is merged. Absent: yes. */
   autoReconcile?: boolean;
+}
+
+/**
+ * What the factory is using for a place, said by the factory - and why the field above may not be the reason: the
+ * environment the Studio was started with decides some places, and a checkouts folder can be somewhere a restart clears.
+ */
+function InUse({ folder, variable, places, volatile = false }: { folder: string | undefined; variable: string; places: Places | null; volatile?: boolean }) {
+  if (!places || !folder) return null;
+  return (
+    <div className="mt-1 space-y-1 text-xs" data-testid={`in-use-${variable}`}>
+      <p className="text-slate-500 dark:text-slate-400">
+        In use now: <code className="font-mono break-all">{folder}</code>
+      </p>
+      {places.fixedBy.includes(variable) && (
+        <p className="text-amber-700 dark:text-amber-300">{variable} is set where the Studio was started, so this field is not used.</p>
+      )}
+      {volatile && (
+        <p role="note" className="text-amber-700 dark:text-amber-300">
+          This folder is in the system&apos;s temporary folder: a restart can clear it, and with it any work in a checkout that is not committed. Choose a
+          folder that stays.
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function SettingsPanel({ isOpen, onClose, onThemeChange, onSaved }: SettingsPanelProps) {
@@ -39,6 +65,8 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange, onSaved }: Setti
   /** Pull-request settings are owned by the watcher; `null` until they have been read. */
   const [prSettings, setPrSettings] = useState<PrWatchSettingsBundle | null>(null);
   const [repoNames, setRepoNames] = useState<Array<{ name: string; path: string }>>([]);
+  /** Where the factory works, as it says; `null` until it has answered (it is a process of its own). */
+  const [places, setPlaces] = useState<Places | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -54,12 +82,14 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange, onSaved }: Setti
         setSettings(savedSettings.global);
       }
       // Independent of the general settings: if either is unavailable the rest still works.
-      const [bundle, repos] = await Promise.all([
+      const [bundle, repos, where] = await Promise.all([
         window.api.invoke('pr-watch:get-settings').catch(() => null),
         window.api.invoke('factory:list-repos').catch(() => []),
+        window.api.invoke('places:get').catch(() => null),
       ]);
       setPrSettings(bundle);
       setRepoNames(repos.map((repo) => ({ name: repo.name, path: repo.path })));
+      setPlaces(where);
     } catch (error) {
       console.error('Failed to load settings:', error);
     } finally {
@@ -70,11 +100,14 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange, onSaved }: Setti
   const handleSave = async () => {
     setSaving(true);
     try {
-      await window.api.invoke('settings:update', { global: settings });
+      // A field left empty is not a setting: the key goes, and the factory's default applies.
+      const { worktreesDir, ...rest } = settings;
+      const chosen = worktreesDir?.trim();
+      await window.api.invoke('settings:update', { global: { ...rest, ...(chosen ? { worktreesDir: chosen } : {}) } });
       if (prSettings) {
         await window.api.invoke('pr-watch:save-settings', { defaults: prSettings.defaults, repos: prSettings.repos });
       }
-      onSaved?.({ isolation: settings.isolation ?? 'worktree', workspaceRoot: settings.workspaceRoot });
+      onSaved?.({ isolation: settings.isolation ?? 'worktree' });
       onClose();
     } catch (error) {
       console.error('Failed to save settings:', error);
@@ -127,18 +160,23 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange, onSaved }: Setti
                 </select>
               </div>
 
-              {/* Workspace Root */}
+              {/* Workspace */}
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Workspace Root
+                <label htmlFor="workspace-root" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Workspace
                 </label>
                 <input
+                  id="workspace-root"
                   type="text"
                   value={settings.workspaceRoot}
                   onChange={(e) => setSettings({ ...settings, workspaceRoot: e.target.value })}
                   placeholder="/path/to/workspace"
                   className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-900"
                 />
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  Where a repository is found by its name. A repository anywhere else works too: add it with + in the sidebar.
+                </p>
+                <InUse folder={places?.workspaceRoot} variable="FACTORY_WORKSPACE_ROOT" places={places} />
               </div>
 
               {/* Default Max Attempts */}
@@ -203,6 +241,26 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange, onSaved }: Setti
                     A worktree is a copy of the repository for the task alone: your folder is not touched and may have changes, and
                     several tasks can run at once. Each task can still choose on its form.
                   </p>
+                </div>
+
+                <div>
+                  <label htmlFor="worktrees-dir" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Where worktrees are kept
+                  </label>
+                  <input
+                    id="worktrees-dir"
+                    type="text"
+                    value={settings.worktreesDir ?? ''}
+                    onChange={(e) => setSettings({ ...settings, worktreesDir: e.target.value })}
+                    placeholder="Empty: a hidden folder inside the workspace"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-900"
+                  />
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    One folder for every repository. Keep it somewhere that survives a restart, and not inside a project that has node_modules: a
+                    checkout there would find that project&apos;s packages, and its tests could pass here and fail in CI. A change applies to the
+                    tasks started after it; checkouts already made stay where they are.
+                  </p>
+                  <InUse folder={places?.worktreesDir} variable="FACTORY_WORKTREES_DIR" places={places} volatile={places?.volatile ?? false} />
                 </div>
 
                 <label className="flex items-center gap-3 cursor-pointer">

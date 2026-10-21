@@ -5,11 +5,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import App from '../src/App';
 import { TaskInput } from '../src/components/TaskInput';
-import { appHandlers, installFakeApi, REPO_PATH } from './support/fake-api';
+import { appHandlers, idleWatcher, installFakeApi, PLACES, REPO_PATH } from './support/fake-api';
 
 const form = (over: Partial<React.ComponentProps<typeof TaskInput>> = {}) => {
   const props = {
-    repoName: 'invest-track', repoPath: REPO_PATH, workspaceRoot: '/home/dev/workspace/', value: 'Add pagination', onChange: vi.fn(), onSubmit: vi.fn(), loading: false,
+    repoName: 'invest-track', repoPath: REPO_PATH, places: { worktreesDir: '/home/dev/workspace/.factory/worktrees/', volatile: false }, value: 'Add pagination', onChange: vi.fn(), onSubmit: vi.fn(), loading: false,
     hasHistory: false, pipeline: { qa: true, review: true, security: true, documentation: true, polish: true }, onPipelineChange: vi.fn(),
     isolation: 'worktree' as const, onIsolationChange: vi.fn(), phasing: 'auto' as const, onPhasingChange: vi.fn(), ...over,
   };
@@ -144,14 +144,70 @@ describe('what the form sends', () => {
     expect(screen.queryByText(/Error invoking remote method/)).toBeNull();
   });
 
-  it('previews the folder under the workspace Settings names', async () => {
+  it('previews the folder the factory says it will make checkouts in - not one worked out from Settings', async () => {
     await start({
+      // Settings say one workspace; the factory - which knows its environment, its .env and what it was handed - says another.
       'settings:get': () => ({
-        global: { theme: 'light', workspaceRoot: '/srv/code', defaultMaxAttempts: 3, dryRunByDefault: false, logLevel: 'info', activeProvider: 'claude-cli' },
+        global: { theme: 'light', workspaceRoot: '/home/dev/workspace', defaultMaxAttempts: 3, dryRunByDefault: false, logLevel: 'info', activeProvider: 'claude-cli' },
         repos: {},
       }),
+      'places:get': () => ({ ...PLACES, workspaceRoot: '/srv/code', worktreesDir: '/srv/checkouts' }),
     });
 
-    expect(await screen.findByText('/srv/code/.factory/worktrees/invest-track/<task id>')).toBeTruthy();
+    expect(await screen.findByText('/srv/checkouts/invest-track/<task id>')).toBeTruthy();
+  });
+
+  it('asks the factory again where it works once Settings are saved - the folder may have been changed', async () => {
+    let folder = '/home/dev/workspace/.factory/worktrees';
+    const { api, user } = await start({
+      'places:get': () => ({ ...PLACES, worktreesDir: folder }),
+      'settings:update': () => undefined,
+      'pr-watch:get-settings': () => ({ defaults: idleWatcher().settings, repos: {} }),
+      'pr-watch:save-settings': () => undefined,
+    });
+    await screen.findByText(`${folder}/invest-track/<task id>`);
+    const asked = api.callsTo('places:get').length;
+
+    await user.click(screen.getByRole('button', { name: /Settings/ }));
+    folder = '/home/dev/checkouts'; // what the factory will say after the save
+    await user.type(await screen.findByLabelText('Where worktrees are kept'), folder);
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    expect(await screen.findByText('/home/dev/checkouts/invest-track/<task id>')).toBeTruthy();
+    expect(api.callsTo('places:get').length).toBeGreaterThan(asked);
+  });
+
+  it('warns on the form when that folder is where a restart clears it', async () => {
+    await start({ 'places:get': () => ({ ...PLACES, worktreesDir: '/tmp/factory-demo/workspace/.factory/worktrees', volatile: true }) });
+
+    expect((await screen.findByTestId('volatile-folder')).textContent).toContain('a restart can clear it');
+    expect(screen.getByText('/tmp/factory-demo/workspace/.factory/worktrees/invest-track/<task id>')).toBeTruthy();
+  });
+
+  it('does not warn about a folder that stays - nor when the task works in the repository, which has no checkout', async () => {
+    const { user } = await start();
+    await screen.findByText('/home/dev/workspace/.factory/worktrees/invest-track/<task id>');
+    expect(screen.queryByTestId('volatile-folder')).toBeNull();
+
+    await user.click(screen.getByRole('radio', { name: /My repository/ }));
+    expect(screen.queryByTestId('volatile-folder')).toBeNull();
+  });
+
+  it('says where it will be made without guessing until the factory has answered', async () => {
+    await start({ 'places:get': () => new Promise(() => {}) });
+
+    expect(screen.getByTestId('isolation-preview').textContent).toContain('<where checkouts are kept>/invest-track/<task id>');
+  });
+});
+
+describe('the volatile warning on the form itself', () => {
+  it('shows only for an isolated worktree', () => {
+    form({ places: { worktreesDir: '/tmp/x', volatile: true } });
+    expect(screen.getByTestId('volatile-folder')).toBeTruthy();
+  });
+
+  it('is not shown for the repository itself, or for a folder that stays', () => {
+    form({ isolation: 'in-place', places: { worktreesDir: '/tmp/x', volatile: true } });
+    expect(screen.queryByTestId('volatile-folder')).toBeNull();
   });
 });

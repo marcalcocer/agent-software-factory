@@ -8,8 +8,11 @@ interface TaskInputProps {
   repoName: string;
   /** The repository's folder, for the preview of where an in-place task would work. */
   repoPath?: string;
-  /** Where checkouts are kept (`<workspace>/.factory/worktrees/...`), for the preview of the folder a task would get. */
-  workspaceRoot?: string;
+  /**
+   * Where the factory makes checkouts, as it says itself - for the preview of the folder a task would get, and the
+   * warning when that is somewhere a restart clears. Absent until the factory has answered.
+   */
+  places?: { worktreesDir: string; volatile: boolean };
   /** Where the task works: a checkout of its own (default), or the user's repository. */
   isolation: Isolation;
   onIsolationChange: (isolation: Isolation) => void;
@@ -37,13 +40,13 @@ const stripTrailingSlash = (value: string): string => value.replace(/\/+$/, '');
 function ExecutionOptions({
   repoName,
   repoPath,
-  workspaceRoot,
+  places,
   isolation,
   onIsolationChange,
   phasing,
   onPhasingChange,
-}: Pick<TaskInputProps, 'repoName' | 'repoPath' | 'workspaceRoot' | 'isolation' | 'onIsolationChange' | 'phasing' | 'onPhasingChange'>) {
-  const folder = `${stripTrailingSlash(workspaceRoot ?? '<workspace>')}/.factory/worktrees/${repoName}/<task id>`;
+}: Pick<TaskInputProps, 'repoName' | 'repoPath' | 'places' | 'isolation' | 'onIsolationChange' | 'phasing' | 'onPhasingChange'>) {
+  const folder = `${stripTrailingSlash(places?.worktreesDir ?? '<where checkouts are kept>')}/${repoName}/<task id>`;
   const radio = 'mt-0.5';
   return (
     <fieldset className="space-y-2 text-sm text-slate-700 dark:text-slate-200" data-testid="execution-options">
@@ -73,6 +76,12 @@ function ExecutionOptions({
           </>
         )}
       </p>
+      {isolation === 'worktree' && places?.volatile && (
+        <p role="note" data-testid="volatile-folder" className="text-xs text-amber-700 dark:text-amber-300">
+          That folder is in the system&apos;s temporary folder: a restart can clear it, and with it any work in a checkout that is not committed. Choose
+          another in Settings.
+        </p>
+      )}
       <label className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-slate-600 dark:text-slate-300">Phases:</span>
         <select

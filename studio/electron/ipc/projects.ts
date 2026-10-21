@@ -9,14 +9,16 @@
 import { ipcMain, shell } from 'electron';
 import { spawn } from 'node:child_process';
 
-import type { PhaseReconcileReport, Project, ProjectEdit, WorktreeInfo, WorktreeReport } from '../../shared/types';
+import type { PhaseReconcileReport, Places, Project, ProjectEdit, WorktreeInfo, WorktreeReport } from '../../shared/types';
 import { ensureClaudeAuth } from '../services/claude-auth.js';
+import { fixedByEnvironment } from '../services/factory-env.js';
 import {
   checkoutWorktree,
   editProject,
   gcWorktrees,
   listProjects,
   listWorktrees,
+  readPlaces,
   removeWorktree,
   worktreeInfoOf,
 } from '../services/projects.js';
@@ -50,6 +52,9 @@ function checkoutOfRun(runId: string) {
   }
   return { repoPath: state.repoPath, folder: state.run.workPath };
 }
+
+/** Where the factory works. Asked of the factory, with the settings as they are now: it is by construction what the next task does. */
+ipcMain.handle('places:get', async (): Promise<Places> => ({ ...(await readPlaces(runFactoryCli)), fixedBy: fixedByEnvironment(process.env) }));
 
 ipcMain.handle('project:list', async (_event, repoPath: string): Promise<Project[]> => listProjects(runFactoryCli, repoPath));
 
