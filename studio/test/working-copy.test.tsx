@@ -296,3 +296,73 @@ describe('the run screen', () => {
     expect(screen.getByTestId('work-path').textContent).toBe(CHECKOUT);
   });
 });
+
+describe('a run that has not said where it works yet', () => {
+  const NOT_PREPARED = [
+    { at: '2026-10-20T15:00:00Z', type: 'run_started', runId: 'R1', repo: '/home/dev/workspace/invest-track' },
+  ];
+  const PREPARED = [...NOT_PREPARED, { at: '2026-10-20T15:00:05Z', type: 'step_completed', step: 'prepare-run', isolation: 'worktree', workPath: CHECKOUT }];
+  const running = (extra: Record<string, unknown> = {}) => ({
+    runId: 'R1', repoId: 'invest-track', task: 'Add pagination', title: 'Add pagination', status: 'RUNNING', attempts: 0, startedAt: '2026-10-20T15:00:00Z',
+    steps: [], kind: 'run', rootRunId: 'R1', round: 1, ...extra,
+  });
+  const handlers = (state: { events: unknown[]; run: Record<string, unknown>; info: WorktreeInfo | null }) => ({
+    'factory:get': () => state.run,
+    'factory:get-artifacts': () => [],
+    'factory:get-events': () => state.events,
+    'factory:get-pending-input': () => null,
+    'factory:get-output': () => ({ lines: [], total: 0 }),
+    'factory:get-rounds': () => [],
+    'worktree:info': () => state.info,
+  });
+
+  it('says it is preparing - not "Your repository", which is what a record without a working copy reads as', async () => {
+    const state = { events: NOT_PREPARED, run: running({ isolation: 'in-place', workPath: '/home/dev/workspace/invest-track' }), info: checkout({ isolation: 'in-place', path: '/home/dev/workspace/invest-track' }) };
+    const api = installFakeApi(handlers(state));
+
+    render(<PipelineView runId="R1" isRunning />);
+
+    expect(await screen.findByTestId('working-copy-preparing')).toBeTruthy();
+    expect(screen.getByText('Preparing the working copy...')).toBeTruthy();
+    expect(screen.queryByTestId('working-copy')).toBeNull();
+    expect(screen.queryByText('Your repository')).toBeNull();
+    expect(api.callsTo('worktree:info')).toEqual([]); // nothing is asked about a folder that is not decided
+  });
+
+  it('shows where it works as soon as the run has prepared - without waiting for it to finish', async () => {
+    const state = { events: NOT_PREPARED as unknown[], run: running({ isolation: 'in-place', workPath: '/home/dev/workspace/invest-track' }), info: null as WorktreeInfo | null };
+    installFakeApi(handlers(state));
+    render(<PipelineView runId="R1" isRunning />);
+    await screen.findByTestId('working-copy-preparing');
+
+    // The factory finishes preparing: the run record gains its checkout, then the event is written.
+    state.run = running({ isolation: 'worktree', workPath: CHECKOUT });
+    state.info = checkout();
+    state.events = PREPARED;
+
+    expect(await screen.findByTestId('work-mode', undefined, { timeout: 5000 })).toHaveProperty('textContent', 'Isolated worktree');
+    expect(screen.getByTestId('work-path').textContent).toBe(CHECKOUT);
+    expect(screen.queryByTestId('working-copy-preparing')).toBeNull();
+  }, 10_000);
+
+  it('shows nothing about a working copy for a run that failed before it was prepared - it never worked anywhere', async () => {
+    const state = { events: NOT_PREPARED, run: running({ status: 'FAILED', error: 'The branch factory/f0001/x is already checked out at /w/app (your repository).' }), info: checkout({ isolation: 'in-place' }) };
+    installFakeApi(handlers(state));
+
+    render(<PipelineView runId="R1" isRunning={false} />);
+
+    // The run is loaded and shown (its own error is on screen) - and says nothing about a working copy.
+    expect((await screen.findAllByText(/already checked out at/)).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId('working-copy')).toBeNull();
+    expect(screen.queryByTestId('working-copy-preparing')).toBeNull();
+  });
+
+  it('still shows where an old run worked - one from before checkouts existed has the event, and the repository as its place', async () => {
+    const state = { events: [...NOT_PREPARED, { at: '2026-10-20T15:00:05Z', type: 'step_completed', step: 'prepare-run' }], run: running({ status: 'DELIVERED_WITHOUT_PR' }), info: checkout({ isolation: 'in-place', path: '/home/dev/workspace/invest-track' }) };
+    installFakeApi(handlers(state));
+
+    render(<PipelineView runId="R1" isRunning={false} />);
+
+    expect(await screen.findByTestId('work-mode')).toHaveProperty('textContent', 'Your repository');
+  });
+});

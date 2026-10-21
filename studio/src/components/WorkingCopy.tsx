@@ -55,6 +55,23 @@ function ModeBadge({ isolation }: { isolation: 'worktree' | 'in-place' }) {
 /* On a run                                                                    */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * What a run shows until it has said where it works. The factory decides that (and makes the checkout) while
+ * it prepares the run, a little after the run record exists - and a record without a working copy reads as
+ * "your repository", which for a task about to get a checkout of its own is the opposite of the truth.
+ */
+export function WorkingCopyPreparing() {
+  return (
+    <section
+      aria-label="Where this task works"
+      data-testid="working-copy-preparing"
+      className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs text-slate-500 dark:text-slate-400"
+    >
+      Preparing the working copy...
+    </section>
+  );
+}
+
 interface WorkingCopyBarProps {
   runId: string;
   /** Changes when the run's state does (it finished, a round started): the folder is looked at again. */

@@ -17,7 +17,7 @@ import {
 import { titleFromTask } from '../lib/runTitle';
 import { AgentDetail } from './AgentDetail';
 import { HumanInputPanel } from './HumanInputPanel';
-import { WorkingCopyBar } from './WorkingCopy';
+import { WorkingCopyBar, WorkingCopyPreparing } from './WorkingCopy';
 
 /** Turn raw factory errors into a friendlier, actionable message. */
 function humanizeError(raw: string): string {
@@ -606,6 +606,9 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
               : 'Multi-agent pipeline'
           : outcome.subtitle;
 
+  /** The run has finished preparing: its record says where it works. */
+  const prepared = events.some((event) => event.type === 'step_completed' && event.step === 'prepare-run');
+
   const selectedNode = derived.nodes.find((n) => n.id === selectedAgent) ?? null;
   const selectedLogs = selectedNode
     ? attributedLogs.filter((l) => l.ids.includes(selectedNode.id)).map((l) => l.text)
@@ -667,8 +670,13 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
         </div>
       </div>
 
-      {/* Where the work is: the folder and the branch, so the user can look at the code by hand. */}
-      {runId && runInfo && <WorkingCopyBar runId={runId} refreshKey={`${runInfo.status}:${runInfo.round ?? 1}`} />}
+      {/* Where the work is: the folder and the branch, so the user can look at the code by hand. Only once the
+          run has said so: until its preparation is done the record cannot tell (and would say "your
+          repository"), and a run that failed before that never worked anywhere. */}
+      {runId && runInfo && prepared && (
+        <WorkingCopyBar runId={runId} refreshKey={`${runInfo.status}:${runInfo.round ?? 1}`} />
+      )}
+      {runId && runInfo && !prepared && derived.lifecycle === 'running' && <WorkingCopyPreparing />}
 
       {/* The rounds of this task: one task, several rounds, each with its own results */}
       {(rounds.length > 1 || isRound) && (
