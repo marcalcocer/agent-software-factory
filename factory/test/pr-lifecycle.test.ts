@@ -68,7 +68,7 @@ describe('merging from the Studio', () => {
 
     expect((await phases()).map((phase) => phase.status)).toEqual(['MERGED', 'PLANNED', 'PLANNED']);
     expect(outcome.phase).toMatchObject({
-      initiativeId: task.initiativeId, phaseId: `${task.initiativeId}-p1`, ordinal: 1, total: 3, title: 'Greeting helper',
+      initiativeId: task.initiativeId, kind: 'project', phaseId: `${task.initiativeId}-p1`, ordinal: 1, total: 3, title: 'Greeting helper',
       merged: true, alreadySettled: false, initiativeDone: false,
       next: { phaseId: `${task.initiativeId}-p2`, ordinal: 2, title: 'Use it in the entry point' },
     });
@@ -136,7 +136,8 @@ describe('merging from the Studio', () => {
 
     const outcome = await mergePullRequest({ repoPath: ws.repo, number: 9, expectedHeadSha: lone.headSha, subject: 'feat: x', body: '', deleteBranch: true, returnToBase: true });
 
-    expect(outcome.phase).toMatchObject({ merged: true, total: 1, next: null, initiativeDone: true });
+    // A task that was never split into phases says so: whoever shows the outcome must not speak of a project.
+    expect(outcome.phase).toMatchObject({ kind: 'quick', merged: true, total: 1, next: null, initiativeDone: true });
     expect((await withStore((store) => store.getInitiative(lone.initiativeId)))!.status).toBe('DONE');
   });
 });

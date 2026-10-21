@@ -13,7 +13,7 @@
  * matters (a merge on GitHub, a closed pull request) has already happened, and what it could not do comes
  * back as a note for the user instead of as a failure.
  */
-import { withStore, type InitiativeWithPhases, type PhaseRow } from '../initiatives/store.ts';
+import { withStore, type InitiativeKind, type InitiativeWithPhases, type PhaseRow } from '../initiatives/store.ts';
 import { readArtifact } from './logger-tools.ts';
 import { loadRegistry, pullRequestKey } from './pr-registry.ts';
 import { removeWorktree } from './worktree.ts';
@@ -30,6 +30,12 @@ export interface SettleInput {
 /** The phase a pull request was, and where its project stands now. */
 export interface SettledPhase {
   initiativeId: string;
+  /**
+   * `quick` is a task that was never split into phases - a project of one phase that nobody planned. Its pull
+   * request settles like any other, but there is no project to speak of: whoever shows this should not talk of
+   * phases, a roadmap or a finished project for it.
+   */
+  kind: InitiativeKind;
   initiativeTitle: string;
   phaseId: string;
   title: string;
@@ -86,6 +92,7 @@ export async function settlePullRequest(input: SettleInput): Promise<SettleResul
       const settled = initiative.phases.find((other) => other.id === phase.id) ?? phase;
       return {
         initiativeId: initiative.id,
+        kind: initiative.kind,
         initiativeTitle: initiative.title,
         phaseId: phase.id,
         title: settled.title,
