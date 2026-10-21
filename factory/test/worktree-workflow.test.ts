@@ -447,6 +447,22 @@ describe('a repository outside the workspace, with the checkouts kept somewhere 
   }, 120_000);
 });
 
+describe('a repository that has no commits yet', () => {
+  it('is refused with what to do, before anything is made - git\'s own message would not say it', async () => {
+    const fresh = path.join(ws.workspace, 'fresh');
+    fs.mkdirSync(fresh);
+    ws.gitIn(fresh, 'init', '-q', '-b', 'main');
+
+    const { result } = await runTask({ repo: fresh });
+
+    expect(result.status).toBe('failed');
+    const message = String((result as { error?: Error }).error?.message);
+    expect(message).toContain('has no commits yet');
+    expect(message).toContain('git commit --allow-empty');
+    expect(fs.existsSync(path.join(ws.workspace, '.factory'))).toBe(false); // no checkout, no folder
+  }, 120_000);
+});
+
 describe('what it will not do', () => {
   it('does not quietly work in the user\'s folder when the checkout cannot be made', async () => {
     // The user has the branch the task would use checked out in their own folder.

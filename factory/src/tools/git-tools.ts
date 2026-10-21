@@ -34,8 +34,19 @@ function fail(result: CommandResult): string {
 
 export async function getCurrentBranch(repoPath: string): Promise<string> {
   const result = await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoPath });
-  if (!result.ok) throw new Error(fail(result));
-  return result.stdout.trim();
+  if (result.ok) return result.stdout.trim();
+
+  // A repository somebody has only just made has a branch (HEAD names one) but no commit on it, and git's own
+  // message - "ambiguous argument 'HEAD'" - does not say so. Asked by exit code, not by the text git prints:
+  // that is translated.
+  const unborn = await runGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: repoPath });
+  if (unborn.ok) {
+    throw new Error(
+      `The repository ${repoPath} has no commits yet, so a task has nothing to start from. Make a first commit ` +
+        '(for example: git commit --allow-empty -m "chore: initial commit") and start the task again.',
+    );
+  }
+  throw new Error(fail(result));
 }
 
 export async function isWorkingTreeClean(repoPath: string): Promise<boolean> {
