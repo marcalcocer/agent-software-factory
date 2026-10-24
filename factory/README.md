@@ -210,6 +210,7 @@ guarantees below hold everywhere.
 **If validation fails**, the call walks an escalation ladder rather than failing the step:
 
 ```
+rung 0   free tier             (only for roles in FACTORY_FREE_ROLES: each free model once, see "Free tier")
 rung 1   role's model          (e.g. haiku)
 rung 2   role's model again    + the exact Zod errors it violated
 rung 3   escalation model      (sonnet, FACTORY_CLI_ESCALATION_MODEL)
@@ -218,13 +219,19 @@ rung 3   escalation model      (sonnet, FACTORY_CLI_ESCALATION_MODEL)
 A role already on the reasoning tier gets rungs 1–2 only. Each rung is logged as an
 `agent_schema_retry` event, and a successful escalation is flagged `failedOver: true` in
 `summary.json` — so a small model quietly costing you reasoning-tier calls is visible, not
-hidden. Only if every rung fails does the step raise.
+hidden. Only if every rung fails does the step raise. Rung 0 has no repair step: a free model that
+breaks the contract is simply skipped and the next model is asked.
 
 **What gets recorded per call**, into `logs/<runId>/`:
 
 - a numbered artifact (`03-qa-tester.attempt-2.json`) holding the full validated payload
-- an `agent_call` event with requested model, serving model, input/output/cached/reasoning
-  tokens, tool-call count, duration and the failover flag
+- an `agent_call` event with requested model, serving model, the backend that served it
+  (`free-tier`, `claude-cli`, `api`), input/output/cached/reasoning tokens, tool-call count, duration
+  and the failover flag; after a fallback it also carries `fallbackReason` and every `attempts` entry
+- a `model_fallback` event whenever a model other than the first choice answered
+- in the numbered artifact, a `routing` block: the model asked first, the one that answered, and every
+  attempt with its outcome (`served`, `rate-limit`, `cooling-down`, `not-configured`, `auth`,
+  `not-found`, `invalid`, `timeout`, `error`)
 - aggregated per-role totals in `summary.json` under `modelsUsed`
 
 ---
@@ -248,7 +255,8 @@ In `claude-cli` mode the equivalent is native too, via `--fallback-model`:
 --model sonnet --fallback-model opus,haiku
 ```
 
-- **Defaults are Anthropic-only**, by design: one credential, no second vendor.
+- **Defaults are Anthropic-only**, by design: one credential, no second vendor. The one opt-in
+  exception is the [free tier](#free-tier-optional) of the `claude-cli` backend.
 - `FACTORY_ENABLE_GOOGLE_FALLBACK=true` appends `google/gemini-3.8-flash` as a last resort to
   every chain (needs `GOOGLE_GENERATIVE_AI_API_KEY`).
 - `FACTORY_MODEL_GENERATION=legacy` switches to the Claude generation of the original
@@ -364,6 +372,7 @@ Recorded so the question doesn't get re-litigated. These were investigated and r
 | **OpenCode Go** (`opencode-go/*`) | `403 — An active OpenCode Go subscription is required`. |
 | OpenCode Zen paid models | `402 — Insufficient account funds`. |
 | **GitHub Copilot** OAuth token | Same client-only licensing restriction as the OpenCode free tier. |
+| **Gemini CLI / Antigravity** login used as a free Gemini source | Google reportedly stopped serving free individual Gemini CLI logins on 2026-06-18 and moved them to the closed-source Antigravity CLI, whose free quota is unpublished and whose terms on scripted use were not found. A plain Gemini **API key** on the free tier is the documented route (see [Free tier](#free-tier-optional)). |
 | **Local Ollama** | Technically fine and genuinely free — `qwen3:4b` did return schema-valid JSON. Rejected on latency: ~81 s for a trivial response, so ~12 minutes of pure wait across a 9-call pipeline. Viable as a last-resort fallback if you want it; not as a workhorse. |
 
 ---
@@ -1069,7 +1078,10 @@ agent-software-factory/
 │   │   └── software-factory.workflow.ts
 │   ├── utils/
 │   │   ├── context-loader.ts           # prompts + convention cascade
-│   │   ├── model-router.ts             # tiers, fallback chains, credential checks
+│   │   ├── model-router.ts             # tiers, fallback chains, credential checks, free-tier chain
+│   │   ├── model-routing.ts            # which model answered and why not the first; cooldowns
+│   │   ├── free-tier.ts                # asks the free models before Claude (tool-free roles)
+│   │   ├── free-tier-eval.ts           # samples and checks behind `npm run eval:free`
 │   │   ├── agent-runner.ts             # structured invocation + telemetry + dry run
 │   │   ├── schemas.ts                  # every inter-agent data contract (Zod)
 │   │   ├── factory-config.ts           # env config + workspace jail
@@ -1078,6 +1090,7 @@ agent-software-factory/
 │   ├── mastra/index.ts                 # Mastra instance (CLI entry point)
 │   └── cli/
 │       ├── factory.ts                  # run | resume | list | show | doctor
+│       ├── free-tier-eval.ts           # `npm run eval:free`: can a free model do the small roles?
 │       └── smoke.ts                    # graph verification harness
 ├── logs/                               # run traces: logs/<runId>/ + factory.log + factory.db
 ├── mastra.config.ts                    # agents, workflow, storage, logger, telemetry
@@ -1113,7 +1126,11 @@ All variables are optional unless stated. See `.env.example`.
 | --- | --- | --- |
 | `FACTORY_PROVIDER` | `api` | `api` (metered key) or `claude-cli` (Claude subscription) |
 | `ANTHROPIC_API_KEY` | — | Only credential the defaults need in `api` mode |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | — | Only if `FACTORY_ENABLE_GOOGLE_FALLBACK=true` |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | — | Only if `FACTORY_ENABLE_GOOGLE_FALLBACK=true`, or a `google/*` model is in `FACTORY_FREE_CHAIN` |
+| `GROQ_API_KEY` / `MISTRAL_API_KEY` | — | Only for a `groq/*` / `mistral/*` model in `FACTORY_FREE_CHAIN` |
+| `FACTORY_FREE_ROLES` | — | Roles that try the free tier first (`claude-cli` only): any of `run-namer`, `merge-summary`, `pr-writer`, `phase-reconciler` |
+| `FACTORY_FREE_CHAIN` | — | Free-quota models to ask, in order, e.g. `google/gemini-3.1-flash-lite,google/gemini-3.5-flash-lite` |
+| `FACTORY_FREE_COOLDOWN_MINUTES` | `15` | How long a model that said it is out of quota is left alone (six hours when the quota is daily) |
 | `FACTORY_CLAUDE_CLI_BASE_URL` | — | Proxy for the CLI backend (or use `ANTHROPIC_BASE_URL`) |
 | `FACTORY_CLAUDE_CLI_TIMEOUT_MS` | `600000` | Timeout for one headless `claude` call |
 | `FACTORY_CLAUDE_CLI_MAX_BUDGET_USD` | — | `--max-budget-usd` ceiling per call |
@@ -1193,6 +1210,9 @@ route every path through `resolveInsideRepo` and every command through `src/util
 | `claude-cli/rate-limit` | Your Claude plan's usage window is exhausted. Resume with the printed `factory resume --run-id <id>` once it resets. |
 | `claude-cli/not-installed` | `claude` is not on `PATH`. Install Claude Code, or switch to `FACTORY_PROVIDER=api`. |
 | `claude` calls 404 through a proxy | Use the **root** proxy URL (`http://127.0.0.1:8787`), not `/v1` — the CLI appends `/v1/messages` itself. |
+| A step shows ⚠ "fell back" in the Studio | A free-tier model could not answer and another model did. The step's detail lists every model tried and why (quota, key, model name, answer shape); `events.ndjson` has the `model_fallback` event. |
+| `[missing] google (set GOOGLE_GENERATIVE_AI_API_KEY)` in `doctor` | A provider in `FACTORY_FREE_CHAIN` has no key. The call skips that model (`not-configured`) and goes on; set the key or drop the model. |
+| Free model says `not-found` | The provider has no such model for your key. List what it offers (for Groq: `curl -s https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY"`), then fix `FACTORY_FREE_CHAIN`. |
 | Output violates schema on all rungs | The ladder (role model → repair → `sonnet`) all failed. The `agent_schema_retry` events show the exact Zod errors; usually a prompt/schema mismatch after editing a schema. |
 | `Target repository ... has uncommitted changes` | Commit or stash first: the factory needs a clean baseline to produce a reviewable diff. |
 | `Path ... is outside the places the factory may work in` | Open the repository in the Studio, or set `FACTORY_EXTRA_REPOS=/path/to/repo`, or move it under `FACTORY_WORKSPACE_ROOT`. `FACTORY_ALLOW_ANY_PATH=true` lifts the boundary altogether. |

@@ -28,3 +28,20 @@ or documentation change you make is committed once it is finished and verified.
 - **Other people's changes.** If the working tree holds uncommitted changes you did not make, keep
   them out of your commits and tell the user.
 - **Report.** At the end of a task, list what you committed (short hash and subject).
+
+## Documentation (keep it true)
+
+A document that says something the code no longer does is worse than none. When a change makes a
+statement in the docs false, deprecated or incomplete, fix the docs **in the same task**.
+
+- **What counts.** `README.md` and `factory/README.md` (configuration tables, defaults, the file layout,
+  troubleshooting rows, the "deliberately not used" list), `QUICK-START.md`, `factory/.env.example`, and the
+  header comments of the files you touched. Search for the names you changed or removed
+  (`grep -rn "<name>" --include=*.md --include=.env.example .`) before you finish.
+- **Same commit or a `docs` commit right after it.** A new setting is documented where its siblings are
+  (README configuration table and `.env.example`); a removed or renamed one is removed or renamed there too.
+  A behaviour that was true and is now deprecated is rewritten, not left with a "(deprecated)" note, unless
+  people still run the old way.
+- **Historical records stay as written.** The dated `FIXES_*.md` summaries describe what was true then; do
+  not rewrite them. Put the current truth in the README.
+- **Say so in the report.** List the docs you updated, or say that nothing the change touched was documented.
