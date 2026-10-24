@@ -18,6 +18,7 @@ import { titleFromTask } from '../lib/runTitle';
 import { AgentDetail } from './AgentDetail';
 import { HumanInputPanel } from './HumanInputPanel';
 import { WorkingCopyBar, WorkingCopyPreparing } from './WorkingCopy';
+import { ModelChip, ModelsSummary } from './ModelChip';
 
 /** Turn raw factory errors into a friendlier, actionable message. */
 function humanizeError(raw: string): string {
@@ -98,10 +99,12 @@ function PipelineStrip({
   nodes,
   selectedId,
   onSelect,
+  artifacts = [],
 }: {
   nodes: PipelineNode[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  artifacts?: RunArtifact[];
 }) {
   return (
     <div className="bg-white dark:bg-slate-800 rounded-lg p-6 overflow-x-auto">
@@ -173,6 +176,10 @@ function PipelineStrip({
                 }`}
               >
                 {node.name}
+              </span>
+
+              <span className="mt-1 h-5">
+                <ModelChip artifact={artifactForNode(node, artifacts)} compact />
               </span>
 
               {node.status === 'running' && (
@@ -761,7 +768,8 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
         <HumanInputPanel input={pendingInput} onSubmit={handleSubmitInput} submitting={submittingInput} />
       )}
 
-      <PipelineStrip nodes={derived.nodes} selectedId={selectedAgent} onSelect={setSelectedAgent} />
+      <PipelineStrip nodes={derived.nodes} selectedId={selectedAgent} onSelect={setSelectedAgent} artifacts={artifacts} />
+      <ModelsSummary artifacts={artifacts} />
 
       {/* What is happening right now (review and security can run side by side) */}
       {runningNodes.map((node) => (

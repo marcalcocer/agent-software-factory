@@ -101,11 +101,40 @@ export interface RunEventRecord {
   [key: string]: unknown;
 }
 
+/** What happened to one model on the way to a step's answer (see `factory/src/utils/model-routing.ts`). */
+export interface ModelAttempt {
+  model: string;
+  backend: 'free-tier' | 'claude-cli' | 'api' | 'dry-run';
+  outcome:
+    | 'served'
+    | 'rate-limit'
+    | 'cooling-down'
+    | 'not-configured'
+    | 'auth'
+    | 'not-found'
+    | 'invalid'
+    | 'timeout'
+    | 'error';
+  detail?: string;
+}
+
+/** The models a step's call went through, the one that answered last. */
+export interface ModelRouting {
+  requested: string;
+  served: string;
+  backend: ModelAttempt['backend'];
+  failedOver: boolean;
+  fallbackReason?: string;
+  attempts: ModelAttempt[];
+}
+
 export interface RunArtifact {
   step: string;
   attempt: number;
   status: string;
   model?: string;
+  /** Absent for a step that made no model call, and for runs from before routing was recorded. */
+  routing?: ModelRouting;
   durationMs?: number;
   writtenAt?: string;
   data: any;

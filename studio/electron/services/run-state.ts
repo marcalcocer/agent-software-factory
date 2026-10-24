@@ -64,6 +64,7 @@ export function readRunArtifacts(runDir: string): RunArtifact[] {
         attempt: raw.attempt ?? 1,
         status: raw.status,
         model: raw.model,
+        ...(raw.routing ? { routing: raw.routing } : {}),
         durationMs: raw.durationMs,
         writtenAt: raw.writtenAt,
         data: raw.data ?? {},

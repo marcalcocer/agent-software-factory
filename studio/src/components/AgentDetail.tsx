@@ -1,6 +1,7 @@
 import type { PendingInput, RunArtifact, RunEventRecord } from '../../shared/types';
 import type { HumanExchange, PipelineNode } from '../../shared/pipelineState';
 import { formatDuration } from '../lib/format';
+import { ModelChip, RoutingPanel } from './ModelChip';
 
 interface AgentDetailProps {
   /** Node id (`developer-2`, `reviewer`, `clarification-1`, ...). */
@@ -379,11 +380,13 @@ export function AgentDetail({
       <div className="flex flex-wrap items-center gap-2">
         <Pill tone={statusTone as any}>{artifact.status}</Pill>
         {artifact.attempt > 1 && <Pill tone="yellow">Attempt {artifact.attempt}</Pill>}
-        {artifact.model && <Pill tone="slate">{artifact.model}</Pill>}
+        <ModelChip artifact={artifact} />
+        {!artifact.routing && artifact.model && <Pill tone="slate">{artifact.model}</Pill>}
         {typeof artifact.durationMs === 'number' && (
           <Pill tone="slate">{formatDuration(artifact.durationMs)}</Pill>
         )}
       </div>
+      <RoutingPanel routing={artifact.routing} />
     </div>
   );
 
