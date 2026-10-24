@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
+  ActivityEntry,
   DeliveryEdits,
   FactoryRun,
   PendingInput,
@@ -19,6 +20,7 @@ import { AgentDetail } from './AgentDetail';
 import { HumanInputPanel } from './HumanInputPanel';
 import { WorkingCopyBar, WorkingCopyPreparing } from './WorkingCopy';
 import { ModelChip, ModelsSummary } from './ModelChip';
+import { activityForNode, currentActivity } from '../../shared/activity';
 
 /** Turn raw factory errors into a friendlier, actionable message. */
 function humanizeError(raw: string): string {
@@ -268,6 +270,9 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
   const [events, setEvents] = useState<RunEventRecord[]>([]);
   const [pendingInput, setPendingInput] = useState<PendingInput | null>(null);
   const [outputLines, setOutputLines] = useState<string[]>([]);
+  /** What the agents did, live (`activity.ndjson`), read incrementally like the output. */
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const activityCursor = useRef<number | undefined>(undefined);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [submittingInput, setSubmittingInput] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -293,6 +298,8 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
     setEvents([]);
     setPendingInput(null);
     setOutputLines([]);
+    setActivity([]);
+    activityCursor.current = undefined;
     setSelectedAgent(null);
     setSubmittingInput(false);
     outputCursor.current = undefined;
@@ -340,6 +347,16 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
       outputCursor.current = out.total;
     } catch {
       // Transient (file mid-write, run just created): the next poll retries.
+    }
+    // Read on its own: a run without activity (or a main process that predates it) must not stop the rest.
+    try {
+      const act = await window.api.invoke('factory:get-activity', id, activityCursor.current);
+      if (activeRunRef.current !== id) return;
+      if (activityCursor.current === undefined) setActivity(act.entries);
+      else if (act.entries.length > 0) setActivity((prev) => [...prev, ...act.entries]);
+      activityCursor.current = act.total;
+    } catch {
+      // No activity to show: the step views fall back to the console lines.
     }
   }, [runId]);
 
@@ -779,7 +796,22 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
             <div className="flex-1">
               <h4 className="font-bold text-lg">{node.name}</h4>
               <p className="text-sm text-white/80">{node.activity || 'Processing...'}</p>
+              {(() => {
+                // The newest thing the step's agent did: a file it reads, a search, what it is saying.
+                const now = currentActivity(activityForNode(activity, node));
+                return now ? (
+                  <p data-testid="now-doing" className="mt-1 text-sm text-white font-medium break-words">
+                    {now}
+                  </p>
+                ) : null;
+              })()}
             </div>
+            <button
+              onClick={() => setSelectedAgent(node.id)}
+              className="flex-shrink-0 self-start rounded bg-white/15 px-2 py-1 text-xs hover:bg-white/25"
+            >
+              Follow live
+            </button>
           </div>
         </div>
       ))}
@@ -802,6 +834,7 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
               node={selectedNode}
               artifact={artifactForNode(selectedNode, artifacts)}
               logs={selectedLogs}
+              activity={activityForNode(activity, selectedNode)}
               isRunning={selectedNode.status === 'running'}
               error={selectedNode.id === derived.failedNodeId ? (runInfo?.error ?? null) : null}
               exchange={derived.exchanges[0]}

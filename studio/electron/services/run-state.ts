@@ -5,7 +5,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import type { FactoryRun, RunArtifact, RunEventRecord, RunStatus } from '../../shared/types';
+import type { ActivityEntry, FactoryRun, RunArtifact, RunEventRecord, RunStatus } from '../../shared/types';
 import { inferInterruption } from '../../shared/runInference';
 
 export function readJson<T>(file: string): T | null {
@@ -30,6 +30,38 @@ export function readRunEvents(runDir: string): RunEventRecord[] {
     }
   }
   return events;
+}
+
+/** At most this many entries are sent on a first read; a long run's early activity stays on disk. */
+export const ACTIVITY_REPLAY_LIMIT = 4000;
+
+/**
+ * The live activity of the agents (`activity.ndjson`, see `ActivityEntry`), from line `fromLine` on.
+ *
+ * `total` counts complete lines only: a last line the factory is still writing has no newline yet, and is
+ * read on the next poll instead of being skipped for good. Without `fromLine`, the most recent entries.
+ */
+export function readRunActivity(runDir: string, fromLine?: number): { entries: ActivityEntry[]; total: number } {
+  let raw = '';
+  try {
+    raw = fs.readFileSync(path.join(runDir, 'activity.ndjson'), 'utf8');
+  } catch {
+    return { entries: [], total: 0 };
+  }
+  const lines = raw.split('\n');
+  lines.pop(); // '' after the last newline, or a line still being written
+  const total = lines.length;
+  const start = fromLine === undefined ? Math.max(0, total - ACTIVITY_REPLAY_LIMIT) : Math.min(Math.max(0, fromLine), total);
+  const entries: ActivityEntry[] = [];
+  for (const line of lines.slice(start)) {
+    if (!line.trim()) continue;
+    try {
+      entries.push(JSON.parse(line) as ActivityEntry);
+    } catch {
+      // A line that cannot be read is skipped; the rest still are.
+    }
+  }
+  return { entries, total };
 }
 
 /**

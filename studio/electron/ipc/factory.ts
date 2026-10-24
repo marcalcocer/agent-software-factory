@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import type {
+  ActivityEntry,
   DeliveryEdits,
   FactoryRun,
   PendingInput,
@@ -16,6 +17,7 @@ import type {
 } from '../../shared/types';
 import {
   readJson,
+  readRunActivity,
   readRunArtifacts,
   renameRun,
   readRunEvents as readEventsIn,
@@ -893,6 +895,13 @@ ipcMain.handle(
         : Math.min(Math.max(0, fromLine), total);
     return { lines: lines.slice(start), total };
   },
+);
+
+/** What the agents did, live: see `readRunActivity`. */
+ipcMain.handle(
+  'factory:get-activity',
+  async (_event, runId: string, fromLine?: number): Promise<{ entries: ActivityEntry[]; total: number }> =>
+    readRunActivity(runDirOf(runId), fromLine),
 );
 
 /**

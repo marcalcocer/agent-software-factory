@@ -101,6 +101,37 @@ export interface RunEventRecord {
   [key: string]: unknown;
 }
 
+/**
+ * One thing an agent call did, as it did it: a line of `activity.ndjson` in the run directory (written by
+ * `factory/src/utils/agent-activity.ts`). Entries of one call share `call`; text entries of one paragraph
+ * share `block`.
+ */
+export interface ActivityEntry {
+  at: string;
+  call: string;
+  role: string;
+  step: string;
+  attempt: number;
+  kind:
+    | 'call-start'
+    | 'thinking'
+    | 'text'
+    | 'tool'
+    | 'tool-error'
+    | 'summary'
+    | 'report'
+    | 'notice'
+    | 'call-end'
+    | 'call-failed';
+  text: string;
+  block?: string;
+  model?: string;
+  backend?: string;
+  tool?: string;
+  durationMs?: number;
+  tokens?: number;
+}
+
 /** What happened to one model on the way to a step's answer (see `factory/src/utils/model-routing.ts`). */
 export interface ModelAttempt {
   model: string;

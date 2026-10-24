@@ -1,7 +1,8 @@
-import type { PendingInput, RunArtifact, RunEventRecord } from '../../shared/types';
+import type { ActivityEntry, PendingInput, RunArtifact, RunEventRecord } from '../../shared/types';
 import type { HumanExchange, PipelineNode } from '../../shared/pipelineState';
 import { formatDuration } from '../lib/format';
 import { ModelChip, RoutingPanel } from './ModelChip';
+import { ActivityFeed } from './ActivityFeed';
 
 interface AgentDetailProps {
   /** Node id (`developer-2`, `reviewer`, `clarification-1`, ...). */
@@ -18,6 +19,8 @@ interface AgentDetailProps {
   /** The run's audit trail - the delivery step is described from it while it has no report. */
   events?: RunEventRecord[];
   pendingInput?: PendingInput | null;
+  /** What the step's agent calls did, live (`activity.ndjson`). */
+  activity?: ActivityEntry[];
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -143,6 +146,7 @@ function PendingStep({
   error,
   events,
   pendingInput,
+  activity,
 }: {
   base: string;
   node?: PipelineNode;
@@ -151,9 +155,11 @@ function PendingStep({
   error?: string | null;
   events?: RunEventRecord[];
   pendingInput?: PendingInput | null;
+  activity?: ActivityEntry[];
 }) {
   const status = node?.status ?? (isRunning ? 'running' : 'pending');
   const lines = logs ?? [];
+  const live = activity ?? [];
 
   const deliveryActions =
     base === 'delivery'
@@ -219,8 +225,9 @@ function PendingStep({
         </Section>
       )}
 
-      <LogBox lines={lines} />
-      {status === 'running' && lines.length === 0 && deliveryActions.length === 0 && (
+      {/* What the agent is doing, live. Runs from before the activity was recorded fall back to the console lines. */}
+      {live.length > 0 ? <ActivityFeed entries={live} live={status === 'running'} /> : <LogBox lines={lines} />}
+      {status === 'running' && lines.length === 0 && live.length === 0 && deliveryActions.length === 0 && (
         <p className="text-sm text-slate-400 italic">Waiting for output...</p>
       )}
     </div>
@@ -326,6 +333,7 @@ export function AgentDetail({
   exchange,
   events,
   pendingInput,
+  activity,
 }: AgentDetailProps) {
   // Node ids carry the attempt (`developer-2`); the renderers below are keyed by the step name.
   // Matching on the raw id meant the Developer and QA reports never got their own view.
@@ -346,6 +354,7 @@ export function AgentDetail({
         error={error}
         events={events}
         pendingInput={pendingInput}
+        activity={activity}
       />
     );
   }
@@ -387,6 +396,17 @@ export function AgentDetail({
         )}
       </div>
       <RoutingPanel routing={artifact.routing} />
+      {activity && activity.length > 0 && (
+        // The report is the result; this is how the agent got there. Open while the step runs again.
+        <details open={isRunning} className="group">
+          <summary className="cursor-pointer select-none text-xs text-slate-400 hover:text-slate-200">
+            What the agent did ({activity.filter((entry) => entry.kind === 'tool').length} tool calls)
+          </summary>
+          <div className="mt-2">
+            <ActivityFeed entries={activity} live={!!isRunning} />
+          </div>
+        </details>
+      )}
     </div>
   );
 

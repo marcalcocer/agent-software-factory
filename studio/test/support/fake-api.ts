@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 
 import { RUN, runDir } from '../../../fixtures';
-import { readRunArtifacts, readRunEvents, readRunState } from '../../electron/services/run-state';
+import { readRunActivity, readRunArtifacts, readRunEvents, readRunState } from '../../electron/services/run-state';
 import type { FactoryRun, Places, PrWatchState } from '../../shared/types';
 
 type Handler = (...args: any[]) => unknown;
@@ -81,6 +81,7 @@ export function openingARun(runIds: string[] = [RUN.round1, RUN.round2], alive: 
     'factory:get': (runId: string) => readRunState(runDir(runId), runId, alive.includes(runId))?.run ?? null,
     'factory:get-artifacts': (runId: string) => readRunArtifacts(runDir(runId)),
     'factory:get-events': (runId: string) => readRunEvents(runDir(runId)),
+    'factory:get-activity': (runId: string, fromLine?: number) => readRunActivity(runDir(runId), fromLine),
     'factory:get-pending-input': () => null,
     'factory:get-output': () => ({ lines: [], total: 0 }),
     // Where the work is: the real runs worked in the repository, as the run record says.

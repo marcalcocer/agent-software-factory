@@ -3,6 +3,7 @@
  */
 
 import type {
+  ActivityEntry,
   AgentEvent,
   AuthProvider,
   DeliveryEdits,
@@ -77,6 +78,14 @@ export interface IPCChannels {
    * repo switch, or when opening a finished run) can replay it. `fromLine` makes polling
    * incremental; omit it for the most recent lines.
    */
+  /**
+   * What the agents did, live (`activity.ndjson`): every call's model, what it said, each file it read or
+   * edited, each search, a failed tool, its end. `fromLine` makes polling incremental.
+   */
+  'factory:get-activity': (
+    runId: string,
+    fromLine?: number,
+  ) => Promise<{ entries: ActivityEntry[]; total: number }>;
   'factory:get-output': (
     runId: string,
     fromLine?: number,
