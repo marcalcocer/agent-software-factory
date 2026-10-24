@@ -485,6 +485,35 @@ failed tool, the report being written - following the newest line. A finished st
 
 ---
 
+## When Claude's usage limit is reached
+
+A Claude subscription has rolling usage windows (five hours, a week). When one is used up, the Claude Code
+CLI refuses the call, and says in its stream which window it is and exactly when it resets (a
+`rate_limit_event` with `resetsAt`; failing that, its error text, "resets 7:20pm").
+
+The factory records that with the failure (`src/utils/usage-limit.ts`):
+
+- a `usage_limit` event per refused call (role, step, `resetsAt`, `window`), and the live activity says
+  "Claude's 5-hour limit is used up: it resets at 17:20";
+- the run fails as before, and its `summary.json` gets `usageLimit: { resetsAt, window }` (`resetsAt` is
+  null when the CLI did not say).
+
+The Studio then **retries the run by itself** a minute after the reset, from the step that stopped,
+keeping the plan and every finished step, exactly like "Retry run":
+
+- the run shows a countdown ("Retrying automatically at 17:21 - in 1h 12m 05s"), with **Retry now** and
+  **Cancel automatic retry**; the header says it is waiting for the limit, the history says when it retries;
+- **Settings → "Retry automatically when Claude's usage limit resets"** (on by default). With it off, a
+  stopped run offers "Retry automatically when the limit resets" for that run alone;
+- any wait is planned, a weekly limit days away included; an unknown reset time is tried every 30 minutes;
+  after 6 automatic retries in a row that hit the limit again it stops and asks;
+- the plan is `auto-retry.json` in the run directory, and the clock is checked every 15 seconds against the
+  wall time: a retry that fell due while the laptop slept happens when it wakes, and one that fell due while
+  the Studio was closed happens when it opens. Something else working in the same place puts it off by two
+  minutes.
+
+---
+
 ## Observability and traceability
 
 Each execution owns `logs/<runId>/`:
@@ -496,6 +525,7 @@ logs/20251008-234512-invest-track-a1b2/
 ├── events.ndjson                 # append-only: agent calls, tokens, tool calls, suite runs,
 │                                 # triage guardrails, suspensions, escalations
 ├── activity.ndjson               # live: what each agent call is doing, as it does it (see "Live activity")
+├── auto-retry.json               # Studio only: the planned retry of a run stopped by Claude's usage limit
 ├── 00-run-namer.json             # the title, slug and type chosen for the task (COMPLETED | FALLBACK)
 ├── 01-pm-architect.json          # executionPlan + clarifications used
 ├── 02-developer.json             # developer report (attempt 1)
@@ -1118,6 +1148,7 @@ agent-software-factory/
 │   │   ├── free-tier-eval.ts           # samples and checks behind `npm run eval:free`
 │   │   ├── agent-runner.ts             # structured invocation + telemetry + dry run
 │   │   ├── agent-activity.ts           # live activity: stream parser, tool calls in words, activity.ndjson
+│   │   ├── usage-limit.ts              # Claude's usage limit: which window, when it resets
 │   │   ├── schemas.ts                  # every inter-agent data contract (Zod)
 │   │   ├── factory-config.ts           # env config + workspace jail
 │   │   ├── shell.ts                    # allow-listed, shell-free process execution
@@ -1242,7 +1273,7 @@ route every path through `resolveInsideRepo` and every command through `src/util
 | --- | --- |
 | `No LLM provider credentials found` | Set `ANTHROPIC_API_KEY` in `.env`, or use `FACTORY_PROVIDER=claude-cli`, or `--dry-run`. |
 | `claude-cli/auth: OAuth session expired` | Run `claude login`. Claude Code keeps its own session, separate from other clients. Verify with `doctor --probe`. |
-| `claude-cli/rate-limit` | Your Claude plan's usage window is exhausted. Resume with the printed `factory resume --run-id <id>` once it resets. |
+| `claude-cli/rate-limit` | Your Claude plan's usage window is exhausted. The error says which window and when it resets. In the Studio the run is retried by itself a minute after the reset (see [When Claude's usage limit is reached](#when-claudes-usage-limit-is-reached)); from the command line, resume with the printed `factory resume --run-id <id>` once it resets. |
 | `claude-cli/not-installed` | `claude` is not on `PATH`. Install Claude Code, or switch to `FACTORY_PROVIDER=api`. |
 | `claude` calls 404 through a proxy | Use the **root** proxy URL (`http://127.0.0.1:8787`), not `/v1` — the CLI appends `/v1/messages` itself. |
 | A step shows ⚠ "fell back" in the Studio | A free-tier model could not answer and another model did. The step's detail lists every model tried and why (quota, key, model name, answer shape); `events.ndjson` has the `model_fallback` event. |

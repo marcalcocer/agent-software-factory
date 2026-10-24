@@ -63,6 +63,7 @@ npm run build:studio
 
 ### Studio UI
 - Real-time agent activity: each step shows what its agent is doing (files read and edited, searches, what it says, the model) as it happens
+- Automatic retry of a run stopped by Claude's usage limit, once the limit resets (countdown, retry now, cancel)
 - Multi-repo tabs with parallel runs
 - Integrated diff viewer
 - Settings management (global + per-repo)
