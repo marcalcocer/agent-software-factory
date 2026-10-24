@@ -13,6 +13,7 @@
     "factory:run": "tsx src/cli/factory.ts run",
     "factory:resume": "tsx src/cli/factory.ts resume",
     "smoke": "tsx src/cli/smoke.ts",
+    "eval:free": "tsx src/cli/free-tier-eval.ts",
     "test": "vitest run",
     "dev": "mastra dev",
     "build": "mastra build",
