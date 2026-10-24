@@ -62,7 +62,7 @@ npm run build:studio
 - Multi-provider LLM support (Claude CLI, API keys)
 
 ### Studio UI
-- Real-time agent activity streaming
+- Real-time agent activity: each step shows what its agent is doing (files read and edited, searches, what it says, the model) as it happens
 - Multi-repo tabs with parallel runs
 - Integrated diff viewer
 - Settings management (global + per-repo)

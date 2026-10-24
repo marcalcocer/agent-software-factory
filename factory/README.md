@@ -229,6 +229,7 @@ breaks the contract is simply skipped and the next model is asked.
   (`free-tier`, `claude-cli`, `api`), input/output/cached/reasoning tokens, tool-call count, duration
   and the failover flag; after a fallback it also carries `fallbackReason` and every `attempts` entry
 - a `model_fallback` event whenever a model other than the first choice answered
+- the call's live activity in `activity.ndjson` (see [Live activity](#live-activity))
 - in the numbered artifact, a `routing` block: the model asked first, the one that answered, and every
   attempt with its outcome (`served`, `rate-limit`, `cooling-down`, `not-configured`, `auth`,
   `not-found`, `invalid`, `timeout`, `error`)
@@ -452,6 +453,38 @@ for one repository, add an `AGENTS.md` to that repository.
 
 ---
 
+## Live activity
+
+Every agent call writes what it is doing, while it does it, to `logs/<runId>/activity.ndjson`, one JSON
+line per thing (`src/utils/agent-activity.ts`):
+
+| `kind` | What it is |
+| --- | --- |
+| `call-start` | A model was asked: which one, on which backend (`claude-cli`, `free-tier`, `api`). |
+| `text` | What the model says while it works, streamed: pieces that share a `block` form one paragraph. |
+| `thinking` | The model thought first. The API redacts the text; the size is shown ("~240 tokens"). |
+| `tool` | A tool call in words: "Reading src/app.ts", "Searching for "useTheme" in src", "Editing src/Button.tsx". |
+| `tool-error` | A tool call that failed, with the reason ("File does not exist"). |
+| `summary` | The CLI's one-line summary of a turn. |
+| `report` | The model started writing its final, structured answer. |
+| `notice` | What the factory did around the call: a free model out of quota, a format retry, a hand-over to Claude. |
+| `call-end` / `call-failed` | How the call ended: the model that answered, duration and tokens, or the reason. |
+
+Each entry carries its `call`, `role`, `step` and `attempt`, so steps that run side by side (review and
+security) never mix. The same lines are echoed to the console (`  [reviewer] 🔧 Reading src/cart.ts`).
+
+Under the `claude-cli` backend the source is the CLI's `--output-format stream-json
+--include-partial-messages` stream, parsed by `ClaudeStreamParser`; recorded transcripts of that stream are
+in `fixtures/claude-stream/`. The free tier reports each model asked and why it did not answer; the `api`
+backend reports each tool call and text step as Mastra finishes it.
+
+The Studio shows it live: under the banner of each running step, the newest thing its agent is doing; behind
+**Follow live** (or a click on the step), the whole feed - model, what it said, every file and search, a
+failed tool, the report being written - following the newest line. A finished step keeps it under its report
+("What the agent did"). Runs from before the activity was recorded show the console lines instead.
+
+---
+
 ## Observability and traceability
 
 Each execution owns `logs/<runId>/`:
@@ -462,6 +495,7 @@ logs/20251008-234512-invest-track-a1b2/
 │                                 # (written by the CLI the moment the run starts, completed by prepare-run)
 ├── events.ndjson                 # append-only: agent calls, tokens, tool calls, suite runs,
 │                                 # triage guardrails, suspensions, escalations
+├── activity.ndjson               # live: what each agent call is doing, as it does it (see "Live activity")
 ├── 00-run-namer.json             # the title, slug and type chosen for the task (COMPLETED | FALLBACK)
 ├── 01-pm-architect.json          # executionPlan + clarifications used
 ├── 02-developer.json             # developer report (attempt 1)
@@ -1083,6 +1117,7 @@ agent-software-factory/
 │   │   ├── free-tier.ts                # asks the free models before Claude (tool-free roles)
 │   │   ├── free-tier-eval.ts           # samples and checks behind `npm run eval:free`
 │   │   ├── agent-runner.ts             # structured invocation + telemetry + dry run
+│   │   ├── agent-activity.ts           # live activity: stream parser, tool calls in words, activity.ndjson
 │   │   ├── schemas.ts                  # every inter-agent data contract (Zod)
 │   │   ├── factory-config.ts           # env config + workspace jail
 │   │   ├── shell.ts                    # allow-listed, shell-free process execution
