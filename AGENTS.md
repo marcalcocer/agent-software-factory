@@ -45,3 +45,18 @@ statement in the docs false, deprecated or incomplete, fix the docs **in the sam
 - **Historical records stay as written.** The dated `FIXES_*.md` summaries describe what was true then; do
   not rewrite them. Put the current truth in the README.
 - **Say so in the report.** List the docs you updated, or say that nothing the change touched was documented.
+
+## Work log
+
+`WORK-LOG.md` is where the owner reads, the next morning, what was built while they were away. When you
+finish a feature (not a typo fix), add an entry at the top, below the table, and a row to the table:
+
+- what was asked and the short version of what now works;
+- what was wrong or missing before, if anything;
+- what changed (files, settings, new behaviour), how it was verified (tests, real runs, screenshots), and
+  what could not be verified;
+- the decisions you took without asking, and anything left to do or to check;
+- the commits, and the branch they are on (merged or not).
+
+Write it for someone who was not watching. Older entries are records: correct a mistake in them, do not
+rewrite them.
