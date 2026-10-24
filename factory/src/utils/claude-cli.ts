@@ -23,6 +23,7 @@
  */
 import { getFactoryConfig } from './factory-config.ts';
 import { runProcess, type CommandResult } from './shell.ts';
+import { limitFromStream, resetFromText, windowLabel, type UsageLimit } from './usage-limit.ts';
 
 /** Claude Code's built-in tools. Denied wholesale for pure-reasoning roles. */
 const ALL_BUILTIN_TOOLS = [
@@ -135,6 +136,8 @@ export interface ClaudeCliResponse {
   costUsd: number;
   error?: string;
   errorKind?: ClaudeCliErrorKind;
+  /** With `errorKind: 'rate-limit'`: which window ran out and when it resets, as far as the CLI said. */
+  usageLimit?: UsageLimit;
 }
 
 /** Shape of the `--output-format json` envelope (only the fields the factory consumes). */
@@ -405,7 +408,24 @@ export async function runClaudeCli(request: ClaudeCliRequest): Promise<ClaudeCli
   const durationMs = Date.now() - startedAt;
 
   if (!result.ok || envelope === null || envelope.is_error === true) {
-    const { kind, message } = classifyFailure(result, envelope);
+    let { kind, message } = classifyFailure(result, envelope);
+    // The CLI says in its stream when a call was refused for the usage limit, and when that resets.
+    const streamLimit = limitFromStream(result.stdout);
+    if (streamLimit?.rejected && (kind === 'api' || kind === 'parse' || kind === 'unknown')) {
+      kind = 'rate-limit';
+      message =
+        'Claude subscription usage limit reached. The run can be resumed once the window resets: ' +
+        `npm run factory -- resume --run-id <runId>. CLI said: ${(envelope?.result ?? '').trim().slice(0, 200)}`;
+    }
+    const usageLimit: UsageLimit | undefined =
+      kind !== 'rate-limit'
+        ? undefined
+        : streamLimit?.resetsAt
+          ? { resetsAt: streamLimit.resetsAt, ...(streamLimit.window ? { window: streamLimit.window } : {}) }
+          : { resetsAt: resetFromText(`${envelope?.result ?? ''}\n${result.stderr}`), ...(streamLimit?.window ? { window: streamLimit.window } : {}) };
+    if (usageLimit?.resetsAt) {
+      message = `${message} (${windowLabel(usageLimit.window)} limit; resets at ${usageLimit.resetsAt})`;
+    }
     return {
       ok: false,
       structuredOutput: undefined,
@@ -418,6 +438,7 @@ export async function runClaudeCli(request: ClaudeCliRequest): Promise<ClaudeCli
       costUsd: envelope?.total_cost_usd ?? 0,
       error: message,
       errorKind: kind,
+      ...(usageLimit ? { usageLimit } : {}),
     };
   }
 

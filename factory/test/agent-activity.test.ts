@@ -19,7 +19,7 @@ import {
 } from '../src/utils/agent-activity.ts';
 import { invokeAgent } from '../src/utils/agent-runner.ts';
 import { runClaudeCli } from '../src/utils/claude-cli.ts';
-import { traceDirFor } from '../src/tools/logger-tools.ts';
+import { readEvents, traceDirFor } from '../src/tools/logger-tools.ts';
 
 const FIXTURES = path.join(import.meta.dirname, '..', '..', 'fixtures', 'claude-stream');
 const REPO = '/home/dev/workspace/demo';
@@ -220,6 +220,7 @@ describe('an agent call', () => {
       costUsd: 0,
       error: 'Claude subscription usage limit reached.',
       errorKind: 'rate-limit',
+      usageLimit: { resetsAt: '2026-10-24T17:20:00.000Z', window: 'five_hour' },
     });
     const runId = nextRun();
     await expect(
@@ -227,6 +228,13 @@ describe('an agent call', () => {
     ).rejects.toThrow();
     const last = readActivity(traceDirFor(runId)).at(-1)!;
     expect(last.kind).toBe('call-failed');
-    expect(last.text).toContain('usage limit');
+    expect(last.text).toContain("Claude's 5-hour limit is used up: it resets at");
+    // What lets the Studio retry the run when the limit is back.
+    expect(readEvents(runId).find((e) => e.type === 'usage_limit')).toMatchObject({
+      role: 'qa-tester',
+      step: 'qa-tester',
+      resetsAt: '2026-10-24T17:20:00.000Z',
+      window: 'five_hour',
+    });
   });
 });

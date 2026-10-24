@@ -552,6 +552,13 @@ async function writeFailureSummary(
 
   const error = meta.error as { message?: string; stack?: string } | undefined;
   const finishedAt = new Date().toISOString();
+  // A run stopped by Claude's usage limit says when the limit resets, so it can be retried then.
+  const { readEvents } = await import('../tools/logger-tools.ts');
+  const { usageLimitOfFailure } = await import('../utils/usage-limit.ts');
+  const usageLimit = usageLimitOfFailure(
+    readEvents(runId) as Array<{ type?: string; resetsAt?: string | null; window?: string }>,
+    error?.message ?? String(meta.error),
+  );
   writeSummary(runId, {
     runId,
     status: 'FAILED',
@@ -575,6 +582,7 @@ async function writeFailureSummary(
     gates: { qa: null, codeReview: null, security: null, documentation: null },
     history: [],
     dryRun: meta.dryRun,
+    ...(usageLimit ? { usageLimit } : {}),
   });
 }
 

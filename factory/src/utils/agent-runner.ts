@@ -40,6 +40,7 @@ import {
 } from './model-routing.ts';
 import { runClaudeCli, type ClaudeCliToolPolicy } from './claude-cli.ts';
 import { ActivityRecorder, ClaudeStreamParser, describeToolUse, formatDuration } from './agent-activity.ts';
+import { windowLabel } from './usage-limit.ts';
 
 export interface InvokeAgentOptions<TSchema extends z.ZodType> {
   agent: Agent<any, any, any>;
@@ -471,11 +472,31 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
     const durationMs = Date.now() - startedAt;
 
     if (!response.ok) {
-      activity.emit('call-failed', `Claude (${rung.model}) failed: ${shortDetail(response.error ?? response.errorKind ?? 'unknown error', 200)}`, {
-        model: `claude-cli/${rung.model}`,
-        backend: 'claude-cli',
-        durationMs: Date.now() - rungStartedAt,
-      });
+      if (response.errorKind === 'rate-limit') {
+        // The run will fail here; this is what lets the Studio retry it once the limit is back.
+        const limit = response.usageLimit ?? { resetsAt: null };
+        appendEvent(options.runId, {
+          type: 'usage_limit',
+          role: options.role,
+          step: options.step,
+          attempt,
+          model: rung.model,
+          resetsAt: limit.resetsAt,
+          ...(limit.window ? { window: limit.window } : {}),
+        });
+      }
+      activity.emit(
+        'call-failed',
+        response.errorKind === 'rate-limit'
+          ? `Claude's ${windowLabel(response.usageLimit?.window)} limit is used up` +
+              (response.usageLimit?.resetsAt ? `: it resets at ${new Date(response.usageLimit.resetsAt).toLocaleString()}` : '')
+          : `Claude (${rung.model}) failed: ${shortDetail(response.error ?? response.errorKind ?? 'unknown error', 200)}`,
+        {
+          model: `claude-cli/${rung.model}`,
+          backend: 'claude-cli',
+          durationMs: Date.now() - rungStartedAt,
+        },
+      );
       appendEvent(options.runId, {
         type: 'agent_error',
         role: options.role,
