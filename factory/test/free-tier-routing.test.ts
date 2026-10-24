@@ -35,6 +35,7 @@ import { runClaudeCli } from '../src/utils/claude-cli.ts';
 import { getFreeTierChain, getModelChainIds } from '../src/utils/model-router.ts';
 import { readEvents, traceDirFor, writeArtifact } from '../src/tools/logger-tools.ts';
 import { activeCooldown, classifyFailure, cooldownMs, takeRouting } from '../src/utils/model-routing.ts';
+import { readActivity } from '../src/utils/agent-activity.ts';
 
 const FLASH_A = 'google/gemini-3.1-flash-lite';
 const FLASH_B = 'google/gemini-3.5-flash-lite';
@@ -151,6 +152,18 @@ describe('free tier routing', () => {
     expect(result.routing).toMatchObject({ backend: 'claude-cli', served: 'claude-haiku-4-5', failedOver: true });
     expect(result.routing.attempts.map((a) => a.outcome)).toEqual(['rate-limit', 'invalid', 'served']);
     expect(result.routing.fallbackReason).toContain(FLASH_A);
+
+    // Live: each free model asked, why it did not answer, the hand-over, then Claude.
+    const activity = readActivity(traceDirFor(`free-tier-test-${process.pid}-${runCount}`));
+    expect(activity.map((e) => [e.kind, e.text.split(' (')[0]])).toEqual([
+      ['call-start', `Asking ${FLASH_A}`],
+      ['notice', expect.stringMatching(new RegExp(`^${FLASH_A}: rate-limit after`))],
+      ['call-start', `Asking ${FLASH_B}`],
+      ['notice', expect.stringMatching(new RegExp(`^${FLASH_B}: invalid after`))],
+      ['notice', 'No free-tier model could answer: handing the call to Claude'],
+      ['call-start', 'Asking Claude'],
+      ['call-end', expect.stringContaining('Answered by claude-haiku-4-5')],
+    ]);
   });
 
   it('skips a model whose key is not set, and says so', async () => {

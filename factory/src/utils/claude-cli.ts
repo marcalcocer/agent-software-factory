@@ -107,6 +107,8 @@ export interface ClaudeCliRequest {
   readDirs?: string[];
   timeoutMs?: number;
   maxBudgetUsd?: number;
+  /** Receives stdout as it arrives: the `stream-json` events of the call, for live activity. */
+  onStdout?: (chunk: string) => void;
 }
 
 export interface ClaudeCliUsage {
@@ -368,9 +370,6 @@ export async function runClaudeCli(request: ClaudeCliRequest): Promise<ClaudeCli
   // Optional caching/compression proxy (e.g. Headroom) in front of the Anthropic API.
   if (config.claudeCliBaseUrl) env.ANTHROPIC_BASE_URL = config.claudeCliBaseUrl;
 
-  // Buffer for streaming JSON lines
-  let streamBuffer = '';
-
   let result: CommandResult;
   try {
     result = await runProcess('claude', buildClaudeCliArgs(request), {
@@ -383,38 +382,8 @@ export async function runClaudeCli(request: ClaudeCliRequest): Promise<ClaudeCli
       // The JSON envelope must never be truncated by the shared output cap.
       maxOutputChars: 32_000_000,
       env,
-      onStdout: (chunk) => {
-        // Parse streaming JSON events (newline-delimited) and emit progress in real-time.
-        // Agents with a JSON schema stream raw JSON fragments, which are noise on screen, so
-        // tool activity is surfaced instead: that is the useful signal for every step.
-        streamBuffer += chunk;
-        const lines = streamBuffer.split('\n');
-        streamBuffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line);
-
-            if (event.type !== 'stream_event') continue;
-            const inner = event.event;
-
-            // Tool calls: always human-readable, so they work for structured agents too.
-            if (inner?.type === 'content_block_start' && inner.content_block?.type === 'tool_use') {
-              const toolName = inner.content_block.name ?? 'tool';
-              process.stdout.write(`  [tool] ${toolName}\n`);
-              continue;
-            }
-
-            // Text deltas: only meaningful when the agent is not emitting a JSON payload.
-            if (inner?.type === 'content_block_delta' && inner.delta?.text) {
-              if (!request.jsonSchema) process.stdout.write(inner.delta.text);
-            }
-          } catch {
-            // Ignore malformed lines; the final events may not be perfect JSON
-          }
-        }
-      },
+      // The live stream (`stream-json`): the caller turns it into activity (see `agent-activity.ts`).
+      ...(request.onStdout ? { onStdout: request.onStdout } : {}),
     });
   } catch (error) {
     return {

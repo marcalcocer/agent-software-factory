@@ -29,6 +29,8 @@ export interface FreeChainCall {
   schema: z.ZodType;
   requestContext: RequestContext;
   timeoutMs?: number;
+  /** Told when a model is about to be asked, and how each attempt ended: the live activity of the call. */
+  onProgress?: (progress: { phase: 'asking'; model: string } | { phase: 'done'; attempt: ModelAttempt }) => void;
 }
 
 export interface FreeChainAnswer {
@@ -64,7 +66,13 @@ export function missingKey(model: string): string | null {
  * Asks the chain. Returns the first accepted answer, or null when none was; `attempts` is filled either
  * way, the model that answered last.
  */
-export async function tryFreeChain(call: FreeChainCall, attempts: ModelAttempt[]): Promise<FreeChainAnswer | null> {
+export async function tryFreeChain(call: FreeChainCall, attemptLog: ModelAttempt[]): Promise<FreeChainAnswer | null> {
+  const attempts = {
+    push(attempt: ModelAttempt): void {
+      attemptLog.push(attempt);
+      call.onProgress?.({ phase: 'done', attempt });
+    },
+  };
   for (const model of call.models) {
     const key = missingKey(model);
     if (key) {
@@ -82,6 +90,7 @@ export async function tryFreeChain(call: FreeChainCall, attempts: ModelAttempt[]
       continue;
     }
 
+    call.onProgress?.({ phase: 'asking', model });
     try {
       // One try, no retries: the next model of the chain is the retry, and a provider that is over its
       // quota only makes a second try slower.

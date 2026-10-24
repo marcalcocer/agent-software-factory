@@ -39,6 +39,7 @@ import {
   type ModelRouting,
 } from './model-routing.ts';
 import { runClaudeCli, type ClaudeCliToolPolicy } from './claude-cli.ts';
+import { ActivityRecorder, ClaudeStreamParser, describeToolUse, formatDuration } from './agent-activity.ts';
 
 export interface InvokeAgentOptions<TSchema extends z.ZodType> {
   agent: Agent<any, any, any>;
@@ -323,6 +324,7 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
   requestContext: RequestContext,
   requestedModel: string,
   startedAt: number,
+  activity: ActivityRecorder,
 ): Promise<InvokeAgentResult<z.infer<TSchema>>> {
   const config = getFactoryConfig();
   const attempt = options.attempt ?? 1;
@@ -364,7 +366,7 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
   const attempts: ModelAttempt[] = [];
   const freeModels = getFreeTierChain(options.role);
   if (freeModels.length > 0) {
-    process.stdout.write(`  free tier: asking ${freeModels.join(' -> ')}\n`);
+    const asked = new Map<string, number>();
     const free = await tryFreeChain(
       {
         role: options.role,
@@ -374,11 +376,32 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
         schema: options.schema,
         requestContext,
         ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+        onProgress: (progress) => {
+          if (progress.phase === 'asking') {
+            asked.set(progress.model, Date.now());
+            activity.emit('call-start', `Asking ${progress.model} (free tier)`, { model: progress.model, backend: 'free-tier' });
+            return;
+          }
+          const { attempt: tried } = progress;
+          const took = asked.has(tried.model) ? ` after ${formatDuration(Date.now() - asked.get(tried.model)!)}` : '';
+          if (tried.outcome === 'served') return; // the answer itself is reported below, with its tokens
+          activity.emit(
+            'notice',
+            `${tried.model}: ${tried.outcome}${took}${tried.detail ? ` (${tried.detail})` : ''}`,
+            { model: tried.model, backend: 'free-tier' },
+          );
+        },
       },
       attempts,
     );
     if (free) {
       const durationMs = Date.now() - startedAt;
+      activity.emit('call-end', `Answered by ${free.servedByModel} (free tier) in ${formatDuration(durationMs)}`, {
+        model: free.servedByModel,
+        backend: 'free-tier',
+        durationMs,
+        tokens: free.usage.totalTokens,
+      });
       const routing = buildRouting(requestedModel, 'free-tier', attempts, { served: free.servedByModel });
       publishRouting(options, routing);
       appendEvent(options.runId, {
@@ -414,7 +437,7 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
         dryRun: false,
       };
     }
-    process.stdout.write('  free tier: no model answered; falling back to Claude\n');
+    activity.emit('notice', 'No free-tier model could answer: handing the call to Claude');
   }
 
   for (const [index, rung] of ladder.entries()) {
@@ -425,6 +448,12 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
         'Return the corrected JSON only.'
       : basePrompt;
 
+    if (rung.repair) {
+      activity.emit('notice', `The answer did not match the expected format (${shortDetail(lastError, 120)}): asking ${rung.model} again`);
+    }
+    activity.emit('call-start', `Asking Claude (${rung.model})`, { model: `claude-cli/${rung.model}`, backend: 'claude-cli' });
+    const stream = new ClaudeStreamParser(activity);
+    const rungStartedAt = Date.now();
     const response = await runClaudeCli({
       systemPrompt,
       prompt,
@@ -435,11 +464,18 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
       toolPolicy,
       readDirs: traceReadDirs(options.runId),
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      onStdout: (chunk) => stream.push(chunk),
     });
+    stream.end();
 
     const durationMs = Date.now() - startedAt;
 
     if (!response.ok) {
+      activity.emit('call-failed', `Claude (${rung.model}) failed: ${shortDetail(response.error ?? response.errorKind ?? 'unknown error', 200)}`, {
+        model: `claude-cli/${rung.model}`,
+        backend: 'claude-cli',
+        durationMs: Date.now() - rungStartedAt,
+      });
       appendEvent(options.runId, {
         type: 'agent_error',
         role: options.role,
@@ -469,6 +505,17 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
     const parsed = options.schema.safeParse(candidate);
 
     if (parsed.success) {
+      activity.emit(
+        'call-end',
+        `Answered by ${response.servedByModel} in ${formatDuration(Date.now() - rungStartedAt)}` +
+          (response.toolCalls > 0 ? ` · ${response.toolCalls} tool turns` : ''),
+        {
+          model: response.servedByModel,
+          backend: 'claude-cli',
+          durationMs: Date.now() - rungStartedAt,
+          tokens: response.usage.totalTokens,
+        },
+      );
       // Either the schema ladder escalated to another model, or the CLI's own
       // `--fallback-model` answered: both are reported as a failover.
       const switchedModel = rung.model !== model || !response.servedByModel.includes(rung.model);
@@ -542,6 +589,7 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
   }
 
   const durationMs = Date.now() - startedAt;
+  activity.emit('call-failed', `No answer matched the expected format after ${ladder.length} tries: ${shortDetail(lastError, 200)}`, { durationMs });
   appendEvent(options.runId, {
     type: 'agent_error',
     role: options.role,
@@ -624,24 +672,46 @@ export async function invokeAgent<TSchema extends z.ZodType>(
     role: options.role,
   });
 
+  process.stdout.write(`Agent "${options.role}" started on step "${options.step}"...\n`);
+  // What the call does, live: `logs/<runId>/activity.ndjson`, read by the Studio (see `agent-activity.ts`).
+  const activity = new ActivityRecorder({
+    runId: options.runId,
+    role: options.role,
+    step: options.step,
+    attempt,
+    cwd: options.repoPath,
+  });
+
   // Subscription-backed backend: delegate to the official Claude Code binary.
   if (getFactoryConfig().provider === 'claude-cli') {
-    if (!dryRun) {
-      process.stdout.write(`Agent "${options.role}" started on step "${options.step}"...\n`);
+    try {
+      return await invokeViaClaudeCli(options, requestContext, requestedModel, startedAt, activity);
+    } finally {
+      activity.close();
     }
-    return await invokeViaClaudeCli(options, requestContext, requestedModel, startedAt);
   }
 
-  if (!dryRun) {
-    process.stdout.write(`Agent "${options.role}" started on step "${options.step}"...\n`);
-  }
+  activity.emit('call-start', `Asking ${requestedModel}`, { model: requestedModel, backend: 'api' });
   try {
+    // Mastra reports each finished step of the tool loop: the tool calls and any text in between.
+    const onStepFinish = (step: { text?: string; toolCalls?: Array<{ toolName?: string; args?: unknown; input?: unknown; payload?: { toolName?: string; args?: unknown } }> }) => {
+      try {
+        for (const call of step.toolCalls ?? []) {
+          const name = call.toolName ?? call.payload?.toolName ?? 'tool';
+          activity.emit('tool', describeToolUse(name, call.args ?? call.input ?? call.payload?.args, options.repoPath), { tool: name });
+        }
+        if (typeof step.text === 'string' && step.text.trim()) activity.emit('text', step.text.trim());
+      } catch {
+        // Activity is a view; it never breaks the call.
+      }
+    };
     const response = await options.agent.generate(options.prompt, {
       structuredOutput: { schema: options.schema as never },
       requestContext,
+      onStepFinish,
       ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
       ...(options.tracingContext === undefined ? {} : { tracingContext: options.tracingContext }),
-    });
+    } as never);
 
     const durationMs = Date.now() - startedAt;
     const usage = normalizeUsage(response.usage as RawUsage | undefined);
@@ -649,6 +719,12 @@ export async function invokeAgent<TSchema extends z.ZodType>(
       (response.response as { modelId?: string } | undefined)?.modelId ?? 'unknown';
     const toolCalls = Array.isArray(response.toolCalls) ? response.toolCalls.length : 0;
     const failedOver = detectFailover(requestedModel, servedByModel);
+    activity.emit('call-end', `Answered by ${servedByModel} in ${formatDuration(durationMs)}`, {
+      model: servedByModel,
+      backend: 'api',
+      durationMs,
+      tokens: usage.totalTokens,
+    });
     const routing = buildRouting(requestedModel, 'api', [{ model: servedByModel, backend: 'api', outcome: 'served' }], {
       failedOver,
       served: servedByModel,
@@ -697,6 +773,7 @@ export async function invokeAgent<TSchema extends z.ZodType>(
   } catch (error) {
     const durationMs = Date.now() - startedAt;
     const message = error instanceof Error ? error.message : String(error);
+    activity.emit('call-failed', `Failed: ${shortDetail(message, 200)}`, { durationMs });
     appendEvent(options.runId, {
       type: 'agent_error',
       role: options.role,
@@ -709,6 +786,8 @@ export async function invokeAgent<TSchema extends z.ZodType>(
     throw new Error(`Agent "${options.role}" failed during step "${options.step}": ${message}`, {
       cause: error,
     });
+  } finally {
+    activity.close();
   }
 }
 
