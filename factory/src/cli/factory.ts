@@ -873,7 +873,7 @@ async function commandShow(flags: Record<string, FlagValue>): Promise<number> {
 
 async function commandDoctor(flags: Record<string, FlagValue>): Promise<number> {
   const { getFactoryConfig, isVolatileLocation } = await import('../utils/factory-config.ts');
-  const { AGENT_ROLES, checkProviderCredentials, describeModelChain } = await import(
+  const { AGENT_ROLES, FREE_TIER_ELIGIBLE_ROLES, checkProviderCredentials, describeModelChain, getIneligibleFreeRoles } = await import(
     '../utils/model-router.ts'
   );
   const { hasExecutable } = await import('../utils/shell.ts');
@@ -906,6 +906,13 @@ async function commandDoctor(flags: Record<string, FlagValue>): Promise<number> 
   for (const provider of credentials.ready) process.stdout.write(`  [ok]      ${provider}\n`);
   for (const entry of credentials.missing) {
     process.stdout.write(`  [missing] ${entry.provider} (set ${entry.envKey})\n`);
+  }
+  const ineligible = getIneligibleFreeRoles();
+  if (ineligible.length > 0) {
+    process.stdout.write(
+      `  [ignored] FACTORY_FREE_ROLES lists ${ineligible.join(', ')}: a free model has no tools, so only ` +
+        `${FREE_TIER_ELIGIBLE_ROLES.join(', ')} can use the free tier\n`,
+    );
   }
 
   let cliHealthy = true;

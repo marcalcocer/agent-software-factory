@@ -25,9 +25,19 @@ import { REQUEST_CONTEXT_KEYS } from './context-loader.ts';
 import {
   getClaudeCliChain,
   getClaudeCliEscalationModel,
+  getFreeTierChain,
   getPrimaryModelId,
   type AgentRole,
 } from './model-router.ts';
+import { tryFreeChain } from './free-tier.ts';
+import {
+  buildRouting,
+  classifyFailure,
+  recordRouting,
+  shortDetail,
+  type ModelAttempt,
+  type ModelRouting,
+} from './model-routing.ts';
 import { runClaudeCli, type ClaudeCliToolPolicy } from './claude-cli.ts';
 
 export interface InvokeAgentOptions<TSchema extends z.ZodType> {
@@ -65,6 +75,8 @@ export interface InvokeAgentResult<TOutput> {
   requestedModel: string;
   servedByModel: string;
   failedOver: boolean;
+  /** Every model the call went through and why, so the step report can say what happened. */
+  routing: ModelRouting;
   usage: {
     inputTokens: number;
     outputTokens: number;
@@ -163,6 +175,29 @@ function traceReadDirs(runId: string): string[] {
   return fs.existsSync(dir) ? [dir] : [];
 }
 
+/**
+ * Hands the routing of a call to the step's report and, when a model other than the first choice answered,
+ * writes the event that says why (`model_fallback`): the audit trail and the Studio read it.
+ */
+function publishRouting(
+  options: { runId: string; role: AgentRole; step: ArtifactStep; attempt?: number },
+  routing: ModelRouting,
+): void {
+  const attempt = options.attempt ?? 1;
+  recordRouting(options.runId, options.step, attempt, routing);
+  if (!routing.failedOver) return;
+  appendEvent(options.runId, {
+    type: 'model_fallback',
+    role: options.role,
+    step: options.step,
+    attempt,
+    from: routing.requested,
+    to: routing.served,
+    reason: routing.fallbackReason ?? '',
+    attempts: routing.attempts,
+  });
+}
+
 /** Converts a Zod schema to the JSON Schema consumed by `claude --json-schema`. */
 function toJsonSchema(schema: z.ZodType): Record<string, unknown> | undefined {
   try {
@@ -190,7 +225,7 @@ function toJsonSchema(schema: z.ZodType): Record<string, unknown> | undefined {
  * and can only return BLOCKED. Only the two roles that are supposed to change the working tree
  * get write access.
  */
-const ROLE_TOOL_POLICY: Record<AgentRole, ClaudeCliToolPolicy> = {
+export const ROLE_TOOL_POLICY: Record<AgentRole, ClaudeCliToolPolicy> = {
   'pm-architect': 'read-only',
   developer: 'read-write',
   'qa-tester': 'read-only',
@@ -324,6 +359,64 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
 
   let lastError = '';
 
+  // The free tier goes first, for the roles it is switched on for. Whatever it cannot answer falls through
+  // to Claude below, and the attempts made here ride along so the step report shows the whole path.
+  const attempts: ModelAttempt[] = [];
+  const freeModels = getFreeTierChain(options.role);
+  if (freeModels.length > 0) {
+    process.stdout.write(`  free tier: asking ${freeModels.join(' -> ')}\n`);
+    const free = await tryFreeChain(
+      {
+        role: options.role,
+        models: freeModels,
+        systemPrompt,
+        prompt: basePrompt,
+        schema: options.schema,
+        requestContext,
+        ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      },
+      attempts,
+    );
+    if (free) {
+      const durationMs = Date.now() - startedAt;
+      const routing = buildRouting(requestedModel, 'free-tier', attempts, { served: free.servedByModel });
+      publishRouting(options, routing);
+      appendEvent(options.runId, {
+        type: 'agent_call',
+        role: options.role,
+        step: options.step,
+        attempt,
+        requestedModel,
+        servedByModel: free.servedByModel,
+        backend: 'free-tier',
+        ...(routing.fallbackReason ? { fallbackReason: routing.fallbackReason } : {}),
+        attempts,
+        inputTokens: free.usage.inputTokens,
+        outputTokens: free.usage.outputTokens,
+        reasoningTokens: free.usage.reasoningTokens,
+        cachedTokens: free.usage.cachedTokens,
+        totalTokens: free.usage.totalTokens,
+        toolCalls: 0,
+        durationMs,
+        failedOver: routing.failedOver,
+        dryRun: false,
+      });
+      return {
+        object: free.object as z.infer<TSchema>,
+        text: free.text,
+        requestedModel,
+        servedByModel: free.servedByModel,
+        failedOver: routing.failedOver,
+        routing,
+        usage: free.usage,
+        toolCalls: 0,
+        durationMs,
+        dryRun: false,
+      };
+    }
+    process.stdout.write('  free tier: no model answered; falling back to Claude\n');
+  }
+
   for (const [index, rung] of ladder.entries()) {
     const isLast = index === ladder.length - 1;
     const prompt = rung.repair
@@ -355,6 +448,14 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
         requestedModel,
         durationMs,
         error: `${response.errorKind}: ${response.error}`,
+        ...(attempts.length > 0
+          ? {
+              attempts: [
+                ...attempts,
+                { model: `claude-cli/${rung.model}`, backend: 'claude-cli', outcome: classifyFailure(`${response.errorKind} ${response.error}`), detail: shortDetail(response.error ?? '') },
+              ],
+            }
+          : {}),
       });
       throw new Error(
         `Agent "${options.role}" failed during step "${options.step}" ` +
@@ -370,8 +471,17 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
     if (parsed.success) {
       // Either the schema ladder escalated to another model, or the CLI's own
       // `--fallback-model` answered: both are reported as a failover.
-      const failedOver =
-        rung.model !== model || !response.servedByModel.includes(rung.model);
+      const switchedModel = rung.model !== model || !response.servedByModel.includes(rung.model);
+      attempts.push({ model: response.servedByModel, backend: 'claude-cli', outcome: 'served' });
+      const failedOver = switchedModel || attempts.some((entry) => entry.backend === 'free-tier');
+      const routing = buildRouting(requestedModel, 'claude-cli', attempts, {
+        failedOver,
+        served: response.servedByModel,
+      });
+      if (failedOver && !routing.fallbackReason) {
+        routing.fallbackReason = `Claude Code switched from ${rung.model} to ${response.servedByModel} (usage limit or overload)`;
+      }
+      publishRouting(options, routing);
 
       appendEvent(options.runId, {
         type: 'agent_call',
@@ -380,6 +490,9 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
         attempt,
         requestedModel,
         servedByModel: response.servedByModel,
+        backend: 'claude-cli',
+        ...(routing.fallbackReason ? { fallbackReason: routing.fallbackReason } : {}),
+        ...(attempts.length > 1 ? { attempts } : {}),
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
         reasoningTokens: response.usage.reasoningTokens,
@@ -396,6 +509,7 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
         requestedModel,
         servedByModel: response.servedByModel,
         failedOver,
+        routing,
         usage: {
           inputTokens: response.usage.inputTokens,
           outputTokens: response.usage.outputTokens,
@@ -414,6 +528,7 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
       .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
       .join('; ');
 
+    attempts.push({ model: `claude-cli/${rung.model}`, backend: 'claude-cli', outcome: 'invalid', detail: shortDetail(lastError) });
     appendEvent(options.runId, {
       type: 'agent_schema_retry',
       role: options.role,
@@ -487,6 +602,7 @@ export async function invokeAgent<TSchema extends z.ZodType>(
       requestedModel,
       servedByModel: 'dry-run-stub',
       failedOver: false,
+      routing: { requested: requestedModel, served: 'dry-run-stub', backend: 'dry-run', failedOver: false, attempts: [] },
       usage: {
         inputTokens: 0,
         outputTokens: 0,
@@ -533,6 +649,11 @@ export async function invokeAgent<TSchema extends z.ZodType>(
       (response.response as { modelId?: string } | undefined)?.modelId ?? 'unknown';
     const toolCalls = Array.isArray(response.toolCalls) ? response.toolCalls.length : 0;
     const failedOver = detectFailover(requestedModel, servedByModel);
+    const routing = buildRouting(requestedModel, 'api', [{ model: servedByModel, backend: 'api', outcome: 'served' }], {
+      failedOver,
+      served: servedByModel,
+    });
+    publishRouting(options, routing);
 
     appendEvent(options.runId, {
       type: 'agent_call',
@@ -541,6 +662,7 @@ export async function invokeAgent<TSchema extends z.ZodType>(
       attempt,
       requestedModel,
       servedByModel,
+      backend: 'api',
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
       reasoningTokens: usage.reasoningTokens,
@@ -566,6 +688,7 @@ export async function invokeAgent<TSchema extends z.ZodType>(
       requestedModel,
       servedByModel,
       failedOver,
+      routing,
       usage,
       toolCalls,
       durationMs,

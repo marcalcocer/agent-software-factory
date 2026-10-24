@@ -141,6 +141,35 @@ export function getClaudeCliEscalationModel(): string {
   );
 }
 
+/**
+ * Roles a model without tools can do: they read nothing but their prompt and touch nothing. Only these
+ * may be handed to the free tier, whose models cannot open a file or edit one.
+ */
+export const FREE_TIER_ELIGIBLE_ROLES: readonly AgentRole[] = ['run-namer', 'merge-summary', 'pr-writer', 'phase-reconciler'];
+
+function envList(key: string): string[] {
+  return (process.env[key] ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+/** Roles named in `FACTORY_FREE_ROLES` that cannot go to the free tier, so `doctor` can say so. */
+export function getIneligibleFreeRoles(): string[] {
+  return envList('FACTORY_FREE_ROLES').filter((role) => !FREE_TIER_ELIGIBLE_ROLES.includes(role as AgentRole));
+}
+
+/**
+ * Free-quota models tried before Claude for a role (`FACTORY_FREE_ROLES` x `FACTORY_FREE_CHAIN`).
+ * Empty unless the Claude Code CLI is the backend, the role is listed and eligible, and a chain is set:
+ * the free tier is opt-in, and under the `api` backend every role already has its own chain.
+ */
+export function getFreeTierChain(role: AgentRole): string[] {
+  if (getFactoryConfig().provider !== 'claude-cli') return [];
+  if (!FREE_TIER_ELIGIBLE_ROLES.includes(role) || !envList('FACTORY_FREE_ROLES').includes(role)) return [];
+  return envList('FACTORY_FREE_CHAIN');
+}
+
 /** Resolved CLI model + failover list for a role. */
 export function getClaudeCliChain(role: AgentRole): { model: string; fallbackModels: string[] } {
   const tier = ROLE_TIERS[role];
@@ -184,7 +213,7 @@ export function getModelChainIds(role: AgentRole): string[] {
   // logs, `summary.json` and `doctor` all show which backend actually served the role.
   if (getFactoryConfig().provider === 'claude-cli') {
     const { model, fallbackModels } = getClaudeCliChain(role);
-    return [model, ...fallbackModels].map((id) => `claude-cli/${id}`);
+    return [...getFreeTierChain(role), ...[model, ...fallbackModels].map((id) => `claude-cli/${id}`)];
   }
 
   const override = process.env[ROLE_ENV_KEYS[role]];
@@ -272,8 +301,18 @@ export function checkProviderCredentials(): {
 
   // The CLI backend authenticates through Claude Code's own OAuth session, so there is no
   // API key for the factory to validate. `doctor` probes the CLI itself instead.
+  // The free tier, when it is on, does use keys: the ones of the providers in its chain.
   if (getFactoryConfig().provider === 'claude-cli') {
-    return { ready: ['claude-cli'], missing: [] };
+    const free = new Set(AGENT_ROLES.flatMap((role) => getFreeTierChain(role)).map((id) => id.split('/')[0] ?? ''));
+    const freeReady: string[] = ['claude-cli'];
+    const freeMissing: { provider: string; envKey: string }[] = [];
+    for (const provider of free) {
+      const envKey = PROVIDER_ENV_KEYS[provider];
+      if (!envKey) continue;
+      if (process.env[envKey]?.trim()) freeReady.push(provider);
+      else freeMissing.push({ provider, envKey });
+    }
+    return { ready: freeReady, missing: freeMissing };
   }
 
   for (const provider of getRequiredProviders()) {

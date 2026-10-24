@@ -22,6 +22,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 
 import { getFactoryConfig } from '../utils/factory-config.ts';
+import { takeRouting } from '../utils/model-routing.ts';
 
 /* -------------------------------------------------------------------------- */
 /* Artifact naming                                                             */
@@ -187,6 +188,8 @@ export function writeArtifact(input: WriteArtifactInput): string {
   const traceDir = ensureRunTrace(input.runId);
   const attempt = input.attempt ?? 1;
   const filePath = path.join(traceDir, artifactFileName(input.step, attempt));
+  // Which models the step's call went through, when it made one (see `utils/model-routing.ts`).
+  const routing = takeRouting(input.runId, input.step, attempt);
   const payload = {
     step: input.step,
     attempt,
@@ -194,6 +197,7 @@ export function writeArtifact(input: WriteArtifactInput): string {
     model: input.model ?? null,
     durationMs: input.durationMs ?? null,
     writtenAt: new Date().toISOString(),
+    ...(routing ? { routing } : {}),
     data: input.data,
   };
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');

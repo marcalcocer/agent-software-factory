@@ -33,7 +33,7 @@ import { PROVIDER_ENV_KEYS } from '../utils/model-router.ts';
 const DEFAULT_MODELS = [
   'google/gemini-3.5-flash-lite',
   'google/gemini-3.1-flash-lite',
-  'groq/llama-3.3-70b-versatile',
+  'groq/openai/gpt-oss-120b',
   'mistral/mistral-small-latest',
 ];
 const CALL_TIMEOUT_MS = 60_000;
