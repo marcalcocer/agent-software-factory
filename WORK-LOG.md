@@ -6,8 +6,108 @@ written to be read on its own, e.g. the next morning.
 
 | Date | Feature | Status |
 | --- | --- | --- |
+| 2026-10-24 | [Automatic retry when Claude's usage limit resets](#2026-10-24--automatic-retry-when-claudes-usage-limit-resets) | On branch `claude/adoring-hamilton-x9t92q`, not merged |
 | 2026-10-24 | [Live agent activity](#2026-10-24--live-agent-activity) | On branch `claude/adoring-hamilton-x9t92q`, not merged |
 | 2026-10-24 | [Free tier for the small roles, and which model did each step](#2026-10-24--free-tier-and-model-visibility) | Merged into `master` |
+
+---
+
+## 2026-10-24 — Automatic retry when Claude's usage limit resets
+
+You asked: when Claude's tokens run out mid-run, retry by itself once they are back, instead of you
+watching the clock and pressing "Retry"; with a way to switch it off. Your answers to my three questions:
+**the Studio waits and retries** (not the factory process), **a setting, on by default, plus Cancel per
+run**, and **any wait**, a weekly limit days away included.
+
+**Short version.** A run stopped by the usage limit now says which limit and when it resets, counts down,
+and continues by itself a minute after the reset, from the step that stopped, keeping everything already
+done. "Retry now" and "Cancel automatic retry" are on the run; a switch in Settings turns it all off.
+
+![A run waiting for the limit, in the dark theme](docs/auto-retry/retry-scheduled.png)
+
+![After "Cancel automatic retry"](docs/auto-retry/retry-cancelled.png)
+
+(Rendered from the real Studio components in Chromium; the backdrop is a recorded run. Light theme:
+`docs/auto-retry/retry-scheduled-light.png`.)
+
+### What was there before
+
+A refused call failed the run with "Claude subscription usage limit reached… resume once the window
+resets", and "Retry run" already continued from the failed step. What was missing: knowing *when* it
+resets, and someone to press the button then. The CLI does say when: every call's stream carries a
+`rate_limit_event` with the exact reset time and the window (`five_hour`, `seven_day`); I saw it in the
+transcripts recorded for the live activity.
+
+### What I built
+
+**Factory** (`factory/src/utils/usage-limit.ts`):
+- A refused call is recognised from the stream, even when the error text does not name the limit, and
+  reports `usageLimit: { resetsAt, window }`; the error text ("resets 7:20pm", "…|1792862400", "resets in
+  2 hours") is the fallback.
+- Each refused call writes a `usage_limit` event; the live activity says "Claude's 5-hour limit is used up:
+  it resets at …".
+- A run that fails on it gets `usageLimit` in `summary.json`, tied to *this* failure (a limit from an
+  earlier attempt never explains a later, different failure).
+
+**Studio** (`studio/electron/services/auto-retry.ts`, `UsageLimitRetry.tsx`):
+- When a run's process ends on the limit, the main process writes a plan, `auto-retry.json` in the run
+  directory: retry at the reset + 1 minute (every 30 minutes when the reset time is unknown).
+- Every 15 seconds it checks the wall clock and resumes the runs that are due, from the step that stopped
+  (the same `factory resume` as "Retry run"), and tells the screen. A laptop that slept through the moment
+  retries on waking; a Studio that was closed retries when it opens (10 seconds after start). If another run
+  works in the same place, it waits 2 more minutes; if the resume cannot start (signed out), 5 more.
+- If the retry hits the limit again, a new plan is made from the new reset time; after 6 automatic retries
+  in a row it stops and says so.
+- On screen: the header turns amber, "Waiting for Claude's Usage Limit — it continues by itself at 18:24";
+  the run's panel names the limit, when it resets, and counts down to the retry with **Retry now** and
+  **Cancel automatic retry**; the history shows "⏳ Usage limit reached: retrying automatically at …".
+- **Settings → "Retry automatically when Claude's usage limit resets"**, on by default. Off (or cancelled,
+  or given up): the run offers "⏳ Retry automatically when the limit resets" for that run alone.
+- Pressing "Retry run" / "Retry now" yourself drops the plan.
+
+### How it was verified
+
+- **The factory, end to end, with a stand-in `claude`** that answers like a used-up 5-hour limit: a real
+  `factory run` stopped at the PM step with "Claude's 5-hour limit is used up", `summary.json` got
+  `usageLimit: { resetsAt: 17:20, window: five_hour }`, and the Studio's own code read it from that run
+  directory and planned the retry for 17:21. A real `factory resume` of it went straight back to the PM step
+  (the run namer was not repeated) and recorded the limit again.
+- **Tests.** Factory: 699 pass (new: the reset time from the stream and from five forms of error text, a
+  real `runClaudeCli` against a fake `claude` binary, the event and the activity line). Studio: 438 pass
+  (new: when to retry, what to do when a run ends, the retry loop with busy / signed-out / retried-by-hand
+  cases, reading a stopped run from disk, the panel, the countdown, Cancel and arm, the header, the setting).
+  Smoke: 155/155. Typecheck clean; the Electron main process and preload build.
+- **Screenshots** above, from the real components.
+
+Not verified: the Electron app itself was not launched (no display here), so the 15-second clock and the
+resume it starts were tested through their logic, not in the running app; and no real Claude account was
+taken to its limit. The pre-existing `round-commit.test.ts` failure is unchanged (see the previous entry).
+
+### Decisions I made without asking you
+
+- Retry **a minute after** the reset, not at it: the window has to be open on Anthropic's side too.
+- **Give up after 6** automatic retries in a row that hit the limit again, so a wrong reset time cannot
+  loop for ever; arming it by hand starts a fresh count.
+- Unknown reset time: **every 30 minutes**.
+- Only task runs and their rounds are retried, not the pull-request triage (the watcher handles that).
+- The CLI keeps the old message (`resume --run-id …`) and now adds the window and reset time; there is no
+  waiting in the CLI itself (you chose the Studio).
+
+### What to check
+
+1. Settings: the new switch is there and on.
+2. When a run next hits the limit: the amber header, the countdown, and that it continues by itself after
+   the reset. If it did not, look at `logs/<runId>/summary.json` (`usageLimit`) and `auto-retry.json` (the
+   plan, `status`, `retryAt`, `tries`), and the Studio's console for `[auto-retry]` lines.
+
+### Commits
+
+| Commit | What |
+| --- | --- |
+| `1efa14e` | docs: turn the live activity report into a work log for every feature |
+| `2ddc460` | feat(factory): record when Claude's usage limit resets |
+| `1b68caf` | feat(studio): retry a run by itself when Claude's usage limit resets |
+| `427e6dd` | docs: document the automatic retry after Claude's usage limit |
 
 ---
 
