@@ -53,7 +53,8 @@ function humanizeError(raw: string): string {
       'You are still signed in — you have simply used up your quota for the current window. ' +
       'Wait for the limit to reset (the message usually says when, e.g. "resets 10:10pm"), ' +
       'then press "Retry run" to continue from where it stopped — the plan and any finished ' +
-      'steps are kept.'
+      'steps are kept. (When the factory knows the reset time, the Studio retries by itself then: ' +
+      'see "Retry automatically" in Settings.)'
     );
   }
 

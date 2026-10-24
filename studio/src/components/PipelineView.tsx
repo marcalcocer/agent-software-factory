@@ -20,6 +20,8 @@ import { AgentDetail } from './AgentDetail';
 import { HumanInputPanel } from './HumanInputPanel';
 import { WorkingCopyBar, WorkingCopyPreparing } from './WorkingCopy';
 import { ModelChip, ModelsSummary } from './ModelChip';
+import { UsageLimitRetry } from './UsageLimitRetry';
+import { clockTime } from '../../shared/usageLimit';
 import { activityForNode, currentActivity } from '../../shared/activity';
 
 /** Turn raw factory errors into a friendlier, actionable message. */
@@ -40,7 +42,8 @@ function humanizeError(raw: string): string {
       'You are still signed in — you have simply used up your quota for the current window. ' +
       'Wait for the limit to reset (the message usually says when, e.g. "resets 10:10pm"), ' +
       'then press "Retry run" to continue from where it stopped — the plan and any finished ' +
-      'steps are kept.'
+      'steps are kept. (When the factory knows the reset time, the Studio retries by itself then: ' +
+      'see "Retry automatically" in Settings.)'
     );
   }
 
@@ -589,8 +592,11 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
     !failedNode &&
     derived.nodes.find((n) => n.id === 'delivery')?.status === 'completed';
 
+  // Stopped on Claude's usage limit with a retry planned: not over, just waiting for the limit.
+  const waitingForLimit = lifecycle === 'failed' && !notClosedOut && runInfo?.autoRetry?.status === 'scheduled' && !!runInfo.usageLimit;
+
   const headerTone =
-    lifecycle === 'waiting'
+    lifecycle === 'waiting' || waitingForLimit
       ? 'bg-gradient-to-r from-amber-600 to-orange-600'
       : lifecycle === 'running'
         ? 'bg-gradient-to-r from-blue-600 to-indigo-600'
@@ -610,7 +616,9 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
         : lifecycle === 'failed'
           ? notClosedOut
             ? 'Run Not Closed Out'
-            : 'Factory Failed'
+            : waitingForLimit
+              ? "Waiting for Claude's Usage Limit"
+              : 'Factory Failed'
           : outcome.title;
 
   const headerSubtitle =
@@ -619,7 +627,9 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
       : lifecycle === 'failed'
         ? notClosedOut
           ? 'The delivery finished - only the final record is missing'
-          : failedNode
+          : waitingForLimit
+            ? `Stopped${failedNode ? ` at ${failedNode.name}` : ''}; it continues by itself at ${clockTime(runInfo!.autoRetry!.retryAt, Date.now())}`
+            : failedNode
             ? `Stopped at ${failedNode.name}`
             : 'The run did not finish'
         : lifecycle === 'running'
@@ -758,8 +768,21 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
                   notClosedOut ? 'text-amber-800 dark:text-amber-200' : 'text-red-700 dark:text-red-300'
                 }`}
               >
-                {notClosedOut ? 'Run Not Closed Out' : `Run Failed${failedNode ? ` at ${failedNode.name}` : ''}`}
+                {notClosedOut
+                  ? 'Run Not Closed Out'
+                  : runInfo?.usageLimit
+                    ? `Stopped${failedNode ? ` at ${failedNode.name}` : ''}: Claude Usage Limit Reached`
+                    : `Run Failed${failedNode ? ` at ${failedNode.name}` : ''}`}
               </h3>
+              {runInfo?.usageLimit && !notClosedOut ? (
+                // Stopped on Claude's usage limit: when it resets, and the automatic retry.
+                <UsageLimitRetry
+                  run={runInfo}
+                  {...(onRetry ? { onRetryNow: () => onRetry(runId) } : {})}
+                  onChanged={() => void refresh()}
+                />
+              ) : (
+              <>
               <p
                 className={`text-sm whitespace-pre-wrap break-words leading-relaxed mb-3 ${
                   notClosedOut ? 'text-amber-900 dark:text-amber-100' : 'text-red-900 dark:text-red-100'
@@ -774,6 +797,8 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
                 >
                   {notClosedOut ? '✓ Close out run' : '▶ Retry Run'}
                 </button>
+              )}
+              </>
               )}
             </div>
           </div>

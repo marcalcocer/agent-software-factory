@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import type {
   ActivityEntry,
+  AutoRetryState,
   DeliveryEdits,
   FactoryRun,
   PendingInput,
@@ -30,6 +31,15 @@ import { factoryEnvironment, knownRepositories } from '../services/factory-env.j
 import { effectiveIsolation, runTaskArgs } from '../services/run-args.js';
 import { mainWindow } from '../main.js';
 import { loadSettings } from './settings.js';
+import {
+  TICK_MS,
+  armRetry,
+  clearAutoRetry,
+  decideAfterRun,
+  readAutoRetry,
+  runDueRetries,
+  writeAutoRetry,
+} from '../services/auto-retry.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -205,6 +215,8 @@ function finishRunProcess(runId: string, code: number | null): void {
   const reason = failed ? lastMeaningfulLine(runId) : undefined;
   recentOutput.delete(runId);
   unflushedOutput.delete(runId);
+  // A run stopped by Claude's usage limit is planned for a retry before the screen reads its state.
+  if (!cancelledRuns.has(runId)) planAutoRetry(runId);
   cancelledRuns.delete(runId);
   mainWindow?.webContents.send('factory:completed', runId, exit, reason);
   runEvents.emit('finished', runId, exit);
@@ -722,13 +734,26 @@ ipcMain.handle('factory:run', async (_event, params: {
 /**
  * Resume a suspended run
  */
-ipcMain.handle('factory:resume', async (_event, params: {
+interface ResumeParams {
   runId: string;
   decision?: 'ACKNOWLEDGE' | 'ABORT';
   guidance?: string;
   clarifications?: string;
   step?: string;
-}): Promise<void> => {
+}
+
+/** "Retry run": by hand, the plan of an automatic retry is dropped (it is what the user just did). */
+ipcMain.handle('factory:resume', async (_event, params: ResumeParams): Promise<void> => {
+  try {
+    clearAutoRetry(runDirOf(params.runId));
+  } catch {
+    // no plan to drop
+  }
+  await resumeRun(params);
+});
+
+/** Spawns `factory resume` for a run and streams it like a run. */
+async function resumeRun(params: ResumeParams): Promise<void> {
   const authenticated = await ensureClaudeAuth();
   if (!authenticated) {
     throw new Error('Authentication required. Please log in to Claude CLI.');
@@ -802,6 +827,79 @@ ipcMain.handle('factory:resume', async (_event, params: {
     console.log('[Factory resume] Process closed with code:', code);
     finishRunProcess(runId, code);
   });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Automatic retry when Claude's usage limit is back (services/auto-retry.ts)   */
+/* -------------------------------------------------------------------------- */
+
+const autoRetryWanted = (): boolean => loadSettings().global.autoRetryOnUsageLimit !== false;
+
+/** After a run's process ended: plan its retry if it stopped on the usage limit, or forget an old plan. */
+function planAutoRetry(runId: string): void {
+  try {
+    const state = readRunState(runId);
+    if (!state) return;
+    const dir = runDirOf(runId);
+    const decision = decideAfterRun(state.run, readAutoRetry(dir), autoRetryWanted(), Date.now());
+    if (decision.action === 'schedule') writeAutoRetry(dir, decision.state);
+    else if (decision.action === 'clear') clearAutoRetry(dir);
+  } catch (error) {
+    console.error('[auto-retry] could not plan the retry of', runId, error);
+  }
+}
+
+/** Starts the retries that are due (see `runDueRetries`). */
+async function retryDueRuns(): Promise<void> {
+  if (!fs.existsSync(LOGS_DIR)) return;
+  await runDueRetries(
+    {
+      runIds: () => fs.readdirSync(LOGS_DIR, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name),
+      readPlan: (runId) => readAutoRetry(runDirOf(runId)),
+      writePlan: (runId, state) => writeAutoRetry(runDirOf(runId), state),
+      clearPlan: (runId) => clearAutoRetry(runDirOf(runId)),
+      readRun: (runId) => readRunState(runId),
+      isActive: (runId) => activeRuns.has(runId),
+      isBusy: (repoPath, scope) => findBusyRun(repoPath, scope) !== null,
+      resume: (runId) => resumeRun({ runId }),
+      announce: (runId) => mainWindow?.webContents.send('factory:started', runId),
+      log: (message, error) => (error ? console.error(message, error) : console.log(message)),
+    },
+    Date.now(),
+  );
+}
+
+let retryTicking = false;
+const tickAutoRetry = (): void => {
+  if (retryTicking) return;
+  retryTicking = true;
+  void retryDueRuns().finally(() => {
+    retryTicking = false;
+  });
+};
+// The wall clock is checked often, so a laptop that slept through the moment retries on waking; the first
+// look waits for the window, so a retry that fell due while the Studio was closed is shown starting.
+setTimeout(tickAutoRetry, 10_000).unref?.();
+setInterval(tickAutoRetry, TICK_MS).unref?.();
+
+/** "Cancel automatic retry" on a run: it stays failed until the user retries it. */
+ipcMain.handle('factory:auto-retry-cancel', async (_event, runId: string): Promise<AutoRetryState | null> => {
+  const dir = runDirOf(runId);
+  const state = readRunState(runId);
+  const plan = readAutoRetry(dir) ?? (state ? armRetry(state.run, Date.now()) : null);
+  if (!plan) return null;
+  const cancelled: AutoRetryState = { ...plan, status: 'cancelled', updatedAt: new Date().toISOString() };
+  writeAutoRetry(dir, cancelled);
+  return cancelled;
+});
+
+/** "Retry automatically when the limit resets" on a run (the setting is off, or it was cancelled). */
+ipcMain.handle('factory:auto-retry-arm', async (_event, runId: string): Promise<AutoRetryState | null> => {
+  const state = readRunState(runId);
+  if (!state || state.run.status !== 'FAILED') return null;
+  const plan = armRetry(state.run, Date.now());
+  if (plan) writeAutoRetry(runDirOf(runId), plan);
+  return plan;
 });
 
 /**

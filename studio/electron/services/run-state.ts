@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ActivityEntry, FactoryRun, RunArtifact, RunEventRecord, RunStatus } from '../../shared/types';
 import { inferInterruption } from '../../shared/runInference';
+import { readAutoRetry } from './auto-retry';
 
 export function readJson<T>(file: string): T | null {
   try {
@@ -161,6 +162,8 @@ export function readRunState(
     finishedAt = finishedAt ?? events[events.length - 1]?.at ?? summary?.finishedAt;
   }
 
+  const autoRetry = readAutoRetry(runDir);
+
   return {
     repoPath,
     run: {
@@ -195,6 +198,11 @@ export function readRunState(
         : {}),
       round: summary?.round ?? meta?.round ?? 1,
       ...(meta?.pullRequest ? { pullRequest: meta.pullRequest } : {}),
+      // Stopped on Claude's usage limit: when it resets, and the Studio's plan to retry then.
+      ...(status === 'FAILED' && summary?.status === 'FAILED' && summary?.usageLimit
+        ? { usageLimit: { resetsAt: summary.usageLimit.resetsAt ?? null, ...(summary.usageLimit.window ? { window: summary.usageLimit.window } : {}) } }
+        : {}),
+      ...(autoRetry ? { autoRetry } : {}),
     },
   };
 }

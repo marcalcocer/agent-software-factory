@@ -42,6 +42,8 @@ interface Run {
   isolation?: 'worktree' | 'in-place';
   /** The phase of a project this run implements. */
   phaseId?: string;
+  /** Stopped on Claude's usage limit: the Studio's plan to retry it when the limit is back. */
+  autoRetry?: FactoryRun['autoRetry'];
   summary?: {
     durationMs: number;
     tokensUsed: number;
@@ -336,6 +338,7 @@ function App() {
         startTime: new Date(fr.startedAt),
         endTime: fr.finishedAt ? new Date(fr.finishedAt) : undefined,
         error: fr.error,
+        ...(fr.autoRetry ? { autoRetry: fr.autoRetry } : {}),
         rootRunId: fr.rootRunId,
         round: fr.round,
         pullRequestNumber: fr.pullRequest?.number,

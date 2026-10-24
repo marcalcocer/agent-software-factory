@@ -15,6 +15,8 @@ interface Run {
   error?: string;
   /** Which task this run belongs to, and which round of it. */
   rootRunId?: string;
+  /** Stopped on Claude's usage limit: when the Studio retries it by itself. */
+  autoRetry?: { status: string; retryAt: string };
   round?: number;
   pullRequestNumber?: number;
   /** "Phase 2 of 4 · Redesign the frontend": set for a run that implements a phase of a project. */
@@ -183,6 +185,12 @@ export function RunHistory({ runs, loading, onSelectRun, onResume, onRename, onD
                 </div>
                 {run.status === 'failed' && (
                   <>
+                    {run.autoRetry?.status === 'scheduled' && (
+                      <div data-testid="history-auto-retry" className="mt-2 text-xs font-medium text-blue-700 dark:text-blue-300">
+                        ⏳ Usage limit reached: retrying automatically at{' '}
+                        {new Date(run.autoRetry.retryAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    )}
                     {run.error && (
                       <div className="mt-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded px-2 py-1">
                         {run.error}

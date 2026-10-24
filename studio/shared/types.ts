@@ -35,6 +35,33 @@ export interface RunStep {
   artifact?: string;
 }
 
+/** Claude's usage limit, when a run stopped on it: which window ran out and when it resets. */
+export interface UsageLimitInfo {
+  /** ISO time, or null when the CLI did not say. */
+  resetsAt: string | null;
+  /** `five_hour`, `seven_day`, ... */
+  window?: string;
+}
+
+/**
+ * The Studio's plan to retry a run that stopped on the usage limit (`auto-retry.json` in the run
+ * directory, kept by `electron/services/auto-retry.ts`).
+ */
+export interface AutoRetryState {
+  /**
+   * `scheduled`: will be retried at `retryAt`. `retrying`: the retry was started. `cancelled`: the user
+   * said no. `gave-up`: retried too many times in a row and still limited.
+   */
+  status: 'scheduled' | 'retrying' | 'cancelled' | 'gave-up';
+  /** When the retry happens (the reset plus a minute, or a guess when the reset time is unknown). */
+  retryAt: string;
+  resetsAt: string | null;
+  window?: string;
+  /** Automatic retries started since the run first stopped on the limit. */
+  tries: number;
+  updatedAt: string;
+}
+
 export interface FactoryRun {
   runId: string;
   repoId: string;
@@ -76,6 +103,10 @@ export interface FactoryRun {
   };
   steps?: RunStep[];
   error?: string;
+  /** Set when the run failed because Claude's usage limit was reached. */
+  usageLimit?: UsageLimitInfo;
+  /** The automatic retry of a run that stopped on the usage limit, when there is one. */
+  autoRetry?: AutoRetryState;
   /**
    * Which optional stages this run executes, as recorded in its `run.json`. Absent on runs
    * created before stages were configurable.
@@ -591,6 +622,8 @@ export interface GlobalSettings {
   isolation?: 'worktree' | 'in-place';
   /** Compare the roadmap with what a phase delivered as soon as it is merged (default: on; one cheap model call). */
   autoReconcile?: boolean;
+  /** Retry a run that stopped on Claude's usage limit by itself, once the limit resets (default: on). */
+  autoRetryOnUsageLimit?: boolean;
 
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   activeProvider: 'claude-cli' | 'api';

@@ -4,6 +4,7 @@
 
 import type {
   ActivityEntry,
+  AutoRetryState,
   AgentEvent,
   AuthProvider,
   DeliveryEdits,
@@ -86,6 +87,10 @@ export interface IPCChannels {
     runId: string,
     fromLine?: number,
   ) => Promise<{ entries: ActivityEntry[]; total: number }>;
+  /** Stop the automatic retry of a run that stopped on Claude's usage limit. */
+  'factory:auto-retry-cancel': (runId: string) => Promise<AutoRetryState | null>;
+  /** Retry a run that stopped on the usage limit by itself, once the limit resets. */
+  'factory:auto-retry-arm': (runId: string) => Promise<AutoRetryState | null>;
   'factory:get-output': (
     runId: string,
     fromLine?: number,

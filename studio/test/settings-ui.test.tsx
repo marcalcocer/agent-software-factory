@@ -289,3 +289,18 @@ describe('on the whole screen', () => {
     await waitFor(() => expect((screen.getByRole('radio', { name: /My repository/ }) as HTMLInputElement).checked).toBe(true));
   });
 });
+
+describe('retry automatically when the usage limit resets', () => {
+  it('is on unless switched off, and is saved', async () => {
+    const { api } = settings();
+    const user = userEvent.setup();
+
+    const box = (await screen.findByTestId('auto-retry-setting')) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    await user.click(box);
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => expect(api.callsTo('settings:update').length).toBe(1));
+    expect((api.callsTo('settings:update')[0]![0] as { global: { autoRetryOnUsageLimit: boolean } }).global.autoRetryOnUsageLimit).toBe(false);
+  });
+});

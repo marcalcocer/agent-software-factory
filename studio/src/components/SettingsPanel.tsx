@@ -25,6 +25,7 @@ interface Settings {
   isolation?: 'worktree' | 'in-place';
   /** Compare the roadmap with what a phase delivered when it is merged. Absent: yes. */
   autoReconcile?: boolean;
+  autoRetryOnUsageLimit?: boolean;
 }
 
 /**
@@ -274,6 +275,24 @@ export function SettingsPanel({ isOpen, onClose, onThemeChange, onSaved }: Setti
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-300 block">Compare the roadmap with what a phase delivered</span>
                     <span className="text-xs text-slate-500 dark:text-slate-400">
                       When a phase is merged, one cheap model call checks the phases still to come against what really changed.
+                    </span>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    data-testid="auto-retry-setting"
+                    checked={settings.autoRetryOnUsageLimit !== false}
+                    onChange={(e) => setSettings({ ...settings, autoRetryOnUsageLimit: e.target.checked })}
+                    className="rounded border-slate-300 dark:border-slate-600"
+                  />
+                  <div className="flex-1">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300 block">Retry automatically when Claude&apos;s usage limit resets</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      A run that stops because the limit was reached continues by itself a minute after it resets, from the step that
+                      stopped. Each run can still be cancelled or retried earlier. The Studio has to be open; if it was closed, the run is
+                      retried when you open it.
                     </span>
                   </div>
                 </label>
