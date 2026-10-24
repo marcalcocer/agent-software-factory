@@ -6,8 +6,8 @@ written to be read on its own, e.g. the next morning.
 
 | Date | Feature | Status |
 | --- | --- | --- |
-| 2026-10-24 | [Automatic retry when Claude's usage limit resets](#2026-10-24--automatic-retry-when-claudes-usage-limit-resets) | On branch `claude/adoring-hamilton-x9t92q`, not merged |
-| 2026-10-24 | [Live agent activity](#2026-10-24--live-agent-activity) | On branch `claude/adoring-hamilton-x9t92q`, not merged |
+| 2026-10-24 | [Automatic retry when Claude's usage limit resets](#2026-10-24--automatic-retry-when-claudes-usage-limit-resets) | Merged into `master` |
+| 2026-10-24 | [Live agent activity](#2026-10-24--live-agent-activity) | Merged into `master` |
 | 2026-10-24 | [Free tier for the small roles, and which model did each step](#2026-10-24--free-tier-and-model-visibility) | Merged into `master` |
 
 ---
@@ -242,6 +242,8 @@ What you should see:
 
 If the feed stays empty while a step runs, look for `logs/<runId>/activity.ndjson`: if it is there and
 growing, the Studio side is at fault; if not, the factory side (send me the run's `output.log`).
+
+*(Update: merged into `master` on 2026-10-24, at your request, together with the automatic retry. Work from `master`: `git checkout master && git pull`.)*
 
 This work is on branch `claude/adoring-hamilton-x9t92q`. **It is not merged into `master`**: you have not
 seen it run yet. When you are happy, merge it (fast-forward) or ask me to.
