@@ -259,6 +259,32 @@ In `claude-cli` mode the equivalent is native too, via `--fallback-model`:
 - `summary.json` records, per role, the **requested** model, the model that **actually served**
   the call, and a `failovers` counter — provider degradation is visible after the fact.
 
+### Free tier (optional)
+
+With `FACTORY_PROVIDER=claude-cli`, the small roles that need no tools can try **free-quota models
+first** and keep your Claude subscription for the work that needs it:
+
+```bash
+FACTORY_FREE_ROLES=run-namer,merge-summary,pr-writer          # eligible: run-namer, merge-summary, pr-writer, phase-reconciler
+FACTORY_FREE_CHAIN=google/gemini-3.1-flash-lite,google/gemini-3.5-flash-lite
+GOOGLE_GENERATIVE_AI_API_KEY=...                                # the keys of the providers in the chain
+```
+
+Each model is asked once, in order. Whatever it cannot answer - out of quota, a refused key, an unknown
+model, an answer that breaks the output contract, a timeout - is recorded and the next model is asked; if
+none answers, Claude does, through the usual ladder. A model that says it is out of quota is left alone
+for a while (`FACTORY_FREE_COOLDOWN_MINUTES`, six hours for a daily quota), remembered across runs in
+`<FACTORY_LOG_DIR>/free-tier-state.json`.
+
+Nothing is silent. Every step report carries a `routing` block (the model asked first, the one that
+answered, every attempt with its reason), `events.ndjson` gets a `model_fallback` event whenever another
+model had to take over, and the Studio shows the model under every step of the pipeline, a warning when it
+fell back, and "out of quota" when that was the reason. `doctor` lists the chain and the keys it needs.
+
+Free tiers may train on what they are sent: the PR writer and merge summary see your diffs. Check each
+provider's terms for the repositories you use this on. `npm run eval:free` measures candidate models on the
+three roles before you trust them (`-- --models a,b --rounds 3`).
+
 ---
 
 ## Execution backends
