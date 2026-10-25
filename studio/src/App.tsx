@@ -796,6 +796,7 @@ function App() {
                     onClose={() => setOpenRunId(null)}
                     onRetry={handleResumeRun}
                     onOpenRun={handleOpenRun}
+                    onTitleChanged={(runId, title, source) => updateRun(runId, { title, ...(source ? { titleSource: source } : {}) })}
                   />
                 ) : (
                   <>

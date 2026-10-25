@@ -269,6 +269,16 @@ describe('derivePipeline and the step that names the task', () => {
     });
   });
 
+  it('is shown ahead of time, waiting, for a run that has just started (the skeleton of its first seconds)', () => {
+    const live = (artifacts: RunArtifact[] = []) =>
+      derivePipeline({ artifacts, events: [], pendingInput: null, runStatus: null, assumeAlive: true, pipeline: ALL_STAGES });
+    expect(live().nodes.map((node) => node.id).slice(0, 3)).toEqual(['prepare-run', 'run-namer', 'pm-architect']);
+    expect(live().nodes.find((node) => node.id === 'run-namer')!.status).toBe('pending');
+    // Once the run has produced anything, only a run that really named its task keeps the stage.
+    const resumedOld = derivePipeline({ artifacts: readRunArtifacts(runDir(RUN.round1)), events: readEvents(RUN.round1) as never[], pendingInput: null, runStatus: 'RUNNING', assumeAlive: true, pipeline: ALL_STAGES });
+    expect(resumedOld.nodes.some((node) => node.id === 'run-namer')).toBe(false);
+  });
+
   it('is absent on runs from before tasks were named', () => {
     expect(derive(RUN.round1).nodes.some((node) => node.id === 'run-namer')).toBe(false);
     expect(derive(RUN.round2).nodes.some((node) => node.id === 'run-namer')).toBe(false);

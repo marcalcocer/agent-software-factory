@@ -21,6 +21,7 @@ import { HumanInputPanel } from './HumanInputPanel';
 import { WorkingCopyBar, WorkingCopyPreparing } from './WorkingCopy';
 import { ModelChip, ModelsSummary } from './ModelChip';
 import { UsageLimitRetry } from './UsageLimitRetry';
+import { RunTitle } from './RunTitle';
 import { clockTime } from '../../shared/usageLimit';
 import { activityForNode, currentActivity } from '../../shared/activity';
 
@@ -88,6 +89,8 @@ interface PipelineViewProps {
   isRunning: boolean;
   onClose?: () => void;
   onRetry?: (runId: string) => void;
+  /** The run's name changed (the AI named it, or the user renamed it): the history shows the new one. */
+  onTitleChanged?: (runId: string, title: string, source?: FactoryRun['titleSource']) => void;
   /** Open another run - used to move between the rounds of one task. */
   onOpenRun?: (runId: string) => void;
   /** The stage selection of the task form; used only before the run records its own. */
@@ -265,7 +268,7 @@ function describeOutcome(
 /* View                                                                        */
 /* -------------------------------------------------------------------------- */
 
-export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pipelineConfig }: PipelineViewProps) {
+export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, onTitleChanged, pipelineConfig }: PipelineViewProps) {
   const [runInfo, setRunInfo] = useState<FactoryRun | null>(null);
   /** Every round of this task (the run itself and each revision of it), oldest first. */
   const [rounds, setRounds] = useState<Array<{ runId: string; round: number; status: string; kind: string }>>([]);
@@ -384,6 +387,33 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
     if (isRunning && !wasRunning.current) setRetryGraceUntil(Date.now() + 15_000);
     wasRunning.current = isRunning;
   }, [isRunning]);
+
+  /** Why the AI could not name the run, when the run was named from its request instead. */
+  const namerError = useMemo(() => {
+    const data = artifacts.find((a) => a.step === 'run-namer' && a.status === 'FALLBACK')?.data;
+    return typeof data?.error === 'string' ? data.error.replace(/^Agent "run-namer" failed during step "run-namer"\s*/, '') : undefined;
+  }, [artifacts]);
+
+  // The AI names the task a few seconds into the run: the history is told, so it shows the name too.
+  // The callback is kept in a ref: the parent passes a new function on every render, and the effect must run
+  // only when the name changes.
+  const runTitle = runInfo?.title;
+  const runTitleSource = runInfo?.titleSource;
+  const titleChanged = useRef(onTitleChanged);
+  titleChanged.current = onTitleChanged;
+  useEffect(() => {
+    if (runId && runTitle) titleChanged.current?.(runId, runTitle, runTitleSource);
+  }, [runId, runTitle, runTitleSource]);
+
+  /** Renames the run (double-click on its name): saved with the run, then read back. */
+  const renameRun = useCallback(
+    async (title: string) => {
+      if (!runId) return;
+      await window.api.invoke('factory:rename-run', runId, title);
+      await refresh();
+    },
+    [runId, refresh],
+  );
 
   /* ---- derived pipeline ---- */
   // The run's own recorded stages win; before it has any, show what the task form selected.
@@ -663,9 +693,17 @@ export function PipelineView({ runId, isRunning, onClose, onRetry, onOpenRun, pi
             <span aria-hidden="true">←</span> Run history
           </button>
           <span aria-hidden="true" className="text-slate-400">/</span>
-          <span className="truncate font-medium text-slate-900 dark:text-slate-100" title={runInfo?.task}>
-            {runInfo ? (runInfo.title ?? titleFromTask(runInfo.task)) : 'Run'}
-          </span>
+          {runInfo ? (
+            <RunTitle
+              title={runInfo.title ?? titleFromTask(runInfo.task)}
+              source={runInfo.titleSource}
+              why={namerError}
+              task={runInfo.task}
+              onRename={renameRun}
+            />
+          ) : (
+            <span className="font-medium text-slate-900 dark:text-slate-100">Run</span>
+          )}
           {runInfo?.taskId && (
             <span className="font-mono text-xs px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700">{runInfo.taskId}</span>
           )}

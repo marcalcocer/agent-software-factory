@@ -549,9 +549,12 @@ export function derivePipeline(input: DeriveInput): DerivedPipeline {
     done: prepareDone,
   });
 
-  // Only runs that have a namer show it: older runs were never named by an agent.
+  // Only runs that have a namer show it: older runs were never named by an agent. A run that is going and
+  // has produced nothing yet (its first moments, or the skeleton shown while it starts) is about to name
+  // the task, so the stage is shown ahead of time, waiting.
   const namer = idx.latest('run-namer');
-  if (namingStarted || namer) {
+  const namingExpected = alive && artifacts.length === 0;
+  if (namingStarted || namer || namingExpected) {
     specs.push({
       id: 'run-namer',
       name: 'Name',

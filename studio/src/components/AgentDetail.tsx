@@ -398,9 +398,13 @@ export function AgentDetail({
       <RoutingPanel routing={artifact.routing} />
       {activity && activity.length > 0 && (
         // The report is the result; this is how the agent got there. Open while the step runs again.
-        <details open={isRunning} className="group">
+        // The namer's story is a few lines long and is the point of looking at it: open from the start.
+        <details open={isRunning || step.replace(/-\d+$/, '') === 'run-namer'} className="group">
           <summary className="cursor-pointer select-none text-xs text-slate-400 hover:text-slate-200">
-            What the agent did ({activity.filter((entry) => entry.kind === 'tool').length} tool calls)
+            What the agent did
+            {activity.some((entry) => entry.kind === 'tool')
+              ? ` (${activity.filter((entry) => entry.kind === 'tool').length} tool calls)`
+              : ''}
           </summary>
           <div className="mt-2">
             <ActivityFeed entries={activity} live={!!isRunning} />

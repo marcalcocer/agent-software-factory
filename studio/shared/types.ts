@@ -151,6 +151,7 @@ export interface ActivityEntry {
     | 'tool-error'
     | 'summary'
     | 'report'
+    | 'result'
     | 'notice'
     | 'call-end'
     | 'call-failed';
