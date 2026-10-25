@@ -162,6 +162,7 @@ describe('free tier routing', () => {
       ['notice', expect.stringMatching(new RegExp(`^${FLASH_B}: invalid after`))],
       ['notice', 'No free-tier model could answer: handing the call to Claude'],
       ['call-start', 'Asking Claude'],
+      ['result', 'title: From Claude'],
       ['call-end', expect.stringContaining('Answered by claude-haiku-4-5')],
     ]);
   });

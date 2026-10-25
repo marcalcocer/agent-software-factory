@@ -39,7 +39,7 @@ import {
   type ModelRouting,
 } from './model-routing.ts';
 import { runClaudeCli, type ClaudeCliToolPolicy } from './claude-cli.ts';
-import { ActivityRecorder, ClaudeStreamParser, describeToolUse, formatDuration } from './agent-activity.ts';
+import { ActivityRecorder, ClaudeStreamParser, describeResult, describeToolUse, formatDuration } from './agent-activity.ts';
 import { windowLabel } from './usage-limit.ts';
 
 export interface InvokeAgentOptions<TSchema extends z.ZodType> {
@@ -61,6 +61,13 @@ export interface InvokeAgentOptions<TSchema extends z.ZodType> {
   tracingContext?: TracingContext;
   /** Result returned verbatim when `FACTORY_DRY_RUN=true`. */
   dryRunResult: z.infer<TSchema>;
+  /**
+   * What the call was given, in a line, for the live activity ("Request: ..."): the reader sees what the
+   * agent started from. Optional; the activity says nothing about the input when it is absent.
+   */
+  activityInput?: string;
+  /** The agent's answer in a line or two, for the live activity. Default: its fields (`describeResult`). */
+  describeResult?: (object: z.infer<TSchema>) => string;
   /** Gives up on one call after this long (CLI backend). Default: `FACTORY_CLAUDE_CLI_TIMEOUT_MS`. */
   timeoutMs?: number;
   /**
@@ -198,6 +205,20 @@ function publishRouting(
     reason: routing.fallbackReason ?? '',
     attempts: routing.attempts,
   });
+}
+
+/** What the agent's answer says, in the live activity: its own summary, or its fields. Never fails the call. */
+function reportResult<TSchema extends z.ZodType>(
+  activity: ActivityRecorder,
+  options: InvokeAgentOptions<TSchema>,
+  object: z.infer<TSchema>,
+): void {
+  try {
+    const text = options.describeResult ? options.describeResult(object) : describeResult(object);
+    if (text.trim() !== '') activity.emit('result', text);
+  } catch {
+    // The activity is a view of the call; it never breaks it.
+  }
 }
 
 /** Converts a Zod schema to the JSON Schema consumed by `claude --json-schema`. */
@@ -397,6 +418,7 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
     );
     if (free) {
       const durationMs = Date.now() - startedAt;
+      reportResult(activity, options, free.object as z.infer<TSchema>);
       activity.emit('call-end', `Answered by ${free.servedByModel} (free tier) in ${formatDuration(durationMs)}`, {
         model: free.servedByModel,
         backend: 'free-tier',
@@ -526,6 +548,7 @@ async function invokeViaClaudeCli<TSchema extends z.ZodType>(
     const parsed = options.schema.safeParse(candidate);
 
     if (parsed.success) {
+      reportResult(activity, options, parsed.data as z.infer<TSchema>);
       activity.emit(
         'call-end',
         `Answered by ${response.servedByModel} in ${formatDuration(Date.now() - rungStartedAt)}` +
@@ -703,6 +726,8 @@ export async function invokeAgent<TSchema extends z.ZodType>(
     cwd: options.repoPath,
   });
 
+  if (options.activityInput) activity.emit('notice', options.activityInput);
+
   // Subscription-backed backend: delegate to the official Claude Code binary.
   if (getFactoryConfig().provider === 'claude-cli') {
     try {
@@ -772,6 +797,7 @@ export async function invokeAgent<TSchema extends z.ZodType>(
     });
 
     const object = response.object as z.infer<TSchema> | undefined;
+    if (object !== undefined && object !== null) reportResult(activity, options, object);
     if (object === undefined || object === null) {
       throw new Error(
         `Agent "${options.role}" returned no structured output. Text response: ` +

@@ -33,6 +33,7 @@ export const ACTIVITY_FILE = 'activity.ndjson';
  * - `tool-error` : a tool call that failed, with the reason.
  * - `summary`    : the CLI's own one-line summary of a turn.
  * - `report`     : the model started writing its final, structured answer.
+ * - `result`     : what that answer says, in words (the fields of the report, or the agent's own summary).
  * - `notice`     : something the factory did around the call (a retry, a fallback, a free model asked).
  * - `call-end`   : the call finished (duration, tokens, the model that answered).
  * - `call-failed`: the call failed (the reason).
@@ -45,6 +46,7 @@ export type ActivityKind =
   | 'tool-error'
   | 'summary'
   | 'report'
+  | 'result'
   | 'notice'
   | 'call-end'
   | 'call-failed';
@@ -132,6 +134,46 @@ export function describeToolUse(name: string, input: unknown, cwd: string): stri
 }
 
 /* -------------------------------------------------------------------------- */
+/* A report, in words                                                          */
+/* -------------------------------------------------------------------------- */
+
+const MAX_RESULT_CHARS = 900;
+
+function oneLine(value: unknown, max: number): string {
+  if (typeof value === 'string') return clip(value, max);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value === null || value === undefined) return '-';
+  if (Array.isArray(value)) {
+    const shown = value.slice(0, 3).map((item) => oneLine(item, 60)).join('; ');
+    return `${value.length} item${value.length === 1 ? '' : 's'}${value.length > 0 ? `: ${shown}${value.length > 3 ? '; …' : ''}` : ''}`;
+  }
+  if (typeof value === 'object') return clip(Object.keys(value as object).join(', '), max);
+  return clip(String(value), max);
+}
+
+/**
+ * What an agent's validated answer says, one line per field ("verdict: PASS", "findings: 2 items: ...").
+ * For the activity feed: the reader sees what the agent concluded without opening the report. Long values
+ * are cut, and so is the whole text; the complete answer is the step's report.
+ */
+export function describeResult(object: unknown): string {
+  if (object === null || object === undefined) return '';
+  if (typeof object !== 'object' || Array.isArray(object)) return oneLine(object, MAX_RESULT_CHARS);
+  const lines: string[] = [];
+  let used = 0;
+  for (const [key, value] of Object.entries(object as Record<string, unknown>)) {
+    const line = `${key}: ${oneLine(value, 200)}`;
+    if (used + line.length > MAX_RESULT_CHARS) {
+      lines.push('…');
+      break;
+    }
+    lines.push(line);
+    used += line.length + 1;
+  }
+  return lines.join('\n');
+}
+
+/* -------------------------------------------------------------------------- */
 /* Recorder                                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -143,6 +185,7 @@ const ECHO_ICON: Partial<Record<ActivityKind, string>> = {
   'tool-error': '⚠',
   summary: '•',
   report: '📝',
+  result: '📋',
   notice: 'ℹ',
   'call-end': '✓',
   'call-failed': '✗',

@@ -494,6 +494,9 @@ export async function nameTask(
       ),
       schema: runNameSchema,
       dryRunResult: stubRunName(),
+      // The live activity shows what the namer started from and what it chose.
+      activityInput: `Request: “${task.replace(/\s+/g, ' ').trim().slice(0, 160)}${task.replace(/\s+/g, ' ').trim().length > 160 ? '…' : ''}”`,
+      describeResult: (name) => `Named the task “${name.title}” · branch ${name.type}/${name.slug}`,
       timeoutMs: NAMER_TIMEOUT_MS,
       // Its own model, then the same one told what it broke. Never the pricier model the ladder ends with.
       maxRungs: 2,

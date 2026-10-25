@@ -13,6 +13,7 @@ vi.mock('../src/utils/claude-cli.ts', async (importOriginal) => ({
 import {
   ActivityRecorder,
   ClaudeStreamParser,
+  describeResult,
   describeToolUse,
   readActivity,
   type ActivityEntry,
@@ -236,5 +237,74 @@ describe('an agent call', () => {
       resetsAt: '2026-10-24T17:20:00.000Z',
       window: 'five_hour',
     });
+  });
+});
+
+describe('a report in words', () => {
+  it('says each field in a line, and cuts what is long', () => {
+    expect(describeResult({ verdict: 'PASS', count: 3, ok: true, findings: ['a', 'b'], none: [], detail: { x: 1, y: 2 } })).toBe(
+      ['verdict: PASS', 'count: 3', 'ok: true', 'findings: 2 items: a; b', 'none: 0 items', 'detail: x, y'].join('\n'),
+    );
+    const long = describeResult({ summary: 'word '.repeat(200), second: 'x' });
+    expect(long.split('\n')[0]!.length).toBeLessThan(215);
+    expect(describeResult(Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`field${i}`, 'v'.repeat(40)])))).toMatch(/…$/);
+    expect(describeResult(null)).toBe('');
+  });
+});
+
+describe('what the call started from and what it said', () => {
+  const schema = z.object({ title: z.string(), slug: z.string() });
+  const agent = { getInstructions: async () => 'Name it.' } as never;
+
+  it('records the request it was given and the name it chose, before it ends', async () => {
+    vi.stubEnv('FACTORY_PROVIDER', 'claude-cli');
+    vi.stubEnv('FACTORY_FREE_ROLES', '');
+    vi.mocked(runClaudeCli).mockResolvedValue({
+      ok: true,
+      structuredOutput: { title: 'Dark mode', slug: 'dark-mode' },
+      text: '',
+      servedByModel: 'claude-haiku-4-5',
+      usage: { inputTokens: 1, outputTokens: 1, reasoningTokens: 0, cachedTokens: 0, cacheCreationTokens: 0, totalTokens: 2 },
+      toolCalls: 0,
+      durationMs: 1,
+      sessionId: 's',
+      costUsd: 0,
+    });
+    const runId = nextRun();
+    await invokeAgent({
+      agent,
+      role: 'run-namer',
+      step: 'run-namer',
+      runId,
+      repoPath: REPO,
+      prompt: 'Name it.',
+      schema,
+      dryRunResult: { title: '', slug: '' },
+      activityInput: 'Request: “Add a dark mode”',
+      describeResult: (o) => `Named the task “${o.title}”`,
+    });
+    const kinds = readActivity(traceDirFor(runId)).map((e) => [e.kind, e.text]);
+    expect(kinds[0]).toEqual(['notice', 'Request: “Add a dark mode”']);
+    expect(kinds.at(-2)).toEqual(['result', 'Named the task “Dark mode”']);
+    expect(kinds.at(-1)![0]).toBe('call-end');
+  });
+
+  it('says what an agent concluded even when it gives no summary of its own', async () => {
+    vi.stubEnv('FACTORY_PROVIDER', 'claude-cli');
+    vi.stubEnv('FACTORY_FREE_ROLES', '');
+    vi.mocked(runClaudeCli).mockResolvedValue({
+      ok: true,
+      structuredOutput: { title: 'Dark mode', slug: 'dark-mode' },
+      text: '',
+      servedByModel: 'claude-haiku-4-5',
+      usage: { inputTokens: 1, outputTokens: 1, reasoningTokens: 0, cachedTokens: 0, cacheCreationTokens: 0, totalTokens: 2 },
+      toolCalls: 0,
+      durationMs: 1,
+      sessionId: 's',
+      costUsd: 0,
+    });
+    const runId = nextRun();
+    await invokeAgent({ agent, role: 'run-namer', step: 'run-namer', runId, repoPath: REPO, prompt: 'x', schema, dryRunResult: { title: '', slug: '' } });
+    expect(readActivity(traceDirFor(runId)).find((e) => e.kind === 'result')!.text).toBe('title: Dark mode\nslug: dark-mode');
   });
 });
