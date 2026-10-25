@@ -6,9 +6,78 @@ written to be read on its own, e.g. the next morning.
 
 | Date | Feature | Status |
 | --- | --- | --- |
+| 2026-10-25 | [Run name: where it shows, and the Name stage live](#2026-10-25--run-name-where-it-shows-and-the-name-stage-live) | On branch `claude/adoring-hamilton-x9t92q`, not merged |
 | 2026-10-24 | [Automatic retry when Claude's usage limit resets](#2026-10-24--automatic-retry-when-claudes-usage-limit-resets) | Merged into `master` |
 | 2026-10-24 | [Live agent activity](#2026-10-24--live-agent-activity) | Merged into `master` |
 | 2026-10-24 | [Free tier for the small roles, and which model did each step](#2026-10-24--free-tier-and-model-visibility) | Merged into `master` |
+
+---
+
+## 2026-10-25 — Run name: where it shows, and the Name stage live
+
+You asked (in Spanish) that every run get a name from a very cheap model as soon as it starts, that you
+can rename it with a double-click, that this agent be one of the first stages, and that you can watch it
+work live with the new activity feed. You remembered trying this before and it "did not come out".
+
+**Short version.** It was already built, and it works: I called the real agent through the real Claude CLI
+and it named a Spanish request in **3.5 s** ("Persist category filter on investments screen", branch
+`feat/persist-investments-category-filter`). What was missing was that you could *see* it: now the name is
+on the run itself with who made it, double-click renames it right there, the **Name** stage is shown from the
+first second, and its feed shows the request it was given, the model, and the name it chose.
+
+![Name stage while the AI is asked](docs/run-naming/name-stage-running.png)
+
+![After: named by AI, and what the agent did](docs/run-naming/name-stage-done.png)
+
+(Rendered from the real Studio components in Chromium, with the real activity of the call above.)
+
+### What was already there (found, not built)
+
+- Agent `run-namer`: haiku, no tools, 45 s limit, two attempts; a stage **Name** between Prepare and the PM
+  Architect; artifact `00-run-namer.json` (`COMPLETED` or `FALLBACK`); double-click to rename **in the
+  history list**; fallback to the first sentence of the request when the AI cannot answer.
+- So why did it seem not to work? My best reading, not certain: (1) the name was only visible as small text
+  in the breadcrumb and the history list does not show while a run is open; (2) when the AI cannot answer
+  (usage limit, signed out, a slow start over 45 s) the run is quietly named from your first sentence, which
+  looks the same as "no AI name". Yesterday's test run of mine did exactly that: the 5-hour limit was used up.
+
+### What changed
+
+- **Name on the run** (`RunTitle.tsx`): next to the title, "🏷 named by AI", "🏷 from your request" (hover:
+  why the AI could not answer) or "✎ renamed by you"; **double-click or ✎** to rename; Enter saves, Escape
+  cancels, a refused name shows why. The history list is told the moment the AI names the run (before, it
+  only refreshed when the run started or ended).
+- **Name stage first, from the start**: shown, waiting, in the skeleton of the first seconds, then running.
+  Its feed opens by default and shows the request, the model, and the result.
+- **New activity entry `result`** (all agents, all backends): what the answer says in words (fields such as
+  `verdict: PASS`, `findings: 2 items: …`); the namer gives its own line: "Named the task “…” · branch
+  feat/…". Every finished step's "What the agent did" now ends with it.
+
+### How it was verified
+
+- Real call through the real CLI (above), and its real activity rendered in the UI (screenshots).
+- Factory 702 tests pass (+1 unrelated failure that was already there: `round-commit.test.ts`); Studio 445
+  pass (new: the title and its labels, double-click rename, Escape, a refused rename, the history told
+  exactly once - not on every render, the Name stage ahead of time); smoke 155/155; typecheck clean.
+- Not verified: the Electron app itself (no display here). Not tested: an AI name arriving in a real
+  multi-repo Studio session; the logic is covered, the click-through is not.
+
+### Decisions I made without asking you
+
+- **Titles stay in English**, even when you write Spanish: the namer's instructions say so (the factory's
+  tasks are English). If you prefer Spanish names, it is one line in `factory/src/prompts/run-namer.md`; the
+  branch slug must stay ASCII either way. Tell me and I change it.
+- Kept the 45 s limit and the haiku model: the real call took 3.5 s.
+- Did not stream the namer's JSON token by token: it is one short object; the feed shows the request, the
+  steps and the result, which is all there is to see.
+
+### Commits (branch `claude/adoring-hamilton-x9t92q`, **not merged into `master`**)
+
+| Commit | What |
+| --- | --- |
+| `a588f02` | feat(factory): show what an agent was given and what it concluded, live |
+| `671e284` | feat(studio): show the run's name where the run is, and rename it there |
+| `728a972` | docs: document the run name on screen and the result entry of the activity |
 
 ---
 
