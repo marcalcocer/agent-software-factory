@@ -467,7 +467,8 @@ line per thing (`src/utils/agent-activity.ts`):
 | `tool-error` | A tool call that failed, with the reason ("File does not exist"). |
 | `summary` | The CLI's one-line summary of a turn. |
 | `report` | The model started writing its final, structured answer. |
-| `notice` | What the factory did around the call: a free model out of quota, a format retry, a hand-over to Claude. |
+| `result` | What that answer says, in words: its fields ("verdict: PASS", "findings: 2 items: ..."), or the agent's own summary (the namer: "Named the task “...” · branch feat/..."). |
+| `notice` | What the factory did around the call: a free model out of quota, a format retry, a hand-over to Claude; and, for agents that give one (the namer), what the call started from ("Request: “...”"). |
 | `call-end` / `call-failed` | How the call ended: the model that answered, duration and tokens, or the reason. |
 
 Each entry carries its `call`, `role`, `step` and `attempt`, so steps that run side by side (review and
@@ -865,6 +866,12 @@ The `run-namer` agent chooses the title, the slug and the type (`feat`, `fix`, `
 `docs`, `test`, `chore`, `build`, `ci`) from the request. It runs right after the repository is
 prepared and before the architect, because the branch is named after it. If it cannot answer, the task is
 named from the request's first sentence (`fallbackRunName`) - "Untitled run" no longer exists.
+
+In the Studio the name is on the run itself, not only in the history: next to it a label says who made it
+("🏷 named by AI", "🏷 from your request" - hover for why the AI could not answer, "✎ renamed by you"), and a
+**double-click** (or the ✎) renames it, here or in the history. **Name** is the first stage of the pipeline
+after Prepare - shown from the first second, waiting, and then running while the AI is asked - and its
+live feed shows the request it was given, the model asked, and the name it chose.
 
 A **round** on a pull request keeps the id, the branch and the task's title; its own title is what the
 feedback triage says the round is about (`roundTitle`), or `<task title> · round N`.

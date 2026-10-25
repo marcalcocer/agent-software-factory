@@ -62,6 +62,7 @@ npm run build:studio
 - Multi-provider LLM support (Claude CLI, API keys)
 
 ### Studio UI
+- Every run is named by a cheap AI step (the first stage) and can be renamed with a double-click
 - Real-time agent activity: each step shows what its agent is doing (files read and edited, searches, what it says, the model) as it happens
 - Automatic retry of a run stopped by Claude's usage limit, once the limit resets (countdown, retry now, cancel)
 - Multi-repo tabs with parallel runs
